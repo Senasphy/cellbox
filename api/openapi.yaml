@@ -1,0 +1,177 @@
+openapi: 3.1.0
+info:
+  title: cellbox API
+  version: 1.0.0
+  description: Initial contract skeleton. Endpoints are added with Phase 1.
+servers:
+  - url: http://127.0.0.1:8080
+paths:
+  /healthz:
+    get:
+      operationId: health
+      responses:
+        '200':
+          description: Service is alive
+  /readyz:
+    get:
+      operationId: readiness
+      responses:
+        '200':
+          description: Store is ready
+  /v1/system:
+    get:
+      operationId: systemInfo
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Backend and capabilities
+        '401':
+          description: Missing or invalid API key
+  /v1/sessions:
+    get:
+      operationId: listSessions
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Visible sessions }
+    post:
+      operationId: createSession
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateSession' }
+      responses:
+        '201': { description: Session created }
+        '422': { description: Invalid request }
+  /v1/sessions/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    get:
+      operationId: getSession
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Session details }
+        '404': { description: Session not found }
+    delete:
+      operationId: destroySession
+      security: [{ bearerAuth: [] }]
+      responses:
+        '204': { description: Session destroyed }
+  /v1/sessions/{id}/execs:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    post:
+      operationId: startExec
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: wait, in: query, schema: { type: boolean, default: false } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ExecRequest' }
+      responses:
+        '202': { description: Exec started; stream_url points to output events }
+        '200': { description: Completed exec when wait=true }
+    get:
+      operationId: listExecs
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Execs for the session }
+  /v1/sessions/{id}/execs/{execID}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+      - { name: execID, in: path, required: true, schema: { type: string } }
+    get:
+      operationId: getExec
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Exec status }
+        '404': { description: Exec not found }
+  /v1/sessions/{id}/execs/{execID}/stream:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+      - { name: execID, in: path, required: true, schema: { type: string } }
+      - { name: Last-Event-ID, in: header, schema: { type: string } }
+    get:
+      operationId: streamExec
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Resumable server-sent exec output }
+  /v1/sessions/{id}/files:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+      - { name: path, in: query, required: true, schema: { type: string } }
+    get:
+      operationId: readFile
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: File bytes, content: { application/octet-stream: { schema: { type: string, format: binary } } } }
+    put:
+      operationId: writeFile
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/octet-stream: { schema: { type: string, format: binary } }
+      responses:
+        '204': { description: File written }
+    delete:
+      operationId: deleteFile
+      security: [{ bearerAuth: [] }]
+      responses:
+        '204': { description: File deleted }
+  /v1/sessions/{id}/files/list:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+      - { name: path, in: query, required: false, schema: { type: string } }
+    get:
+      operationId: listFiles
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Directory entries }
+  /v1/sessions/{id}/archive:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+      - { name: path, in: query, required: true, schema: { type: string } }
+    get:
+      operationId: downloadArchive
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Tar archive, content: { application/x-tar: { schema: { type: string, format: binary } } } }
+    put:
+      operationId: uploadArchive
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/x-tar: { schema: { type: string, format: binary } }
+      responses:
+        '204': { description: Archive extracted }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+  schemas:
+    CreateSession:
+      type: object
+      required: [image]
+      properties:
+        image: { type: string }
+        limits: { type: object }
+        network_policy: { type: object, properties: { mode: { type: string, enum: [none] } } }
+        env: { type: object, additionalProperties: { type: string } }
+        labels: { type: object, additionalProperties: { type: string } }
+        ttl_s: { type: integer }
+    ExecRequest:
+      type: object
+      properties:
+        argv: { type: array, items: { type: string } }
+        shell: { type: string }
+        cwd: { type: string }
+        env: { type: object, additionalProperties: { type: string } }
+        timeout_ms: { type: integer }
+        tty: { type: boolean }
