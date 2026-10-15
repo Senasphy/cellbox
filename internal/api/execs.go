@@ -31,6 +31,9 @@ type execRequest struct {
 	TimeoutMS int               `json:"timeout_ms,omitempty"`
 	TTY       bool              `json:"tty,omitempty"`
 }
+type execSignalRequest struct {
+	Signal int `json:"signal"`
+}
 type execResponse struct {
 	ID          string     `json:"id"`
 	SessionID   string     `json:"session_id"`
@@ -148,6 +151,9 @@ func (s *server) createExec(w http.ResponseWriter, r *http.Request) {
 		problem.Write(w, problem.Problem{Title: "Internal error", Status: http.StatusInternalServerError, Code: "exec_persist_failed"})
 		return
 	}
+	s.execMu.Lock()
+	s.activeExecs[record.ID] = handle
+	s.execMu.Unlock()
 	done := make(chan struct{})
 	go s.collectExecOutput(persist, handle, record, done)
 	if r.URL.Query().Get("wait") == "true" {
@@ -178,6 +184,11 @@ func (s *server) createExec(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) collectExecOutput(persist execPersistence, handle runtime.ExecHandle, record store.ExecRecord, done chan<- struct{}) {
 	defer close(done)
+	defer func() {
+		s.execMu.Lock()
+		delete(s.activeExecs, record.ID)
+		s.execMu.Unlock()
+	}()
 	var outputErr error
 	for chunk := range handle.Output() {
 		if outputErr != nil {
@@ -221,6 +232,52 @@ func (s *server) collectExecOutput(persist execPersistence, handle runtime.ExecH
 			}
 		}
 	}
+}
+
+func (s *server) signalExec(w http.ResponseWriter, r *http.Request) {
+	_, session, ok := s.authorizedSession(w, r)
+	if !ok {
+		return
+	}
+	persist, ok := s.execStore(w)
+	if !ok {
+		return
+	}
+	execID := r.PathValue("execID")
+	record, err := persist.GetExec(r.Context(), execID)
+	if err != nil || record.SessionID != session.ID {
+		problem.Write(w, problem.Problem{Title: "Not found", Status: http.StatusNotFound, Code: "exec_not_found"})
+		return
+	}
+	if record.State != "running" {
+		problem.Write(w, problem.Problem{Title: "Exec not running", Status: http.StatusConflict, Code: "exec_not_running"})
+		return
+	}
+	var req execSignalRequest
+	if err := decodeJSONBody(w, r, &req, 1<<20); err != nil {
+		problem.Write(w, problem.Problem{Title: "Invalid request", Status: http.StatusBadRequest, Code: "request_invalid", Detail: err.Error()})
+		return
+	}
+	if req.Signal < 1 || req.Signal > 64 {
+		problem.Write(w, problem.Problem{Title: "Invalid signal", Status: http.StatusUnprocessableEntity, Code: "signal_invalid", Detail: "signal must be between 1 and 64"})
+		return
+	}
+	s.execMu.RLock()
+	handle := s.activeExecs[execID]
+	s.execMu.RUnlock()
+	if handle == nil {
+		problem.Write(w, problem.Problem{Title: "Exec not running", Status: http.StatusConflict, Code: "exec_not_running"})
+		return
+	}
+	if err := handle.Signal(r.Context(), req.Signal); err != nil {
+		if errors.Is(err, runtime.ErrUnsupported) {
+			problem.Write(w, problem.Problem{Title: "Signal unsupported", Status: http.StatusUnprocessableEntity, Code: "capability_unsupported", Detail: "the selected runtime cannot signal an individual exec"})
+			return
+		}
+		problem.Write(w, problem.Problem{Title: "Signal failed", Status: http.StatusBadGateway, Code: "exec_signal_failed", Detail: err.Error()})
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *server) listExecs(w http.ResponseWriter, r *http.Request) {

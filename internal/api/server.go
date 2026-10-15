@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/senasphy/cellbox/internal/api/problem"
@@ -32,6 +33,8 @@ type server struct {
 	backendName string
 	mux         *http.ServeMux
 	cfg         config.Config
+	execMu      sync.RWMutex
+	activeExecs map[string]runtime.ExecHandle
 }
 
 // NewHandler builds the initial HTTP handler with health and authenticated system routes.
@@ -41,7 +44,7 @@ func NewHandler(store KeyStore, backend runtime.Runtime, backendName string) htt
 
 // NewHandlerWithConfig builds the service routes with configured session limits.
 func NewHandlerWithConfig(store KeyStore, backend runtime.Runtime, backendName string, cfg config.Config) http.Handler {
-	s := &server{store: store, backend: backend, backendName: backendName, mux: http.NewServeMux(), cfg: cfg}
+	s := &server{store: store, backend: backend, backendName: backendName, mux: http.NewServeMux(), cfg: cfg, activeExecs: map[string]runtime.ExecHandle{}}
 	s.mux.Handle("GET /healthz", withTimeout(5*time.Second, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
@@ -59,6 +62,7 @@ func NewHandlerWithConfig(store KeyStore, backend runtime.Runtime, backendName s
 	s.mux.Handle("POST /v1/sessions/{id}/execs", withTimeout(time.Duration(sessionLimitMaxTimeout(cfg.Limits.Max.TTLS)+30_000)*time.Millisecond, http.HandlerFunc(s.createExec)))
 	s.mux.Handle("GET /v1/sessions/{id}/execs", withTimeout(10*time.Second, http.HandlerFunc(s.listExecs)))
 	s.mux.Handle("GET /v1/sessions/{id}/execs/{execID}", withTimeout(10*time.Second, http.HandlerFunc(s.getExec)))
+	s.mux.Handle("POST /v1/sessions/{id}/execs/{execID}/signal", withTimeout(10*time.Second, http.HandlerFunc(s.signalExec)))
 	s.mux.HandleFunc("GET /v1/sessions/{id}/execs/{execID}/stream", s.streamExec)
 	s.mux.Handle("GET /v1/sessions/{id}/files", withTimeout(10*time.Minute, http.HandlerFunc(s.readFile)))
 	s.mux.Handle("PUT /v1/sessions/{id}/files", withTimeout(10*time.Minute, http.HandlerFunc(s.writeFile)))

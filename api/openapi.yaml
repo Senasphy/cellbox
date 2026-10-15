@@ -140,6 +140,24 @@ paths:
         '200': { description: Exec status, content: { application/json: { schema: { $ref: '#/components/schemas/Exec' } } } }
         '404': { description: Exec not found, content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } } }
         default: { description: Problem response, content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+  /v1/sessions/{id}/execs/{execID}/signal:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+      - { name: execID, in: path, required: true, schema: { type: string } }
+    post:
+      operationId: signalExec
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ExecSignalRequest' }
+      responses:
+        '204': { description: Signal sent }
+        '404': { description: Exec not found, content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+        '409': { description: Exec is no longer running, content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+        '422': { description: Invalid or unsupported signal, content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+        default: { description: Problem response, content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } } }
   /v1/sessions/{id}/execs/{execID}/stream:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string } }
@@ -346,3 +364,9 @@ components:
         env: { type: object, additionalProperties: { type: string } }
         timeout_ms: { type: integer }
         tty: { type: boolean }
+    ExecSignalRequest:
+      type: object
+      required: [signal]
+      additionalProperties: false
+      properties:
+        signal: { type: integer, minimum: 1, maximum: 64 }

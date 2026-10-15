@@ -13,6 +13,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -61,10 +62,11 @@ func (f *fakeRuntime) SandboxByID(id string) runtime.Sandbox {
 }
 
 type fakeSandbox struct {
-	id        string
-	killed    bool
-	destroyed bool
-	files     map[string][]byte
+	id         string
+	killed     bool
+	destroyed  bool
+	files      map[string][]byte
+	execHandle runtime.ExecHandle
 }
 
 type fakeExecHandle struct {
@@ -76,8 +78,38 @@ func (f *fakeExecHandle) Output() <-chan runtime.OutputChunk               { ret
 func (f *fakeExecHandle) Wait(context.Context) (runtime.ExecResult, error) { return f.result, nil }
 func (f *fakeExecHandle) Signal(context.Context, int) error                { return runtime.ErrUnsupported }
 
+type blockingExecHandle struct {
+	output  chan runtime.OutputChunk
+	done    chan struct{}
+	signals chan int
+	once    sync.Once
+}
+
+func (f *blockingExecHandle) Output() <-chan runtime.OutputChunk { return f.output }
+func (f *blockingExecHandle) Wait(ctx context.Context) (runtime.ExecResult, error) {
+	select {
+	case <-ctx.Done():
+		return runtime.ExecResult{}, ctx.Err()
+	case <-f.done:
+		return runtime.ExecResult{ExitCode: 0}, nil
+	}
+}
+func (f *blockingExecHandle) Signal(_ context.Context, signal int) error {
+	f.signals <- signal
+	return runtime.ErrUnsupported
+}
+func (f *blockingExecHandle) finish() {
+	f.once.Do(func() {
+		close(f.output)
+		close(f.done)
+	})
+}
+
 func (f *fakeSandbox) ID() string { return f.id }
 func (f *fakeSandbox) Exec(context.Context, runtime.ExecRequest) (runtime.ExecHandle, error) {
+	if f.execHandle != nil {
+		return f.execHandle, nil
+	}
 	out := make(chan runtime.OutputChunk, 2)
 	out <- runtime.OutputChunk{Stream: "stdout", Data: []byte("hello\n")}
 	out <- runtime.OutputChunk{Stream: "stderr", Data: []byte("err")}
@@ -200,6 +232,44 @@ func TestSessionLifecycleAndOwnership(t *testing.T) {
 	if response.State != "ready" || response.ImageDigest != "sha256:test" || response.Limits.MemoryMB != 512 {
 		t.Fatalf("response=%+v", response)
 	}
+	blocking := &blockingExecHandle{output: make(chan runtime.OutputChunk), done: make(chan struct{}), signals: make(chan int, 1)}
+	defer blocking.finish()
+	backend.box.execHandle = blocking
+	startSignalExec := httptest.NewRequest(http.MethodPost, "/v1/sessions/"+response.ID+"/execs", strings.NewReader(`{"argv":["sleep","10"]}`))
+	startSignalExec.Header.Set("Authorization", "Bearer "+user.Secret)
+	startSignalExec.Header.Set("Content-Type", "application/json")
+	startSignalExecResult := httptest.NewRecorder()
+	handler.ServeHTTP(startSignalExecResult, startSignalExec)
+	backend.box.execHandle = nil
+	if startSignalExecResult.Code != http.StatusAccepted {
+		blocking.finish()
+		t.Fatalf("start signal target status=%d body=%s", startSignalExecResult.Code, startSignalExecResult.Body.String())
+	}
+	var signalExec struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(startSignalExecResult.Body.Bytes(), &signalExec); err != nil || signalExec.ID == "" {
+		blocking.finish()
+		t.Fatalf("invalid signal target response: exec=%+v err=%v", signalExec, err)
+	}
+	signalReq := httptest.NewRequest(http.MethodPost, "/v1/sessions/"+response.ID+"/execs/"+signalExec.ID+"/signal", strings.NewReader(`{"signal":15}`))
+	signalReq.Header.Set("Authorization", "Bearer "+user.Secret)
+	signalReq.Header.Set("Content-Type", "application/json")
+	signalResult := httptest.NewRecorder()
+	handler.ServeHTTP(signalResult, signalReq)
+	if signalResult.Code != http.StatusUnprocessableEntity || !strings.Contains(signalResult.Body.String(), "capability_unsupported") {
+		blocking.finish()
+		t.Fatalf("unsupported signal status=%d body=%s", signalResult.Code, signalResult.Body.String())
+	}
+	select {
+	case signal := <-blocking.signals:
+		if signal != 15 {
+			t.Fatalf("signal=%d, want 15", signal)
+		}
+	default:
+		t.Fatal("signal was not forwarded to the runtime handle")
+	}
+	blocking.finish()
 	filePath := "/v1/sessions/" + response.ID + "/files?path=%2Ftmp%2Fnote.txt"
 	put := httptest.NewRequest(http.MethodPut, filePath, strings.NewReader("file contents"))
 	put.Header.Set("Authorization", "Bearer "+user.Secret)

@@ -221,6 +221,7 @@ func TestOpenAPIResponses(t *testing.T) {
 	}
 	check(http.MethodGet, execPath, "", true)
 	check(http.MethodGet, execPath+"/"+execution.ID, "", true)
+	check(http.MethodPost, execPath+"/"+execution.ID+"/signal", `{"signal":15}`, true)
 	check(http.MethodGet, execPath+"/"+execution.ID+"/stream", "", true)
 	check(http.MethodPost, execPath+"?wait=true", `{"argv":["echo","wait"]}`, true)
 	firstExecPage := check(http.MethodGet, execPath+"?limit=1", "", true)

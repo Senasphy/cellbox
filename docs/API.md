@@ -59,6 +59,8 @@ The current Docker backend forces `NetworkMode=none`; only `network_policy.mode=
 
 Session and exec list routes accept `limit` and opaque `cursor` query parameters. The default page size is 50 and the maximum is 200. Sessions are ordered newest first; execs are ordered oldest first. A response includes `next_cursor` only when another page is available.
 
+An active exec can receive a POSIX signal with `POST /v1/sessions/{session_id}/execs/{exec_id}/signal` and a JSON body such as `{"signal":15}`. The Docker backend reports `capability_unsupported` because Docker Engine cannot signal one exec process independently.
+
 ## API key management
 
 An admin key can create and list API keys, and revoke a key by ID. The full secret is returned only by the create call; list responses contain key metadata without the digest or secret.
