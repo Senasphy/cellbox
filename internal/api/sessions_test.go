@@ -346,6 +346,17 @@ func TestSessionReportsUnsupportedDiskLimitAndRejectsExplicitRequest(t *testing.
 		t.Fatal(err)
 	}
 	handler := NewHandlerWithConfig(db, &noDiskLimitRuntime{fakeRuntime: &fakeRuntime{}}, "docker", config.Defaults())
+	systemRequest := httptest.NewRequest(http.MethodGet, "/v1/system", nil)
+	systemRequest.Header.Set("Authorization", "Bearer "+key.Secret)
+	systemResult := httptest.NewRecorder()
+	handler.ServeHTTP(systemResult, systemRequest)
+	var system System
+	if err := json.Unmarshal(systemResult.Body.Bytes(), &system); err != nil {
+		t.Fatal(err)
+	}
+	if systemResult.Code != http.StatusOK || system.Capabilities.DiskLimits {
+		t.Fatalf("system status=%d capabilities=%+v", systemResult.Code, system.Capabilities)
+	}
 	create := func(body string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(http.MethodPost, "/v1/sessions", strings.NewReader(body))
 		req.Header.Set("Authorization", "Bearer "+key.Secret)
