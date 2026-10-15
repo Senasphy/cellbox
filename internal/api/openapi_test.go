@@ -120,6 +120,42 @@ func TestOpenAPIResponses(t *testing.T) {
 
 	check(http.MethodGet, "/healthz", "", false)
 	check(http.MethodGet, "/v1/system", "", false)
+	createdKey := check(http.MethodPost, "/v1/keys", `{"name":"contract key","scope":"session"}`, true)
+	var apiKey struct {
+		ID     string `json:"id"`
+		Secret string `json:"secret"`
+	}
+	if err := json.Unmarshal(createdKey.Body.Bytes(), &apiKey); err != nil || apiKey.ID == "" || apiKey.Secret == "" {
+		t.Fatalf("invalid create key response: key=%+v err=%v", apiKey, err)
+	}
+	keyList := check(http.MethodGet, "/v1/keys", "", true)
+	if strings.Contains(keyList.Body.String(), apiKey.Secret) || strings.Contains(keyList.Body.String(), `"hash"`) {
+		t.Fatal("key list leaked secret material")
+	}
+	scopedKeyReq := httptest.NewRequest(http.MethodGet, "/v1/system", nil)
+	scopedKeyReq.Header.Set("Authorization", "Bearer "+apiKey.Secret)
+	scopedKeyResponse := httptest.NewRecorder()
+	handler.ServeHTTP(scopedKeyResponse, scopedKeyReq)
+	if scopedKeyResponse.Code != http.StatusForbidden {
+		t.Fatalf("session key system access status=%d body=%s", scopedKeyResponse.Code, scopedKeyResponse.Body.String())
+	}
+	check(http.MethodDelete, "/v1/keys/"+apiKey.ID, "", true)
+	check(http.MethodDelete, "/v1/keys/key_missing", "", true)
+	revokedKeyReq := httptest.NewRequest(http.MethodGet, "/v1/system", nil)
+	revokedKeyReq.Header.Set("Authorization", "Bearer "+apiKey.Secret)
+	revokedKeyResponse := httptest.NewRecorder()
+	handler.ServeHTTP(revokedKeyResponse, revokedKeyReq)
+	if revokedKeyResponse.Code != http.StatusUnauthorized {
+		t.Fatalf("revoked key access status=%d body=%s", revokedKeyResponse.Code, revokedKeyResponse.Body.String())
+	}
+	invalidKeyReq := httptest.NewRequest(http.MethodPost, "/v1/keys", strings.NewReader(`{"name":"bad scope","scope":"root"}`))
+	invalidKeyReq.Header.Set("Authorization", "Bearer "+key.Secret)
+	invalidKeyReq.Header.Set("Content-Type", "application/json")
+	invalidKeyResponse := httptest.NewRecorder()
+	handler.ServeHTTP(invalidKeyResponse, invalidKeyReq)
+	if invalidKeyResponse.Code != http.StatusUnprocessableEntity || !strings.Contains(invalidKeyResponse.Body.String(), "key_scope_invalid") {
+		t.Fatalf("invalid key scope status=%d body=%s", invalidKeyResponse.Code, invalidKeyResponse.Body.String())
+	}
 	created := check(http.MethodPost, "/v1/sessions", `{"image":"python:3.12","network_policy":{"mode":"none"}}`, true)
 	var session SessionResponse
 	if err := json.Unmarshal(created.Body.Bytes(), &session); err != nil {

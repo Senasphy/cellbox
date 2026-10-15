@@ -56,3 +56,19 @@ curl -fsS -X DELETE "$CELLBOX_URL/v1/sessions/$session_id" \
 ```
 
 The current Docker backend forces `NetworkMode=none`; only `network_policy.mode=none` is accepted. It reports `disk_limits: false`, returns `disk_mb: 0` for sessions without an explicit disk request, and rejects explicit `limits.disk_mb` requests because Docker quota support depends on daemon storage configuration. Interactive terminals, idempotency keys, pagination cursors, egress allowlists, quotas, and the dashboard are not implemented yet.
+
+## API key management
+
+An admin key can create and list API keys, and revoke a key by ID. The full secret is returned only by the create call; list responses contain key metadata without the digest or secret.
+
+```sh
+created_key=$(curl -fsS -X POST "$CELLBOX_URL/v1/keys" \
+  -H "Authorization: Bearer $CELLBOX_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"agent","scope":"session"}')
+new_key=$(printf '%s' "$created_key" | jq -r .secret)
+curl -fsS "$CELLBOX_URL/v1/keys" -H "Authorization: Bearer $CELLBOX_KEY"
+key_id=$(printf '%s' "$created_key" | jq -r .id)
+curl -fsS -X DELETE "$CELLBOX_URL/v1/keys/$key_id" \
+  -H "Authorization: Bearer $CELLBOX_KEY"
+```
