@@ -24,4 +24,4 @@ The currently implemented endpoints and a Docker-backed curl walkthrough are in 
 
 The native backend isolates workloads using Linux user, mount, PID, network, IPC, UTS and cgroup namespaces, cgroup v2 resource limits, a seccomp filter and capability dropping. It shares the host kernel, so a kernel vulnerability can allow escape. For hostile multi-tenant workloads, run cellbox inside a dedicated virtual machine. Never expose the service to untrusted networks without TLS and the quotas and egress policy described in the documentation.
 
-This statement describes the target native backend. No sandbox backend is implemented yet, so the current repository provides no workload isolation.
+The statement above describes the target native backend, which is not implemented yet. The current Docker bootstrap backend applies daemon-managed container limits and hardening options, but it is not the specified native isolation design and has not passed its live-daemon contract walkthrough. Its effective protections depend on the Docker-compatible daemon and host configuration. Do not use it for hostile workloads.
