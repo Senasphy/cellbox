@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -34,6 +35,124 @@ func TestRuntimeContract(t *testing.T) {
 		image = "alpine:latest"
 	}
 	contract.RunBasic(t, New(socket), image)
+}
+
+func TestRuntimeContractAgainstEngineStub(t *testing.T) {
+	files := map[string][]byte{}
+	execs := map[string]struct {
+		code int
+		out  []byte
+	}{}
+	execNumber := 0
+	const containerID = "contract-container"
+	engine := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1.41/images/"):
+			_, _ = w.Write([]byte(`{"Id":"sha256:contract","RepoDigests":["alpine@sha256:contract"]}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/v1.41/containers/create":
+			_, _ = w.Write([]byte(`{"Id":"` + containerID + `"}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/v1.41/containers/"+containerID+"/start":
+			w.WriteHeader(http.StatusNoContent)
+		case r.Method == http.MethodPost && r.URL.Path == "/v1.41/containers/"+containerID+"/exec":
+			var request struct {
+				Cmd []string `json:"Cmd"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Errorf("decode exec request: %v", err)
+			}
+			execNumber++
+			execID := fmt.Sprintf("exec-%d", execNumber)
+			if len(request.Cmd) > 0 && request.Cmd[0] == "/bin/rm" {
+				if len(request.Cmd) > 3 {
+					delete(files, request.Cmd[len(request.Cmd)-1])
+				}
+				execs[execID] = struct {
+					code int
+					out  []byte
+				}{code: 0}
+			} else {
+				execs[execID] = struct {
+					code int
+					out  []byte
+				}{code: 7, out: []byte("contract-output")}
+			}
+			_, _ = w.Write([]byte(`{"Id":"` + execID + `"}`))
+		case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/v1.41/exec/") && strings.HasSuffix(r.URL.Path, "/start"):
+			execID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1.41/exec/"), "/start")
+			if entry, ok := execs[execID]; ok && len(entry.out) > 0 {
+				writeFrame(t, w, 1, entry.out)
+			}
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1.41/exec/") && strings.HasSuffix(r.URL.Path, "/json"):
+			execID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1.41/exec/"), "/json")
+			entry, ok := execs[execID]
+			if !ok {
+				http.NotFound(w, r)
+				return
+			}
+			_, _ = fmt.Fprintf(w, `{"ExitCode":%d}`, entry.code)
+		case r.Method == http.MethodGet && r.URL.Path == "/v1.41/containers/"+containerID+"/archive":
+			writeEngineArchive(t, w, r.URL.Query().Get("path"), files)
+		case r.Method == http.MethodPut && r.URL.Path == "/v1.41/containers/"+containerID+"/archive":
+			destination := r.URL.Query().Get("path")
+			tr := tar.NewReader(r.Body)
+			for {
+				header, err := tr.Next()
+				if err == io.EOF {
+					break
+				}
+				if err != nil {
+					t.Errorf("read upload tar: %v", err)
+					break
+				}
+				data, err := io.ReadAll(tr)
+				if err != nil {
+					t.Errorf("read upload entry: %v", err)
+					break
+				}
+				files[path.Join(destination, header.Name)] = data
+			}
+			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1.41/containers/"+containerID:
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Errorf("unexpected Engine request: %s %s", r.Method, r.URL.String())
+			http.Error(w, "unexpected Engine request", http.StatusNotFound)
+		}
+	}))
+	defer engine.Close()
+	backend := testRuntime(engine)
+	contract.RunBasic(t, backend, "alpine:latest")
+}
+
+func writeEngineArchive(t *testing.T, w http.ResponseWriter, target string, files map[string][]byte) {
+	t.Helper()
+	var archive bytes.Buffer
+	tw := tar.NewWriter(&archive)
+	for name, data := range files {
+		if target != "/tmp" && target != path.Dir(name) && target != name {
+			continue
+		}
+		archiveName := path.Base(name)
+		if target == "/tmp" {
+			archiveName = path.Join(strings.TrimPrefix(target, "/"), archiveName)
+		}
+		if err := tw.WriteHeader(&tar.Header{Name: archiveName, Mode: 0644, Size: int64(len(data)), Typeflag: tar.TypeReg}); err != nil {
+			t.Errorf("write archive header: %v", err)
+			return
+		}
+		if _, err := tw.Write(data); err != nil {
+			t.Errorf("write archive data: %v", err)
+			return
+		}
+		if target != "/tmp" {
+			break
+		}
+	}
+	if err := tw.Close(); err != nil {
+		t.Errorf("close archive: %v", err)
+		return
+	}
+	_, _ = w.Write(archive.Bytes())
 }
 
 func testRuntime(server *httptest.Server) *Runtime {
