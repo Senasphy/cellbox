@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/senasphy/cellbox/internal/runtime"
 	"github.com/senasphy/cellbox/internal/runtime/contract"
@@ -394,6 +395,29 @@ func TestExecTimeoutKillsDockerContainer(t *testing.T) {
 	case <-killed:
 	default:
 		t.Fatal("Docker container was not killed on timeout")
+	}
+}
+
+func TestTimeoutCleanupRequestHasDeadline(t *testing.T) {
+	started := make(chan struct{}, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1.41/containers/c1/kill" {
+			http.NotFound(w, r)
+			return
+		}
+		started <- struct{}{}
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+	r := testRuntime(server)
+	err := r.killContainerWithTimeout(context.Background(), "c1", 25*time.Millisecond)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("kill error=%v, want bounded deadline", err)
+	}
+	select {
+	case <-started:
+	default:
+		t.Fatal("kill request was not sent")
 	}
 }
 

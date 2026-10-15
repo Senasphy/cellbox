@@ -25,6 +25,7 @@ import (
 )
 
 const apiVersion = "v1.41"
+const cleanupRequestTimeout = 5 * time.Second
 
 // Runtime is a Docker Engine-backed sandbox runtime.
 type Runtime struct {
@@ -598,6 +599,12 @@ func (s *sandbox) Destroy(ctx context.Context) error {
 	return s.runtime.simple(ctx, http.MethodDelete, "/containers/"+url.PathEscape(s.id)+"?force=true&v=true", nil)
 }
 
+func (r *Runtime) killContainerWithTimeout(parent context.Context, id string, timeout time.Duration) error {
+	ctx, cancel := context.WithTimeout(parent, timeout)
+	defer cancel()
+	return r.simple(ctx, http.MethodPost, "/containers/"+url.PathEscape(id)+"/kill", nil)
+}
+
 var _ runtime.Runtime = (*Runtime)(nil)
 var _ runtime.Sandbox = (*sandbox)(nil)
 
@@ -659,7 +666,7 @@ func (h *execHandle) run(r *Runtime, containerID, id string, req runtime.ExecReq
 	if errors.Is(err, context.DeadlineExceeded) {
 		result.ExitCode = 137
 		result.Signal = 9
-		_ = r.simple(context.Background(), http.MethodPost, "/containers/"+url.PathEscape(containerID)+"/kill", nil)
+		_ = r.killContainerWithTimeout(context.Background(), containerID, cleanupRequestTimeout)
 	}
 	h.mu.Lock()
 	h.result = result
