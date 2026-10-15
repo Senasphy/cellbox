@@ -1,6 +1,7 @@
 package api
 
 import (
+	"archive/tar"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -55,7 +56,13 @@ func TestOpenAPIResponses(t *testing.T) {
 		req := httptest.NewRequest(method, target, strings.NewReader(body))
 		req.Host = "127.0.0.1:8080"
 		if body != "" {
-			req.Header.Set("Content-Type", "application/json")
+			contentType := "application/json"
+			if method == http.MethodPut && strings.Contains(target, "/archive?") {
+				contentType = "application/x-tar"
+			} else if method == http.MethodPut && strings.Contains(target, "/files?") {
+				contentType = "application/octet-stream"
+			}
+			req.Header.Set("Content-Type", contentType)
 		}
 		if authKey {
 			req.Header.Set("Authorization", "Bearer "+key.Secret)
@@ -69,6 +76,27 @@ func TestOpenAPIResponses(t *testing.T) {
 		input := &openapi3filter.ResponseValidationInput{
 			RequestValidationInput: &openapi3filter.RequestValidationInput{Request: req, PathParams: pathParams, Route: route},
 			Status:                 rec.Code, Header: rec.Header(), Body: io.NopCloser(bytes.NewReader(rec.Body.Bytes())),
+		}
+		if strings.HasSuffix(target, "/stream") && method == http.MethodGet {
+			if !strings.HasPrefix(rec.Header().Get("Content-Type"), "text/event-stream") || !strings.Contains(rec.Body.String(), "event: exit") {
+				t.Errorf("invalid event stream response: content-type=%q body=%q", rec.Header().Get("Content-Type"), rec.Body.String())
+			}
+			input.Options = &openapi3filter.Options{ExcludeResponseBody: true}
+		}
+		if strings.HasPrefix(target, "/v1/sessions/") && strings.Contains(target, "/archive?") && method == http.MethodGet {
+			if rec.Header().Get("Content-Type") != "application/x-tar" {
+				t.Errorf("archive content type=%q", rec.Header().Get("Content-Type"))
+			}
+			tr := tar.NewReader(bytes.NewReader(rec.Body.Bytes()))
+			for {
+				if _, err := tr.Next(); err == io.EOF {
+					break
+				} else if err != nil {
+					t.Errorf("invalid tar response: %v", err)
+					break
+				}
+			}
+			input.Options = &openapi3filter.Options{ExcludeResponseBody: true}
 		}
 		if err := openapi3filter.ValidateResponse(context.Background(), input); err != nil {
 			t.Errorf("response %s %s (%d): %v; body=%s", method, target, rec.Code, err, rec.Body.String())
@@ -88,7 +116,42 @@ func TestOpenAPIResponses(t *testing.T) {
 	}
 	check(http.MethodGet, "/v1/sessions", "", true)
 	check(http.MethodGet, "/v1/sessions/"+session.ID, "", true)
-	check(http.MethodPost, "/v1/sessions/"+session.ID+"/execs?wait=true", `{"argv":["echo","hi"]}`, true)
+	execPath := "/v1/sessions/" + session.ID + "/execs"
+	started := check(http.MethodPost, execPath, `{"argv":["echo","hi"]}`, true)
+	var execution struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(started.Body.Bytes(), &execution); err != nil {
+		t.Fatal(err)
+	}
+	check(http.MethodGet, execPath, "", true)
+	check(http.MethodGet, execPath+"/"+execution.ID, "", true)
+	check(http.MethodGet, execPath+"/"+execution.ID+"/stream", "", true)
+	check(http.MethodPost, execPath+"?wait=true", `{"argv":["echo","wait"]}`, true)
 	check(http.MethodGet, "/v1/sessions/"+session.ID+"/files/list", "", true)
+	filePath := "/v1/sessions/" + session.ID + "/files?path=%2Ftmp%2Fopenapi.txt"
+	check(http.MethodPut, filePath, "contract file", true)
+	check(http.MethodGet, filePath, "", true)
+	check(http.MethodGet, "/v1/sessions/"+session.ID+"/files/list?path=%2Ftmp", "", true)
+	check(http.MethodDelete, filePath, "", true)
+	archivePath := "/v1/sessions/" + session.ID + "/archive?path=%2Ftmp"
+	check(http.MethodGet, archivePath, "", true)
+	check(http.MethodPut, archivePath, contractArchive(t, "archived.txt", "archive data"), true)
 	check(http.MethodDelete, "/v1/sessions/"+session.ID, "", true)
+}
+
+func contractArchive(t *testing.T, name, contents string) string {
+	t.Helper()
+	var data bytes.Buffer
+	tw := tar.NewWriter(&data)
+	if err := tw.WriteHeader(&tar.Header{Name: name, Mode: 0600, Size: int64(len(contents)), Typeflag: tar.TypeReg}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tw.Write([]byte(contents)); err != nil {
+		t.Fatal(err)
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return data.String()
 }

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"archive/tar"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -9,6 +10,7 @@ import (
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
+	"path"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -106,10 +108,42 @@ func (f *fakeSandbox) ListDir(context.Context, string) ([]runtime.FileInfo, erro
 	return items, nil
 }
 func (f *fakeSandbox) Archive(context.Context, string) (io.ReadCloser, error) {
-	return nil, runtime.ErrUnsupported
+	var data bytes.Buffer
+	tw := tar.NewWriter(&data)
+	for name, contents := range f.files {
+		if err := tw.WriteHeader(&tar.Header{Name: path.Base(name), Mode: 0644, Size: int64(len(contents)), Typeflag: tar.TypeReg}); err != nil {
+			return nil, err
+		}
+		if _, err := tw.Write(contents); err != nil {
+			return nil, err
+		}
+	}
+	if err := tw.Close(); err != nil {
+		return nil, err
+	}
+	return io.NopCloser(bytes.NewReader(data.Bytes())), nil
 }
-func (f *fakeSandbox) Extract(context.Context, string, io.Reader) error {
-	return runtime.ErrUnsupported
+func (f *fakeSandbox) Extract(_ context.Context, dest string, r io.Reader) error {
+	if f.files == nil {
+		f.files = map[string][]byte{}
+	}
+	tr := tar.NewReader(r)
+	for {
+		header, err := tr.Next()
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		contents, err := io.ReadAll(tr)
+		if err != nil {
+			return err
+		}
+		if header.Typeflag == tar.TypeReg || header.Typeflag == tar.TypeRegA {
+			f.files[path.Join(dest, header.Name)] = contents
+		}
+	}
 }
 func (f *fakeSandbox) Snapshot(context.Context) (runtime.SnapshotInfo, error) {
 	return runtime.SnapshotInfo{}, runtime.ErrUnsupported
