@@ -226,4 +226,7 @@ func RunBasic(t testing.TB, backend runtime.Runtime, image string) {
 	if err := box.Kill(ctx); err != nil {
 		t.Fatalf("Kill: %v", err)
 	}
+	if _, err := box.Exec(ctx, runtime.ExecRequest{Argv: []string{"/bin/true"}, TimeoutMS: 1000, OutputLimit: 1024}); err == nil {
+		t.Fatal("Exec succeeded after Kill")
+	}
 }

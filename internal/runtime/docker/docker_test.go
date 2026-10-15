@@ -49,6 +49,7 @@ func TestRuntimeContractAgainstEngineStub(t *testing.T) {
 		stderr []byte
 	}{}
 	execNumber := 0
+	containerKilled := false
 	const containerID = "contract-container"
 	engine := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -57,8 +58,13 @@ func TestRuntimeContractAgainstEngineStub(t *testing.T) {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1.41/containers/create":
 			_, _ = w.Write([]byte(`{"Id":"` + containerID + `"}`))
 		case r.Method == http.MethodPost && r.URL.Path == "/v1.41/containers/"+containerID+"/start":
+			containerKilled = false
 			w.WriteHeader(http.StatusNoContent)
 		case r.Method == http.MethodPost && r.URL.Path == "/v1.41/containers/"+containerID+"/exec":
+			if containerKilled {
+				http.Error(w, "container is not running", http.StatusConflict)
+				return
+			}
 			var request struct {
 				Cmd []string `json:"Cmd"`
 			}
@@ -120,6 +126,7 @@ func TestRuntimeContractAgainstEngineStub(t *testing.T) {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1.41/containers/"+containerID+"/stats":
 			_, _ = w.Write([]byte(`{"cpu_stats":{"cpu_usage":{"total_usage":123}},"memory_stats":{"usage":456},"pids_stats":{"current":2}}`))
 		case r.Method == http.MethodPost && r.URL.Path == "/v1.41/containers/"+containerID+"/kill":
+			containerKilled = true
 			w.WriteHeader(http.StatusNoContent)
 		case r.Method == http.MethodGet && r.URL.Path == "/v1.41/containers/"+containerID+"/archive":
 			writeEngineArchive(t, w, r.URL.Query().Get("path"), files)
