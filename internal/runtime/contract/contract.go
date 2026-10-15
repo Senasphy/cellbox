@@ -1,0 +1,120 @@
+// Package contract contains reusable conformance checks for runtime backends.
+package contract
+
+import (
+	"archive/tar"
+	"bytes"
+	"context"
+	"io"
+	"testing"
+	"time"
+
+	"github.com/senasphy/cellbox/internal/runtime"
+)
+
+// RunBasic checks the backend operations shared by the Docker and native runtimes.
+// The image must provide /bin/sh and the basic POSIX utilities used below.
+func RunBasic(t testing.TB, backend runtime.Runtime, image string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	resolved, err := backend.EnsureImage(ctx, image)
+	if err != nil {
+		t.Fatalf("EnsureImage(%q): %v", image, err)
+	}
+	box, err := backend.Create(ctx, runtime.SandboxSpec{
+		ID: "ses_runtime_contract_" + time.Now().UTC().Format("20060102150405.000000000"), Image: resolved,
+		Limits:      runtime.Limits{CPUMillicores: 1000, MemoryMB: 256, PIDs: 64},
+		NetworkMode: "none",
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	defer func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cleanupCancel()
+		if err := box.Destroy(cleanupCtx); err != nil {
+			t.Errorf("Destroy: %v", err)
+		}
+	}()
+	if box.ID() == "" {
+		t.Fatal("Create returned an empty sandbox ID")
+	}
+
+	handle, err := box.Exec(ctx, runtime.ExecRequest{Argv: []string{"/bin/sh", "-c", "printf contract-output; exit 7"}, TimeoutMS: 10_000, OutputLimit: 4096})
+	if err != nil {
+		t.Fatalf("Exec: %v", err)
+	}
+	var output bytes.Buffer
+	for chunk := range handle.Output() {
+		output.Write(chunk.Data)
+	}
+	result, err := handle.Wait(ctx)
+	if err != nil {
+		t.Fatalf("Exec.Wait: %v", err)
+	}
+	if result.ExitCode != 7 || output.String() != "contract-output" {
+		t.Fatalf("exec result=%+v output=%q", result, output.String())
+	}
+
+	const file = "/tmp/cellbox-contract.txt"
+	if err := box.WriteFile(ctx, file, bytes.NewBufferString("file-contract"), 0640); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	read, info, err := box.ReadFile(ctx, file)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	data, readErr := io.ReadAll(read)
+	closeErr := read.Close()
+	if readErr != nil || closeErr != nil {
+		t.Fatalf("read file: read=%v close=%v", readErr, closeErr)
+	}
+	if string(data) != "file-contract" || info.Size != int64(len(data)) {
+		t.Fatalf("read file data=%q info=%+v", data, info)
+	}
+
+	entries, err := box.ListDir(ctx, "/tmp")
+	if err != nil {
+		t.Fatalf("ListDir: %v", err)
+	}
+	found := false
+	for _, entry := range entries {
+		if entry.Path == file && !entry.IsDir {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("ListDir(/tmp) omitted %s: %+v", file, entries)
+	}
+
+	var archive bytes.Buffer
+	tw := tar.NewWriter(&archive)
+	if err := tw.WriteHeader(&tar.Header{Name: "restored.txt", Mode: 0600, Size: int64(len("archive-contract")), Typeflag: tar.TypeReg}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tw.Write([]byte("archive-contract")); err != nil {
+		t.Fatal(err)
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := box.Extract(ctx, "/tmp", bytes.NewReader(archive.Bytes())); err != nil {
+		t.Fatalf("Extract: %v", err)
+	}
+	restored, _, err := box.ReadFile(ctx, "/tmp/restored.txt")
+	if err != nil {
+		t.Fatalf("ReadFile after Extract: %v", err)
+	}
+	restoredBytes, readErr := io.ReadAll(restored)
+	_ = restored.Close()
+	if readErr != nil || string(restoredBytes) != "archive-contract" {
+		t.Fatalf("extracted file=%q read error=%v", restoredBytes, readErr)
+	}
+	if err := box.DeleteFile(ctx, file); err != nil {
+		t.Fatalf("DeleteFile: %v", err)
+	}
+	if _, _, err := box.ReadFile(ctx, file); err == nil {
+		t.Fatal("ReadFile succeeded after DeleteFile")
+	}
+}

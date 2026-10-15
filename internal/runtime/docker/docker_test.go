@@ -12,11 +12,29 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/senasphy/cellbox/internal/runtime"
+	"github.com/senasphy/cellbox/internal/runtime/contract"
 )
+
+func TestRuntimeContract(t *testing.T) {
+	socket := os.Getenv("CELLBOX_DOCKER_SOCKET")
+	if socket == "" {
+		socket = "/var/run/docker.sock"
+	}
+	if _, err := os.Stat(filepath.Clean(socket)); err != nil {
+		t.Skipf("Docker contract requires an available daemon socket at %s: %v", socket, err)
+	}
+	image := os.Getenv("CELLBOX_CONTRACT_IMAGE")
+	if image == "" {
+		image = "alpine:latest"
+	}
+	contract.RunBasic(t, New(socket), image)
+}
 
 func testRuntime(server *httptest.Server) *Runtime {
 	return &Runtime{client: server.Client(), host: server.URL}
