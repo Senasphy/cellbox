@@ -44,8 +44,9 @@ func TestRuntimeContract(t *testing.T) {
 func TestRuntimeContractAgainstEngineStub(t *testing.T) {
 	files := map[string][]byte{}
 	execs := map[string]struct {
-		code int
-		out  []byte
+		code   int
+		out    []byte
+		stderr []byte
 	}{}
 	execNumber := 0
 	const containerID = "contract-container"
@@ -71,20 +72,39 @@ func TestRuntimeContractAgainstEngineStub(t *testing.T) {
 					delete(files, request.Cmd[len(request.Cmd)-1])
 				}
 				execs[execID] = struct {
-					code int
-					out  []byte
+					code   int
+					out    []byte
+					stderr []byte
 				}{code: 0}
+			} else if strings.Contains(strings.Join(request.Cmd, " "), "contract-stdout") {
+				execs[execID] = struct {
+					code   int
+					out    []byte
+					stderr []byte
+				}{code: 0, out: []byte("contract-stdout"), stderr: []byte("contract-stderr")}
+			} else if strings.Contains(strings.Join(request.Cmd, " "), "contract-large-output") {
+				execs[execID] = struct {
+					code   int
+					out    []byte
+					stderr []byte
+				}{code: 0, out: bytes.Repeat([]byte("x"), 1024)}
 			} else {
 				execs[execID] = struct {
-					code int
-					out  []byte
+					code   int
+					out    []byte
+					stderr []byte
 				}{code: 7, out: []byte("contract-output")}
 			}
 			_, _ = w.Write([]byte(`{"Id":"` + execID + `"}`))
 		case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/v1.41/exec/") && strings.HasSuffix(r.URL.Path, "/start"):
 			execID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1.41/exec/"), "/start")
-			if entry, ok := execs[execID]; ok && len(entry.out) > 0 {
-				writeFrame(t, w, 1, entry.out)
+			if entry, ok := execs[execID]; ok {
+				if len(entry.out) > 0 {
+					writeFrame(t, w, 1, entry.out)
+				}
+				if len(entry.stderr) > 0 {
+					writeFrame(t, w, 2, entry.stderr)
+				}
 			}
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1.41/exec/") && strings.HasSuffix(r.URL.Path, "/json"):
 			execID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1.41/exec/"), "/json")

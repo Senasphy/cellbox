@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/senasphy/cellbox/internal/api/problem"
 	"github.com/senasphy/cellbox/internal/runtime"
+	"github.com/senasphy/cellbox/internal/sandboxpath"
 )
 
 const maxFileTransferBytes = 256 << 20
@@ -170,15 +172,15 @@ func fileTarget(w http.ResponseWriter, r *http.Request) (string, bool) {
 	if target == "" {
 		target = "/"
 	}
-	if strings.ContainsRune(target, 0) {
-		problem.Write(w, problem.Problem{Title: "Invalid path", Status: http.StatusUnprocessableEntity, Code: "path_invalid"})
+	if err := sandboxpath.Validate(target); err != nil {
+		code, title := "path_invalid", "Invalid path"
+		if errors.Is(err, sandboxpath.ErrEscape) {
+			code, title = "path_outside_sandbox", "Path outside sandbox"
+		}
+		problem.Write(w, problem.Problem{Title: title, Status: http.StatusUnprocessableEntity, Code: code, Detail: err.Error()})
 		return "", false
 	}
 	clean := path.Clean("/" + target)
-	if !path.IsAbs(target) && (target == ".." || strings.HasPrefix(path.Clean(target), "../")) {
-		problem.Write(w, problem.Problem{Title: "Path outside sandbox", Status: http.StatusUnprocessableEntity, Code: "path_outside_sandbox"})
-		return "", false
-	}
 	return clean, true
 }
 

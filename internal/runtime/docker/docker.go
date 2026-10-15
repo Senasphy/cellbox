@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/senasphy/cellbox/internal/runtime"
+	"github.com/senasphy/cellbox/internal/sandboxpath"
 )
 
 const apiVersion = "v1.41"
@@ -256,11 +257,8 @@ func (s *sandbox) OpenTerminal(context.Context, runtime.TerminalRequest) (runtim
 	return nil, runtime.ErrUnsupported
 }
 func cleanPath(p string) (string, error) {
-	if strings.TrimSpace(p) == "" || strings.ContainsRune(p, 0) {
-		return "", errors.New("invalid sandbox path")
-	}
-	if !path.IsAbs(p) && (p == ".." || strings.HasPrefix(path.Clean(p), "../")) {
-		return "", errors.New("path escapes sandbox")
+	if err := sandboxpath.Validate(p); err != nil {
+		return "", err
 	}
 	return path.Clean("/" + p), nil
 }
@@ -422,29 +420,28 @@ func (s *sandbox) Extract(ctx context.Context, p string, r io.Reader) error {
 	if err != nil {
 		return err
 	}
-	reader, writer := io.Pipe()
-	sanitizeDone := make(chan error, 1)
-	go func() {
-		sanitizeErr := sanitizeTarStream(r, writer, clean)
-		if sanitizeErr != nil {
-			_ = writer.CloseWithError(sanitizeErr)
-		} else {
-			_ = writer.Close()
-		}
-		sanitizeDone <- sanitizeErr
-	}()
-	resp, err := s.runtime.requestReader(ctx, http.MethodPut, "/containers/"+url.PathEscape(s.id)+"/archive?path="+url.QueryEscape(clean), "application/x-tar", reader)
+	archive, err := os.CreateTemp("", "cellbox-archive-*.tar")
 	if err != nil {
-		_ = reader.CloseWithError(err)
-		_ = <-sanitizeDone
+		return fmt.Errorf("create temporary archive: %w", err)
+	}
+	archivePath := archive.Name()
+	defer os.Remove(archivePath)
+	defer archive.Close()
+	if err = sanitizeTarStream(r, archive, clean); err != nil {
+		_ = archive.Close()
+		return err
+	}
+	if _, err = archive.Seek(0, io.SeekStart); err != nil {
+		_ = archive.Close()
+		return fmt.Errorf("rewind sanitized archive: %w", err)
+	}
+	resp, err := s.runtime.requestReader(ctx, http.MethodPut, "/containers/"+url.PathEscape(s.id)+"/archive?path="+url.QueryEscape(clean), "application/x-tar", archive)
+	if err != nil {
+		_ = archive.Close()
 		return fmt.Errorf("extract sandbox archive: %w", err)
 	}
-	closeErr := resp.Body.Close()
-	sanitizeErr := <-sanitizeDone
-	if sanitizeErr != nil {
-		return sanitizeErr
-	}
-	return closeErr
+	responseErr := resp.Body.Close()
+	return responseErr
 }
 
 func validateTar(data []byte, destination string) error {

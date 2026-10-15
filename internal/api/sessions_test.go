@@ -230,6 +230,21 @@ func TestSessionLifecycleAndOwnership(t *testing.T) {
 	if traversalResult.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("path traversal status=%d body=%s", traversalResult.Code, traversalResult.Body.String())
 	}
+	absoluteTraversal := httptest.NewRequest(http.MethodGet, "/v1/sessions/"+response.ID+"/files?path=%2F..%2F..%2Fetc%2Fpasswd", nil)
+	absoluteTraversal.Header.Set("Authorization", "Bearer "+user.Secret)
+	absoluteTraversalResult := httptest.NewRecorder()
+	handler.ServeHTTP(absoluteTraversalResult, absoluteTraversal)
+	if absoluteTraversalResult.Code != http.StatusUnprocessableEntity || !strings.Contains(absoluteTraversalResult.Body.String(), "path_outside_sandbox") {
+		t.Fatalf("absolute path traversal status=%d body=%s", absoluteTraversalResult.Code, absoluteTraversalResult.Body.String())
+	}
+	badCwd := httptest.NewRequest(http.MethodPost, "/v1/sessions/"+response.ID+"/execs", strings.NewReader(`{"argv":["pwd"],"cwd":"/../../etc"}`))
+	badCwd.Header.Set("Authorization", "Bearer "+user.Secret)
+	badCwd.Header.Set("Content-Type", "application/json")
+	badCwdResult := httptest.NewRecorder()
+	handler.ServeHTTP(badCwdResult, badCwd)
+	if badCwdResult.Code != http.StatusUnprocessableEntity || !strings.Contains(badCwdResult.Body.String(), "path_outside_sandbox") {
+		t.Fatalf("absolute cwd traversal status=%d body=%s", badCwdResult.Code, badCwdResult.Body.String())
+	}
 	deleteFile := httptest.NewRequest(http.MethodDelete, filePath, nil)
 	deleteFile.Header.Set("Authorization", "Bearer "+user.Secret)
 	deleteResult := httptest.NewRecorder()

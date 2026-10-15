@@ -15,6 +15,7 @@ import (
 	"github.com/senasphy/cellbox/internal/api/problem"
 	"github.com/senasphy/cellbox/internal/id"
 	"github.com/senasphy/cellbox/internal/runtime"
+	"github.com/senasphy/cellbox/internal/sandboxpath"
 	"github.com/senasphy/cellbox/internal/store"
 )
 
@@ -401,8 +402,8 @@ func sessionLimitMaxTimeout(ttl int) int {
 	return ttl * 1000
 }
 func cleanExecPath(value string) (string, error) {
-	if strings.ContainsRune(value, 0) {
-		return "", errors.New("working directory contains NUL")
+	if err := sandboxpath.Validate(value); err != nil {
+		return "", err
 	}
 	if !path.IsAbs(value) {
 		clean := path.Clean(value)

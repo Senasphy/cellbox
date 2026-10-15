@@ -59,6 +59,67 @@ func RunBasic(t testing.TB, backend runtime.Runtime, image string) {
 		t.Fatalf("exec result=%+v output=%q", result, output.String())
 	}
 
+	handle, err = box.Exec(ctx, runtime.ExecRequest{Argv: []string{"/bin/sh", "-c", "printf contract-stdout; printf contract-stderr >&2"}, TimeoutMS: 10_000, OutputLimit: 4096})
+	if err != nil {
+		t.Fatalf("Exec stdout/stderr: %v", err)
+	}
+	streams := map[string]string{}
+	for chunk := range handle.Output() {
+		streams[chunk.Stream] += string(chunk.Data)
+	}
+	result, err = handle.Wait(ctx)
+	if err != nil {
+		t.Fatalf("Exec stdout/stderr Wait: %v", err)
+	}
+	if result.ExitCode != 0 || streams["stdout"] != "contract-stdout" || streams["stderr"] != "contract-stderr" {
+		t.Fatalf("stream result=%+v streams=%v", result, streams)
+	}
+
+	handle, err = box.Exec(ctx, runtime.ExecRequest{Argv: []string{"/bin/sh", "-c", "printf contract-large-output >/dev/null; i=0; while [ \"$i\" -lt 1024 ]; do printf x; i=$((i+1)); done"}, TimeoutMS: 10_000, OutputLimit: 128})
+	if err != nil {
+		t.Fatalf("Exec output cap: %v", err)
+	}
+	var capped bytes.Buffer
+	for chunk := range handle.Output() {
+		capped.Write(chunk.Data)
+	}
+	result, err = handle.Wait(ctx)
+	if err != nil {
+		t.Fatalf("Exec output cap Wait: %v", err)
+	}
+	if result.ExitCode != 0 || result.OutputBytes != 1024 || !result.Truncated || capped.Len() != 128 {
+		t.Fatalf("output cap result=%+v visible=%d", result, capped.Len())
+	}
+
+	if _, _, err := box.ReadFile(ctx, "/../../etc/passwd"); err == nil {
+		t.Fatal("ReadFile accepted a path outside the sandbox")
+	}
+	if err := box.WriteFile(ctx, "/../escape", bytes.NewBufferString("bad"), 0600); err == nil {
+		t.Fatal("WriteFile accepted a path outside the sandbox")
+	}
+	if _, err := box.Archive(ctx, "/../../"); err == nil {
+		t.Fatal("Archive accepted a path outside the sandbox")
+	}
+	var traversal bytes.Buffer
+	traversalWriter := tar.NewWriter(&traversal)
+	if err := traversalWriter.WriteHeader(&tar.Header{Name: "partial.txt", Mode: 0600, Size: 3, Typeflag: tar.TypeReg}); err != nil {
+		t.Fatal(err)
+	}
+	_, _ = traversalWriter.Write([]byte("bad"))
+	if err := traversalWriter.WriteHeader(&tar.Header{Name: "../../escape", Mode: 0600, Size: 3, Typeflag: tar.TypeReg}); err != nil {
+		t.Fatal(err)
+	}
+	_, _ = traversalWriter.Write([]byte("bad"))
+	if err := traversalWriter.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := box.Extract(ctx, "/tmp", bytes.NewReader(traversal.Bytes())); err == nil {
+		t.Fatal("Extract accepted a traversal archive")
+	}
+	if _, _, err := box.ReadFile(ctx, "/tmp/partial.txt"); err == nil {
+		t.Fatal("Extract wrote an entry before rejecting a later traversal entry")
+	}
+
 	const file = "/tmp/cellbox-contract.txt"
 	if err := box.WriteFile(ctx, file, bytes.NewBufferString("file-contract"), 0640); err != nil {
 		t.Fatalf("WriteFile: %v", err)
