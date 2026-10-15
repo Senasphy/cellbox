@@ -53,7 +53,8 @@ func TestOpenAPIResponses(t *testing.T) {
 
 	check := func(method, target, body string, authKey bool) *httptest.ResponseRecorder {
 		t.Helper()
-		req := httptest.NewRequest(method, target, strings.NewReader(body))
+		bodyBytes := []byte(body)
+		req := httptest.NewRequest(method, target, bytes.NewReader(bodyBytes))
 		req.Host = "127.0.0.1:8080"
 		if body != "" {
 			contentType := "application/json"
@@ -67,14 +68,27 @@ func TestOpenAPIResponses(t *testing.T) {
 		if authKey {
 			req.Header.Set("Authorization", "Bearer "+key.Secret)
 		}
-		rec := httptest.NewRecorder()
-		handler.ServeHTTP(rec, req)
 		route, pathParams, err := router.FindRoute(req)
 		if err != nil {
 			t.Fatalf("route %s %s: %v", method, target, err)
 		}
+		request := req.Clone(context.Background())
+		request.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+		request.ContentLength = int64(len(bodyBytes))
+		requestOptions := &openapi3filter.Options{AuthenticationFunc: openapi3filter.NoopAuthenticationFunc}
+		contentType := req.Header.Get("Content-Type")
+		if contentType == "application/octet-stream" || contentType == "application/x-tar" {
+			requestOptions.ExcludeRequestBody = true
+		}
+		requestInput := &openapi3filter.RequestValidationInput{Request: request, PathParams: pathParams, Route: route, Options: requestOptions}
+		if err := openapi3filter.ValidateRequest(context.Background(), requestInput); err != nil {
+			t.Errorf("request %s %s: %v", method, target, err)
+		}
+		rec := httptest.NewRecorder()
+		req.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+		handler.ServeHTTP(rec, req)
 		input := &openapi3filter.ResponseValidationInput{
-			RequestValidationInput: &openapi3filter.RequestValidationInput{Request: req, PathParams: pathParams, Route: route},
+			RequestValidationInput: requestInput,
 			Status:                 rec.Code, Header: rec.Header(), Body: io.NopCloser(bytes.NewReader(rec.Body.Bytes())),
 		}
 		if strings.HasSuffix(target, "/stream") && method == http.MethodGet {
