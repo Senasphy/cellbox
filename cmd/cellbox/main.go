@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -31,9 +32,22 @@ var version = "dev"
 
 func main() {
 	if err := newRoot().Execute(); err != nil {
+		var processExit *commandExitError
+		if errors.As(err, &processExit) {
+			fmt.Fprintln(os.Stderr, processExit.Error())
+			os.Exit(processExit.code)
+		}
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+}
+
+type commandExitError struct {
+	code int
+}
+
+func (e *commandExitError) Error() string {
+	return fmt.Sprintf("command exited with status %d", e.code)
 }
 func newRoot() *cobra.Command {
 	root := &cobra.Command{Use: "cellbox", Short: "Self-hostable disposable computers for AI agents", SilenceUsage: true}
@@ -273,6 +287,7 @@ func streamRunOutput(ctx context.Context, client *http.Client, base, key, target
 	var data strings.Builder
 	var exitCode int
 	gotExit := false
+	commandFailed := false
 	flushEvent := func() error {
 		if data.Len() == 0 {
 			event = ""
@@ -301,12 +316,21 @@ func streamRunOutput(ctx context.Context, client *http.Client, base, key, target
 			}
 		case "exit", "error":
 			var result struct {
-				ExitCode int `json:"exit_code"`
+				ExitCode *int   `json:"exit_code"`
+				Signal   *int   `json:"signal"`
+				State    string `json:"state"`
 			}
 			if err := json.Unmarshal([]byte(payload), &result); err != nil {
 				return err
 			}
-			exitCode, gotExit = result.ExitCode, true
+			if result.ExitCode != nil {
+				exitCode = *result.ExitCode
+			} else if result.Signal != nil && *result.Signal > 0 {
+				exitCode = 128 + *result.Signal
+			} else if event == "error" || result.State == "failed" {
+				exitCode = 1
+			}
+			commandFailed, gotExit = event == "error" || result.State == "failed", true
 		}
 		event, data = "", strings.Builder{}
 		return nil
@@ -339,7 +363,10 @@ func streamRunOutput(ctx context.Context, client *http.Client, base, key, target
 		return fmt.Errorf("stream ended before command exit event")
 	}
 	if exitCode != 0 {
-		return fmt.Errorf("command exited with status %d", exitCode)
+		return &commandExitError{code: exitCode}
+	}
+	if commandFailed {
+		return &commandExitError{code: 1}
 	}
 	return nil
 }

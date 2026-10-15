@@ -2,7 +2,9 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -104,5 +106,31 @@ func TestRunCreatesStreamsAndDestroysSession(t *testing.T) {
 	}
 	if out.String() != "hello\n" {
 		t.Fatalf("output=%q", out.String())
+	}
+}
+
+func TestRunPreservesRemoteCommandExitStatus(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		data string
+		want int
+	}{
+		{name: "exit code", data: `{"exit_code":7,"state":"exited"}`, want: 7},
+		{name: "signal", data: `{"signal":15,"state":"exited"}`, want: 143},
+		{name: "failed exec", data: `{"state":"failed"}`, want: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "text/event-stream")
+				_, _ = w.Write([]byte("event: exit\ndata: " + tc.data + "\n\n"))
+			}))
+			defer server.Close()
+			var stdout, stderr bytes.Buffer
+			err := streamRunOutput(context.Background(), server.Client(), server.URL, "key", "/stream", &stdout, &stderr)
+			var exitErr *commandExitError
+			if !errors.As(err, &exitErr) || exitErr.code != tc.want {
+				t.Fatalf("error=%v, want command exit %d", err, tc.want)
+			}
+		})
 	}
 }
