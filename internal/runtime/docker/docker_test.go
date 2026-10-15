@@ -16,6 +16,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -47,9 +48,11 @@ func TestRuntimeContractAgainstEngineStub(t *testing.T) {
 		code   int
 		out    []byte
 		stderr []byte
+		delay  bool
 	}{}
 	execNumber := 0
 	containerKilled := false
+	var stateMu sync.Mutex
 	const containerID = "contract-container"
 	engine := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -58,10 +61,15 @@ func TestRuntimeContractAgainstEngineStub(t *testing.T) {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1.41/containers/create":
 			_, _ = w.Write([]byte(`{"Id":"` + containerID + `"}`))
 		case r.Method == http.MethodPost && r.URL.Path == "/v1.41/containers/"+containerID+"/start":
+			stateMu.Lock()
 			containerKilled = false
+			stateMu.Unlock()
 			w.WriteHeader(http.StatusNoContent)
 		case r.Method == http.MethodPost && r.URL.Path == "/v1.41/containers/"+containerID+"/exec":
-			if containerKilled {
+			stateMu.Lock()
+			killed := containerKilled
+			stateMu.Unlock()
+			if killed {
 				http.Error(w, "container is not running", http.StatusConflict)
 				return
 			}
@@ -81,30 +89,44 @@ func TestRuntimeContractAgainstEngineStub(t *testing.T) {
 					code   int
 					out    []byte
 					stderr []byte
+					delay  bool
 				}{code: 0}
 			} else if strings.Contains(strings.Join(request.Cmd, " "), "contract-stdout") {
 				execs[execID] = struct {
 					code   int
 					out    []byte
 					stderr []byte
+					delay  bool
 				}{code: 0, out: []byte("contract-stdout"), stderr: []byte("contract-stderr")}
 			} else if strings.Contains(strings.Join(request.Cmd, " "), "contract-large-output") {
 				execs[execID] = struct {
 					code   int
 					out    []byte
 					stderr []byte
+					delay  bool
 				}{code: 0, out: bytes.Repeat([]byte("x"), 1024)}
+			} else if strings.Contains(strings.Join(request.Cmd, " "), "contract-timeout") {
+				execs[execID] = struct {
+					code   int
+					out    []byte
+					stderr []byte
+					delay  bool
+				}{code: 0, delay: true}
 			} else {
 				execs[execID] = struct {
 					code   int
 					out    []byte
 					stderr []byte
+					delay  bool
 				}{code: 7, out: []byte("contract-output")}
 			}
 			_, _ = w.Write([]byte(`{"Id":"` + execID + `"}`))
 		case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/v1.41/exec/") && strings.HasSuffix(r.URL.Path, "/start"):
 			execID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1.41/exec/"), "/start")
 			if entry, ok := execs[execID]; ok {
+				if entry.delay {
+					time.Sleep(250 * time.Millisecond)
+				}
 				if len(entry.out) > 0 {
 					writeFrame(t, w, 1, entry.out)
 				}
@@ -126,7 +148,9 @@ func TestRuntimeContractAgainstEngineStub(t *testing.T) {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1.41/containers/"+containerID+"/stats":
 			_, _ = w.Write([]byte(`{"cpu_stats":{"cpu_usage":{"total_usage":123}},"memory_stats":{"usage":456},"pids_stats":{"current":2}}`))
 		case r.Method == http.MethodPost && r.URL.Path == "/v1.41/containers/"+containerID+"/kill":
+			stateMu.Lock()
 			containerKilled = true
+			stateMu.Unlock()
 			w.WriteHeader(http.StatusNoContent)
 		case r.Method == http.MethodGet && r.URL.Path == "/v1.41/containers/"+containerID+"/archive":
 			writeEngineArchive(t, w, r.URL.Query().Get("path"), files)
@@ -470,6 +494,20 @@ func TestExecTimeoutKillsDockerContainer(t *testing.T) {
 	case <-killed:
 	default:
 		t.Fatal("Docker container was not killed on timeout")
+	}
+}
+
+func TestKillIsIdempotentForStoppedContainer(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1.41/containers/c1/kill" {
+			http.NotFound(w, r)
+			return
+		}
+		http.Error(w, "container is not running", http.StatusConflict)
+	}))
+	defer server.Close()
+	if err := (&sandbox{runtime: testRuntime(server), id: "c1"}).Kill(context.Background()); err != nil {
+		t.Fatalf("Kill on stopped container: %v", err)
 	}
 }
 

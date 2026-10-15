@@ -223,6 +223,16 @@ func RunBasic(t testing.TB, backend runtime.Runtime, image string) {
 			t.Fatalf("OpenTerminal error=%v, want ErrUnsupported", err)
 		}
 	}
+	timed, err := box.Exec(ctx, runtime.ExecRequest{Argv: []string{"/bin/sh", "-c", ": contract-timeout; while :; do :; done"}, TimeoutMS: 100, OutputLimit: 1024})
+	if err != nil {
+		t.Fatalf("Exec timeout: %v", err)
+	}
+	for range timed.Output() {
+	}
+	timeoutResult, timeoutErr := timed.Wait(ctx)
+	if !errors.Is(timeoutErr, context.DeadlineExceeded) || timeoutResult.Signal != 9 {
+		t.Fatalf("timeout result=%+v error=%v", timeoutResult, timeoutErr)
+	}
 	if err := box.Kill(ctx); err != nil {
 		t.Fatalf("Kill: %v", err)
 	}

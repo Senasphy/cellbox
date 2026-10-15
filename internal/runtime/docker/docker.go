@@ -590,7 +590,11 @@ func (s *sandbox) Stats(ctx context.Context) (runtime.Stats, error) {
 	return runtime.Stats{CPUUsageNS: raw.CPU.Usage.Total, MemoryBytes: raw.Memory.Usage, PIDs: raw.PIDs.Current}, nil
 }
 func (s *sandbox) Kill(ctx context.Context) error {
-	return s.runtime.simple(ctx, http.MethodPost, "/containers/"+url.PathEscape(s.id)+"/kill", nil)
+	err := s.runtime.simple(ctx, http.MethodPost, "/containers/"+url.PathEscape(s.id)+"/kill", nil)
+	if err != nil && (strings.Contains(err.Error(), "returned 404") || strings.Contains(err.Error(), "returned 409")) {
+		return nil
+	}
+	return err
 }
 func (s *sandbox) Destroy(ctx context.Context) error {
 	return s.runtime.simple(ctx, http.MethodDelete, "/containers/"+url.PathEscape(s.id)+"?force=true&v=true", nil)
