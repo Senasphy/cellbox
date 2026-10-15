@@ -43,6 +43,7 @@ func NewHandler(store KeyStore, backend runtime.Runtime, backendName string) htt
 func NewHandlerWithConfig(store KeyStore, backend runtime.Runtime, backendName string, cfg config.Config) http.Handler {
 	s := &server{store: store, backend: backend, backendName: backendName, mux: http.NewServeMux(), cfg: cfg}
 	s.mux.Handle("GET /healthz", withTimeout(5*time.Second, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok\n"))
 	})))
@@ -79,6 +80,7 @@ func (s *server) ready(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte("ok\n"))
 }

@@ -2,7 +2,7 @@ openapi: 3.1.0
 info:
   title: cellbox API
   version: 1.0.0
-  description: Initial contract skeleton. Endpoints are added with Phase 1.
+  description: Initial single-node session, exec, and file API surface.
 servers:
   - url: http://127.0.0.1:8080
 paths:
@@ -12,12 +12,16 @@ paths:
       responses:
         '200':
           description: Service is alive
+          content: { text/plain: { schema: { type: string } } }
+        default: { description: Problem response, content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } } }
   /readyz:
     get:
       operationId: readiness
       responses:
         '200':
           description: Store is ready
+          content: { text/plain: { schema: { type: string } } }
+        default: { description: Problem response, content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } } }
   /v1/system:
     get:
       operationId: systemInfo
@@ -26,14 +30,19 @@ paths:
       responses:
         '200':
           description: Backend and capabilities
+          content: { application/json: { schema: { $ref: '#/components/schemas/System' } } }
         '401':
           description: Missing or invalid API key
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '403': { description: Insufficient scope, content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+        default: { description: Problem response, content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } } }
   /v1/sessions:
     get:
       operationId: listSessions
       security: [{ bearerAuth: [] }]
       responses:
-        '200': { description: Visible sessions }
+        '200': { description: Visible sessions, content: { application/json: { schema: { $ref: '#/components/schemas/SessionList' } } } }
+        default: { description: Problem response, content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } } }
     post:
       operationId: createSession
       security: [{ bearerAuth: [] }]
@@ -43,8 +52,9 @@ paths:
           application/json:
             schema: { $ref: '#/components/schemas/CreateSession' }
       responses:
-        '201': { description: Session created }
-        '422': { description: Invalid request }
+        '201': { description: Session created, content: { application/json: { schema: { $ref: '#/components/schemas/Session' } } } }
+        '422': { description: Invalid request, content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+        default: { description: Problem response, content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } } }
   /v1/sessions/{id}:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string } }
@@ -52,13 +62,15 @@ paths:
       operationId: getSession
       security: [{ bearerAuth: [] }]
       responses:
-        '200': { description: Session details }
-        '404': { description: Session not found }
+        '200': { description: Session details, content: { application/json: { schema: { $ref: '#/components/schemas/Session' } } } }
+        '404': { description: Session not found, content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+        default: { description: Problem response, content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } } }
     delete:
       operationId: destroySession
       security: [{ bearerAuth: [] }]
       responses:
         '204': { description: Session destroyed }
+        default: { description: Problem response, content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } } }
   /v1/sessions/{id}/execs:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string } }
@@ -73,13 +85,15 @@ paths:
           application/json:
             schema: { $ref: '#/components/schemas/ExecRequest' }
       responses:
-        '202': { description: Exec started; stream_url points to output events }
-        '200': { description: Completed exec when wait=true }
+        '202': { description: Exec started; stream_url points to output events, content: { application/json: { schema: { $ref: '#/components/schemas/Exec' } } } }
+        '200': { description: Completed exec when wait=true, content: { application/json: { schema: { $ref: '#/components/schemas/ExecWait' } } } }
+        default: { description: Problem response, content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } } }
     get:
       operationId: listExecs
       security: [{ bearerAuth: [] }]
       responses:
-        '200': { description: Execs for the session }
+        '200': { description: Execs for the session, content: { application/json: { schema: { $ref: '#/components/schemas/ExecList' } } } }
+        default: { description: Problem response, content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } } }
   /v1/sessions/{id}/execs/{execID}:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string } }
@@ -88,8 +102,9 @@ paths:
       operationId: getExec
       security: [{ bearerAuth: [] }]
       responses:
-        '200': { description: Exec status }
-        '404': { description: Exec not found }
+        '200': { description: Exec status, content: { application/json: { schema: { $ref: '#/components/schemas/Exec' } } } }
+        '404': { description: Exec not found, content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+        default: { description: Problem response, content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } } }
   /v1/sessions/{id}/execs/{execID}/stream:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string } }
@@ -99,7 +114,8 @@ paths:
       operationId: streamExec
       security: [{ bearerAuth: [] }]
       responses:
-        '200': { description: Resumable server-sent exec output }
+        '200': { description: Resumable server-sent exec output, content: { text/event-stream: { schema: { type: string } } } }
+        default: { description: Problem response, content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } } }
   /v1/sessions/{id}/files:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string } }
@@ -109,6 +125,7 @@ paths:
       security: [{ bearerAuth: [] }]
       responses:
         '200': { description: File bytes, content: { application/octet-stream: { schema: { type: string, format: binary } } } }
+        default: { description: Problem response, content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } } }
     put:
       operationId: writeFile
       security: [{ bearerAuth: [] }]
@@ -118,11 +135,13 @@ paths:
           application/octet-stream: { schema: { type: string, format: binary } }
       responses:
         '204': { description: File written }
+        default: { description: Problem response, content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } } }
     delete:
       operationId: deleteFile
       security: [{ bearerAuth: [] }]
       responses:
         '204': { description: File deleted }
+        default: { description: Problem response, content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } } }
   /v1/sessions/{id}/files/list:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string } }
@@ -131,7 +150,8 @@ paths:
       operationId: listFiles
       security: [{ bearerAuth: [] }]
       responses:
-        '200': { description: Directory entries }
+        '200': { description: Directory entries, content: { application/json: { schema: { $ref: '#/components/schemas/FileList' } } } }
+        default: { description: Problem response, content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } } }
   /v1/sessions/{id}/archive:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string } }
@@ -141,6 +161,7 @@ paths:
       security: [{ bearerAuth: [] }]
       responses:
         '200': { description: Tar archive, content: { application/x-tar: { schema: { type: string, format: binary } } } }
+        default: { description: Problem response, content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } } }
     put:
       operationId: uploadArchive
       security: [{ bearerAuth: [] }]
@@ -150,12 +171,95 @@ paths:
           application/x-tar: { schema: { type: string, format: binary } }
       responses:
         '204': { description: Archive extracted }
+        default: { description: Problem response, content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } } }
 components:
   securitySchemes:
     bearerAuth:
       type: http
       scheme: bearer
   schemas:
+    Problem:
+      type: object
+      required: [title, status, code]
+      properties:
+        type: { type: string }
+        title: { type: string }
+        status: { type: integer }
+        detail: { type: string }
+        code: { type: string }
+    System:
+      type: object
+      required: [backend, capabilities]
+      properties:
+        backend: { type: string }
+        capabilities: { type: object }
+    Session:
+      type: object
+      required: [id, image, state, limits, network_policy, env, labels, created_at, last_activity_at, expires_at]
+      properties:
+        id: { type: string }
+        image: { type: string }
+        image_digest: { type: string }
+        state: { type: string }
+        limits: { type: object }
+        network_policy: { type: object }
+        env: { type: object, additionalProperties: { type: string } }
+        labels: { type: object, additionalProperties: { type: string } }
+        created_at: { type: string, format: date-time }
+        last_activity_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+        failure_reason: { type: string }
+    SessionList:
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/Session' } }
+    Exec:
+      type: object
+      required: [id, session_id, state, started_at, output_bytes, truncated]
+      properties:
+        id: { type: string }
+        session_id: { type: string }
+        state: { type: string }
+        exit_code: { type: integer }
+        signal: { type: integer }
+        started_at: { type: string, format: date-time }
+        ended_at: { type: string, format: date-time }
+        output_bytes: { type: integer }
+        truncated: { type: boolean }
+        stream_url: { type: string }
+    ExecList:
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/Exec' } }
+    OutputEvent:
+      type: object
+      required: [seq, ts, stream, data]
+      properties:
+        seq: { type: integer }
+        ts: { type: string, format: date-time }
+        stream: { type: string, enum: [stdout, stderr, tty] }
+        data: { type: string, description: Base64-encoded output bytes }
+    ExecWait:
+      type: object
+      required: [exec, output]
+      properties:
+        exec: { $ref: '#/components/schemas/Exec' }
+        output: { type: array, items: { $ref: '#/components/schemas/OutputEvent' } }
+    FileInfo:
+      type: object
+      required: [path, size, mode, is_dir]
+      properties:
+        path: { type: string }
+        size: { type: integer }
+        mode: { type: integer }
+        is_dir: { type: boolean }
+    FileList:
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/FileInfo' } }
     CreateSession:
       type: object
       required: [image]
