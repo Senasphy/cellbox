@@ -93,6 +93,13 @@ func TestRuntimeContractAgainstEngineStub(t *testing.T) {
 				return
 			}
 			_, _ = fmt.Fprintf(w, `{"ExitCode":%d}`, entry.code)
+		case r.Method == http.MethodPost && r.URL.Path == "/v1.41/containers/"+containerID+"/update":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"Warnings":[]}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/v1.41/containers/"+containerID+"/stats":
+			_, _ = w.Write([]byte(`{"cpu_stats":{"cpu_usage":{"total_usage":123}},"memory_stats":{"usage":456},"pids_stats":{"current":2}}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/v1.41/containers/"+containerID+"/kill":
+			w.WriteHeader(http.StatusNoContent)
 		case r.Method == http.MethodGet && r.URL.Path == "/v1.41/containers/"+containerID+"/archive":
 			writeEngineArchive(t, w, r.URL.Query().Get("path"), files)
 		case r.Method == http.MethodPut && r.URL.Path == "/v1.41/containers/"+containerID+"/archive":
@@ -177,6 +184,24 @@ func TestEnsureImageReturnsResolvedDigest(t *testing.T) {
 	}
 	if i.Digest != "python@sha256:abc" || i.Size != 42 {
 		t.Fatalf("image=%+v", i)
+	}
+}
+
+func TestSnapshotUsesDockerCommit(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || !strings.HasPrefix(r.URL.Path, "/v1.41/commit") || r.URL.Query().Get("container") != "c1" {
+			t.Fatalf("unexpected snapshot request: %s %s", r.Method, r.URL.String())
+		}
+		_, _ = w.Write([]byte(`{"Id":"sha256:snapshot"}`))
+	}))
+	defer server.Close()
+	box := &sandbox{runtime: testRuntime(server), id: "c1"}
+	snapshot, err := box.Snapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.ID != "sha256:snapshot" {
+		t.Fatalf("snapshot=%+v", snapshot)
 	}
 }
 

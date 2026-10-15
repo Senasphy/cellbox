@@ -5,7 +5,9 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
+	"errors"
 	"io"
+	"path"
 	"testing"
 	"time"
 
@@ -73,6 +75,36 @@ func RunBasic(t testing.TB, backend runtime.Runtime, image string) {
 	if string(data) != "file-contract" || info.Size != int64(len(data)) {
 		t.Fatalf("read file data=%q info=%+v", data, info)
 	}
+	archived, err := box.Archive(ctx, "/tmp")
+	if err != nil {
+		t.Fatalf("Archive: %v", err)
+	}
+	tr := tar.NewReader(archived)
+	foundInArchive := false
+	for {
+		header, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			_ = archived.Close()
+			t.Fatalf("read archive: %v", err)
+		}
+		if path.Base(header.Name) == path.Base(file) {
+			archivedData, readErr := io.ReadAll(tr)
+			if readErr != nil {
+				_ = archived.Close()
+				t.Fatalf("read archived file: %v", readErr)
+			}
+			foundInArchive = string(archivedData) == "file-contract"
+		}
+	}
+	if err := archived.Close(); err != nil {
+		t.Fatalf("close archive: %v", err)
+	}
+	if !foundInArchive {
+		t.Fatal("Archive(/tmp) omitted the file written by WriteFile")
+	}
 
 	entries, err := box.ListDir(ctx, "/tmp")
 	if err != nil {
@@ -116,5 +148,21 @@ func RunBasic(t testing.TB, backend runtime.Runtime, image string) {
 	}
 	if _, _, err := box.ReadFile(ctx, file); err == nil {
 		t.Fatal("ReadFile succeeded after DeleteFile")
+	}
+
+	updated := runtime.Limits{CPUMillicores: 500, MemoryMB: 192, PIDs: 48}
+	if err := box.UpdateLimits(ctx, updated); err != nil {
+		t.Fatalf("UpdateLimits: %v", err)
+	}
+	if _, err := box.Stats(ctx); err != nil {
+		t.Fatalf("Stats: %v", err)
+	}
+	if !backend.Capabilities().TTY {
+		if _, err := box.OpenTerminal(ctx, runtime.TerminalRequest{}); !errors.Is(err, runtime.ErrUnsupported) {
+			t.Fatalf("OpenTerminal error=%v, want ErrUnsupported", err)
+		}
+	}
+	if err := box.Kill(ctx); err != nil {
+		t.Fatalf("Kill: %v", err)
 	}
 }
