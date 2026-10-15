@@ -259,7 +259,7 @@ func TestUpdateLimitsAndStats(t *testing.T) {
 	updated := false
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodPost && r.URL.Path == "/containers/test-container/update":
+		case r.Method == http.MethodPost && r.URL.Path == "/v1.41/containers/test-container/update":
 			var config struct {
 				Memory     int64 `json:"Memory"`
 				MemorySwap int64 `json:"MemorySwap"`
@@ -274,7 +274,7 @@ func TestUpdateLimitsAndStats(t *testing.T) {
 			}
 			updated = true
 			_, _ = w.Write([]byte(`{"Warnings":[]}`))
-		case r.Method == http.MethodGet && r.URL.Path == "/containers/test-container/stats":
+		case r.Method == http.MethodGet && r.URL.Path == "/v1.41/containers/test-container/stats":
 			if r.URL.Query().Get("stream") != "false" {
 				t.Errorf("expected one-shot stats request, query=%s", r.URL.RawQuery)
 			}
