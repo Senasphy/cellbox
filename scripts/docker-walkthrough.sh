@@ -58,12 +58,16 @@ curl -fsSN "$base/v1/sessions/$session_id/execs/$exec_id/stream" \
 	-H "Authorization: Bearer $api_key" -o "$work_dir/events"
 grep -q 'event: exit' "$work_dir/events"
 grep -q 'Y2VsbGJveC1zdHJlYW0tb2s=' "$work_dir/events"
+grep -q '"exit_code":0' "$work_dir/events"
 
 printf 'cellbox-file-roundtrip\n' >"$work_dir/upload.txt"
 curl -fsS -X PUT "$base/v1/sessions/$session_id/files?path=%2Ftmp%2Fcellbox-upload.txt" \
 	-H "Authorization: Bearer $api_key" \
 	-H 'Content-Type: application/octet-stream' \
 	--data-binary "@$work_dir/upload.txt"
+curl -fsS "$base/v1/sessions/$session_id/files/list?path=%2Ftmp" \
+	-H "Authorization: Bearer $api_key" |
+	jq -e --arg path '/tmp/cellbox-upload.txt' '.items[] | select(.path == $path)' >/dev/null
 curl -fsS "$base/v1/sessions/$session_id/files?path=%2Ftmp%2Fcellbox-upload.txt" \
 	-H "Authorization: Bearer $api_key" -o "$work_dir/download.txt"
 cmp "$work_dir/upload.txt" "$work_dir/download.txt"
