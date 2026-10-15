@@ -77,6 +77,12 @@ type ExecOutputRecord struct {
 	Timestamp time.Time
 }
 
+// ListCursor identifies a stable position in a keyset-paginated list.
+type ListCursor struct {
+	Timestamp time.Time
+	ID        string
+}
+
 // ExecStore persists command state and append-only output chunks.
 type ExecStore interface {
 	CreateExec(context.Context, ExecRecord) error

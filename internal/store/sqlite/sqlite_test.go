@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -61,6 +62,81 @@ func TestSessionsPersistLifecycleAndScope(t *testing.T) {
 	all, e := s.ListSessions(context.Background(), "", true)
 	if e != nil || len(all) != 1 {
 		t.Fatalf("admin list=%d err=%v", len(all), e)
+	}
+}
+
+func TestKeysetPaginationForSessionsAndExecs(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "pagination.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	now := time.Date(2026, 1, 2, 3, 4, 5, 123456789, time.UTC)
+	session := store.SessionRecord{ID: "ses_owner", OwnerKeyID: "key_owner", ImageReference: "image", State: "ready", LimitsJSON: []byte(`{}`), NetworkPolicyJSON: []byte(`{}`), EnvJSON: []byte(`{}`), LabelsJSON: []byte(`{}`), CreatedAt: now, LastActivityAt: now, ExpiresAt: now.Add(time.Hour)}
+	if err = s.CreateSession(ctx, session); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 5; i++ {
+		other := session
+		other.ID = fmt.Sprintf("ses_%d", i)
+		if err = s.CreateSession(ctx, other); err != nil {
+			t.Fatal(err)
+		}
+		execution := store.ExecRecord{ID: fmt.Sprintf("exe_%d", i), SessionID: session.ID, ArgvJSON: []byte(`[]`), EnvJSON: []byte(`{}`), State: "exited", StartedAt: now}
+		if err = s.CreateExec(ctx, execution); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var sessionIDs []string
+	var sessionCursor *store.ListCursor
+	for {
+		page, more, pageErr := s.PageSessions(ctx, "key_owner", false, 2, sessionCursor)
+		if pageErr != nil {
+			t.Fatal(pageErr)
+		}
+		for _, item := range page {
+			sessionIDs = append(sessionIDs, item.ID)
+		}
+		if !more {
+			break
+		}
+		last := page[len(page)-1]
+		sessionCursor = &store.ListCursor{Timestamp: last.CreatedAt, ID: last.ID}
+	}
+	if len(sessionIDs) != 6 {
+		t.Fatalf("paginated sessions=%v", sessionIDs)
+	}
+	for i := 1; i < len(sessionIDs); i++ {
+		if sessionIDs[i-1] <= sessionIDs[i] {
+			t.Fatalf("sessions are not in stable descending order: %v", sessionIDs)
+		}
+	}
+
+	var execIDs []string
+	var execCursor *store.ListCursor
+	for {
+		page, more, pageErr := s.PageExecs(ctx, session.ID, 2, execCursor)
+		if pageErr != nil {
+			t.Fatal(pageErr)
+		}
+		for _, item := range page {
+			execIDs = append(execIDs, item.ID)
+		}
+		if !more {
+			break
+		}
+		last := page[len(page)-1]
+		execCursor = &store.ListCursor{Timestamp: last.StartedAt, ID: last.ID}
+	}
+	if len(execIDs) != 5 {
+		t.Fatalf("paginated execs=%v", execIDs)
+	}
+	for i := 1; i < len(execIDs); i++ {
+		if execIDs[i-1] >= execIDs[i] {
+			t.Fatalf("execs are not in stable ascending order: %v", execIDs)
+		}
 	}
 }
 

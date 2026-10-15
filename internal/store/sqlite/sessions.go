@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/senasphy/cellbox/internal/store"
@@ -70,6 +71,51 @@ func (s *Store) ListSessions(ctx context.Context, owner string, admin bool) ([]s
 		return nil, fmt.Errorf("iterate sessions: %w", err)
 	}
 	return result, nil
+}
+
+// PageSessions returns at most limit sessions before cursor, newest first.
+func (s *Store) PageSessions(ctx context.Context, owner string, admin bool, limit int, cursor *store.ListCursor) ([]store.SessionRecord, bool, error) {
+	if limit < 1 {
+		return nil, false, fmt.Errorf("page sessions: limit must be positive")
+	}
+	query := `SELECT id,owner_key_id,image_ref,image_digest,runtime_id,state,limits_json,network_policy_json,env_json,labels_json,created_at,last_activity_at,expires_at,COALESCE(parent_snapshot_id,''),failure_reason FROM sessions`
+	conditions := []string{}
+	args := []any{}
+	if !admin {
+		conditions = append(conditions, `owner_key_id=?`)
+		args = append(args, owner)
+	}
+	if cursor != nil {
+		conditions = append(conditions, `(created_at < ? OR (created_at = ? AND id < ?))`)
+		createdAt := stamp(cursor.Timestamp)
+		args = append(args, createdAt, createdAt, cursor.ID)
+	}
+	if len(conditions) > 0 {
+		query += ` WHERE ` + strings.Join(conditions, ` AND `)
+	}
+	query += ` ORDER BY created_at DESC,id DESC LIMIT ?`
+	args = append(args, limit+1)
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, false, fmt.Errorf("page sessions: %w", err)
+	}
+	defer rows.Close()
+	items := []store.SessionRecord{}
+	for rows.Next() {
+		item, scanErr := scanSession(rows)
+		if scanErr != nil {
+			return nil, false, fmt.Errorf("scan session page: %w", scanErr)
+		}
+		items = append(items, item)
+	}
+	if err = rows.Err(); err != nil {
+		return nil, false, fmt.Errorf("iterate session page: %w", err)
+	}
+	hasMore := len(items) > limit
+	if hasMore {
+		items = items[:limit]
+	}
+	return items, hasMore, nil
 }
 
 type scanner interface{ Scan(...any) error }

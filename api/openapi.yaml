@@ -69,6 +69,9 @@ paths:
     get:
       operationId: listSessions
       security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+        - { name: cursor, in: query, schema: { type: string } }
       responses:
         '200': { description: Visible sessions, content: { application/json: { schema: { $ref: '#/components/schemas/SessionList' } } } }
         default: { description: Problem response, content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } } }
@@ -120,6 +123,9 @@ paths:
     get:
       operationId: listExecs
       security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+        - { name: cursor, in: query, schema: { type: string } }
       responses:
         '200': { description: Execs for the session, content: { application/json: { schema: { $ref: '#/components/schemas/ExecList' } } } }
         default: { description: Problem response, content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } } }
@@ -273,6 +279,7 @@ components:
       required: [items]
       properties:
         items: { type: array, items: { $ref: '#/components/schemas/Session' } }
+        next_cursor: { type: string }
     Exec:
       type: object
       required: [id, session_id, state, started_at, output_bytes, truncated]
@@ -292,6 +299,7 @@ components:
       required: [items]
       properties:
         items: { type: array, items: { $ref: '#/components/schemas/Exec' } }
+        next_cursor: { type: string }
     OutputEvent:
       type: object
       required: [seq, ts, stream, data]

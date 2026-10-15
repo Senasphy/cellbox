@@ -69,6 +69,43 @@ func (s *Store) ListExecs(ctx context.Context, sessionID string) ([]store.ExecRe
 	return items, nil
 }
 
+// PageExecs returns at most limit executions after cursor, oldest first.
+func (s *Store) PageExecs(ctx context.Context, sessionID string, limit int, cursor *store.ListCursor) ([]store.ExecRecord, bool, error) {
+	if limit < 1 {
+		return nil, false, fmt.Errorf("page execs: limit must be positive")
+	}
+	query := `SELECT id,session_id,argv_json,shell,cwd,env_json,tty,state,exit_code,signal,started_at,ended_at,output_bytes,truncated FROM execs WHERE session_id=?`
+	args := []any{sessionID}
+	if cursor != nil {
+		startedAt := stamp(cursor.Timestamp)
+		query += ` AND (started_at > ? OR (started_at = ? AND id > ?))`
+		args = append(args, startedAt, startedAt, cursor.ID)
+	}
+	query += ` ORDER BY started_at,id LIMIT ?`
+	args = append(args, limit+1)
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, false, fmt.Errorf("page execs: %w", err)
+	}
+	defer rows.Close()
+	items := []store.ExecRecord{}
+	for rows.Next() {
+		item, scanErr := scanExec(rows)
+		if scanErr != nil {
+			return nil, false, fmt.Errorf("scan exec page: %w", scanErr)
+		}
+		items = append(items, item)
+	}
+	if err = rows.Err(); err != nil {
+		return nil, false, fmt.Errorf("iterate exec page: %w", err)
+	}
+	hasMore := len(items) > limit
+	if hasMore {
+		items = items[:limit]
+	}
+	return items, hasMore, nil
+}
+
 // AppendExecOutput atomically stores a chunk at the next byte offset before delivery.
 func (s *Store) AppendExecOutput(ctx context.Context, id, stream string, data []byte, ts time.Time) (store.ExecOutputRecord, error) {
 	tx, err := s.db.BeginTx(ctx, nil)

@@ -164,6 +164,51 @@ func TestOpenAPIResponses(t *testing.T) {
 	if session.ID == "" {
 		t.Fatal("create returned empty session id")
 	}
+	for i := 0; i < 2; i++ {
+		check(http.MethodPost, "/v1/sessions", `{"image":"python:3.12","network_policy":{"mode":"none"}}`, true)
+	}
+	storedSessions, err := db.ListSessions(context.Background(), "", true)
+	if err != nil || len(storedSessions) != 3 {
+		t.Fatalf("test setup stored %d sessions: err=%v", len(storedSessions), err)
+	}
+	for _, target := range []string{"/v1/sessions?limit=0", "/v1/sessions?cursor=not-a-cursor"} {
+		request := httptest.NewRequest(http.MethodGet, target, nil)
+		request.Header.Set("Authorization", "Bearer "+key.Secret)
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != http.StatusBadRequest {
+			t.Fatalf("invalid list query %s status=%d body=%s", target, response.Code, response.Body.String())
+		}
+	}
+	firstSessionPage := check(http.MethodGet, "/v1/sessions?limit=1", "", true)
+	var sessionPage struct {
+		Items      []SessionResponse `json:"items"`
+		NextCursor string            `json:"next_cursor"`
+	}
+	if err := json.Unmarshal(firstSessionPage.Body.Bytes(), &sessionPage); err != nil || len(sessionPage.Items) != 1 || sessionPage.NextCursor == "" {
+		t.Fatalf("invalid first session page: page=%+v err=%v", sessionPage, err)
+	}
+	seenSessions := map[string]bool{sessionPage.Items[0].ID: true}
+	for page := 0; page < 2; page++ {
+		response := check(http.MethodGet, "/v1/sessions?limit=1&cursor="+sessionPage.NextCursor, "", true)
+		sessionPage = struct {
+			Items      []SessionResponse `json:"items"`
+			NextCursor string            `json:"next_cursor"`
+		}{}
+		if err := json.Unmarshal(response.Body.Bytes(), &sessionPage); err != nil || len(sessionPage.Items) != 1 {
+			t.Fatalf("invalid session page %d: page=%+v err=%v", page+2, sessionPage, err)
+		}
+		if seenSessions[sessionPage.Items[0].ID] {
+			t.Fatalf("session pagination repeated %s", sessionPage.Items[0].ID)
+		}
+		seenSessions[sessionPage.Items[0].ID] = true
+		if page == 0 && sessionPage.NextCursor == "" {
+			t.Fatal("middle session page omitted next_cursor")
+		}
+		if page == 1 && sessionPage.NextCursor != "" {
+			t.Fatalf("final session page unexpectedly included next_cursor: seen=%v page=%+v", seenSessions, sessionPage)
+		}
+	}
 	check(http.MethodGet, "/v1/sessions", "", true)
 	check(http.MethodGet, "/v1/sessions/"+session.ID, "", true)
 	execPath := "/v1/sessions/" + session.ID + "/execs"
@@ -178,6 +223,23 @@ func TestOpenAPIResponses(t *testing.T) {
 	check(http.MethodGet, execPath+"/"+execution.ID, "", true)
 	check(http.MethodGet, execPath+"/"+execution.ID+"/stream", "", true)
 	check(http.MethodPost, execPath+"?wait=true", `{"argv":["echo","wait"]}`, true)
+	firstExecPage := check(http.MethodGet, execPath+"?limit=1", "", true)
+	var execPage struct {
+		Items      []execResponse `json:"items"`
+		NextCursor string         `json:"next_cursor"`
+	}
+	if err := json.Unmarshal(firstExecPage.Body.Bytes(), &execPage); err != nil || len(execPage.Items) != 1 || execPage.NextCursor == "" {
+		t.Fatalf("invalid first exec page: page=%+v err=%v", execPage, err)
+	}
+	firstExecID := execPage.Items[0].ID
+	secondExecPage := check(http.MethodGet, execPath+"?limit=1&cursor="+execPage.NextCursor, "", true)
+	execPage = struct {
+		Items      []execResponse `json:"items"`
+		NextCursor string         `json:"next_cursor"`
+	}{}
+	if err := json.Unmarshal(secondExecPage.Body.Bytes(), &execPage); err != nil || len(execPage.Items) != 1 || execPage.Items[0].ID == firstExecID || execPage.NextCursor != "" {
+		t.Fatalf("invalid second exec page: page=%+v err=%v", execPage, err)
+	}
 	check(http.MethodGet, "/v1/sessions/"+session.ID+"/files/list", "", true)
 	filePath := "/v1/sessions/" + session.ID + "/files?path=%2Ftmp%2Fopenapi.txt"
 	check(http.MethodPut, filePath, "contract file", true)

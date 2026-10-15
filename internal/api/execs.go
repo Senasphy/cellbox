@@ -58,7 +58,7 @@ type execPersistence interface {
 	CreateExec(context.Context, store.ExecRecord) error
 	UpdateExec(context.Context, store.ExecRecord) error
 	GetExec(context.Context, string) (store.ExecRecord, error)
-	ListExecs(context.Context, string) ([]store.ExecRecord, error)
+	PageExecs(context.Context, string, int, *store.ListCursor) ([]store.ExecRecord, bool, error)
 	AppendExecOutput(context.Context, string, string, []byte, time.Time) (store.ExecOutputRecord, error)
 	ListExecOutput(context.Context, string, int64) ([]store.ExecOutputRecord, error)
 }
@@ -232,7 +232,11 @@ func (s *server) listExecs(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	items, err := persist.ListExecs(r.Context(), session.ID)
+	limit, cursor, ok := parseListQuery(w, r)
+	if !ok {
+		return
+	}
+	items, hasMore, err := persist.PageExecs(r.Context(), session.ID, limit, cursor)
 	if err != nil {
 		problem.Write(w, problem.Problem{Title: "Internal error", Status: http.StatusInternalServerError, Code: "exec_list_failed"})
 		return
@@ -241,7 +245,12 @@ func (s *server) listExecs(w http.ResponseWriter, r *http.Request) {
 	for _, v := range items {
 		result = append(result, toExecResponse(v, ""))
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": result})
+	response := map[string]any{"items": result}
+	if hasMore && len(items) > 0 {
+		last := items[len(items)-1]
+		response["next_cursor"] = encodeListCursor(last.StartedAt, last.ID)
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 func (s *server) getExec(w http.ResponseWriter, r *http.Request) {
 	_, session, ok := s.authorizedSession(w, r)

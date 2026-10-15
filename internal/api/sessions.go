@@ -54,7 +54,7 @@ type sessionPersistence interface {
 	CreateSession(context.Context, store.SessionRecord) error
 	UpdateSession(context.Context, store.SessionRecord) error
 	GetSession(context.Context, string) (store.SessionRecord, error)
-	ListSessions(context.Context, string, bool) ([]store.SessionRecord, error)
+	PageSessions(context.Context, string, bool, int, *store.ListCursor) ([]store.SessionRecord, bool, error)
 }
 type sandboxResolver interface{ SandboxByID(string) runtime.Sandbox }
 
@@ -169,7 +169,11 @@ func (s *server) listSessions(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	records, err := persist.ListSessions(r.Context(), key.ID, key.Scope == "admin")
+	limit, cursor, ok := parseListQuery(w, r)
+	if !ok {
+		return
+	}
+	records, hasMore, err := persist.PageSessions(r.Context(), key.ID, key.Scope == "admin", limit, cursor)
 	if err != nil {
 		problem.Write(w, problem.Problem{Title: "Internal error", Status: http.StatusInternalServerError, Code: "session_list_failed"})
 		return
@@ -178,7 +182,12 @@ func (s *server) listSessions(w http.ResponseWriter, r *http.Request) {
 	for _, record := range records {
 		items = append(items, toSessionResponse(record))
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+	response := map[string]any{"items": items}
+	if hasMore && len(records) > 0 {
+		last := records[len(records)-1]
+		response["next_cursor"] = encodeListCursor(last.CreatedAt, last.ID)
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 func (s *server) getSession(w http.ResponseWriter, r *http.Request) {
