@@ -164,6 +164,9 @@ func (r *Runtime) Create(ctx context.Context, spec runtime.SandboxSpec) (runtime
 	if spec.Limits.MemoryMB <= 0 || spec.Limits.CPUMillicores <= 0 || spec.Limits.PIDs <= 0 {
 		return nil, errors.New("memory, CPU, and PID limits must be positive")
 	}
+	if spec.Limits.DiskMB > 0 {
+		return nil, fmt.Errorf("Docker backend does not enforce per-container disk limits: %w", runtime.ErrUnsupported)
+	}
 	name := "cellbox-" + strings.TrimPrefix(spec.ID, "ses_")
 	if name == "cellbox-" {
 		name = fmt.Sprintf("cellbox-%d", time.Now().UnixNano())
@@ -174,9 +177,6 @@ func (r *Runtime) Create(ctx context.Context, spec runtime.SandboxSpec) (runtime
 	}
 	sort.Strings(env)
 	hostConfig := map[string]any{"Memory": int64(spec.Limits.MemoryMB) << 20, "MemorySwap": int64(spec.Limits.MemoryMB) << 20, "NanoCpus": int64(spec.Limits.CPUMillicores) * 1_000_000, "PidsLimit": spec.Limits.PIDs, "CapDrop": []string{"ALL"}, "SecurityOpt": []string{"no-new-privileges:true"}, "NetworkMode": "none"}
-	if spec.Limits.DiskMB > 0 {
-		hostConfig["StorageOpt"] = map[string]string{"size": fmt.Sprintf("%dM", spec.Limits.DiskMB)}
-	}
 	config := map[string]any{"Image": spec.Image.Reference, "Cmd": []string{"sleep", "infinity"}, "Env": env, "Labels": map[string]string{"io.cellbox.session": spec.ID}, "HostConfig": hostConfig}
 	resp, err := r.request(ctx, http.MethodPost, "/containers/create?name="+url.QueryEscape(name), config)
 	if err != nil {
@@ -560,6 +560,9 @@ func (s *sandbox) Snapshot(ctx context.Context) (runtime.SnapshotInfo, error) {
 func (s *sandbox) UpdateLimits(ctx context.Context, l runtime.Limits) error {
 	if l.MemoryMB <= 0 || l.CPUMillicores <= 0 || l.PIDs <= 0 {
 		return errors.New("memory, CPU, and PID limits must be positive")
+	}
+	if l.DiskMB > 0 {
+		return fmt.Errorf("Docker backend does not enforce per-container disk limits: %w", runtime.ErrUnsupported)
 	}
 	config := map[string]any{"Memory": int64(l.MemoryMB) << 20, "MemorySwap": int64(l.MemoryMB) << 20, "NanoCpus": int64(l.CPUMillicores) * 1_000_000, "PidsLimit": l.PIDs}
 	return s.runtime.simple(ctx, http.MethodPost, "/containers/"+url.PathEscape(s.id)+"/update", config)

@@ -55,4 +55,4 @@ curl -fsS -X DELETE "$CELLBOX_URL/v1/sessions/$session_id" \
   -H "Authorization: Bearer $CELLBOX_KEY"
 ```
 
-The current Docker backend forces `NetworkMode=none`; only `network_policy.mode=none` is accepted. Interactive terminals, idempotency keys, pagination cursors, egress allowlists, quotas, and the dashboard are not implemented yet.
+The current Docker backend forces `NetworkMode=none`; only `network_policy.mode=none` is accepted. It reports `disk_limits: false`, returns `disk_mb: 0` for sessions without an explicit disk request, and rejects explicit `limits.disk_mb` requests because Docker quota support depends on daemon storage configuration. Interactive terminals, idempotency keys, pagination cursors, egress allowlists, quotas, and the dashboard are not implemented yet.

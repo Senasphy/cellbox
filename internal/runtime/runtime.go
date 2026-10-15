@@ -16,6 +16,7 @@ type Capabilities struct {
 	Snapshots    bool `json:"snapshots"`
 	TTY          bool `json:"tty"`
 	CPULimits    bool `json:"cpu_limits"`
+	DiskLimits   bool `json:"disk_limits"`
 	EgressPolicy bool `json:"egress_policy"`
 	WarmPool     bool `json:"warm_pool"`
 }

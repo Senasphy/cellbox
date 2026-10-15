@@ -28,9 +28,15 @@ type fakeRuntime struct {
 	boxes    map[string]*fakeSandbox
 }
 
+type noDiskLimitRuntime struct{ *fakeRuntime }
+
+func (*noDiskLimitRuntime) Capabilities() runtime.Capabilities {
+	return runtime.Capabilities{CPULimits: true}
+}
+
 func (f *fakeRuntime) Name() string { return "fake" }
 func (f *fakeRuntime) Capabilities() runtime.Capabilities {
-	return runtime.Capabilities{CPULimits: true}
+	return runtime.Capabilities{CPULimits: true, DiskLimits: true}
 }
 func (f *fakeRuntime) EnsureImage(_ context.Context, ref string) (runtime.ImageInfo, error) {
 	if f.imageErr != nil {
@@ -323,5 +329,44 @@ func TestSessionRejectsUnsupportedNetworkAndOutOfRangeLimits(t *testing.T) {
 		if w.Code != http.StatusUnprocessableEntity {
 			t.Errorf("body=%s status=%d response=%s", body, w.Code, w.Body.String())
 		}
+	}
+}
+
+func TestSessionReportsUnsupportedDiskLimitAndRejectsExplicitRequest(t *testing.T) {
+	db, err := sqlite.Open(filepath.Join(t.TempDir(), "disk-limit.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	key, err := auth.Generate("key_disk", "admin", "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = db.CreateKey(context.Background(), sqlite.KeyRecord{ID: key.ID, Name: key.Name, Prefix: key.Prefix, Hash: key.Hash, Scope: key.Scope, CreatedAt: time.Now().UTC()}); err != nil {
+		t.Fatal(err)
+	}
+	handler := NewHandlerWithConfig(db, &noDiskLimitRuntime{fakeRuntime: &fakeRuntime{}}, "docker", config.Defaults())
+	create := func(body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/v1/sessions", strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+key.Secret)
+		req.Header.Set("Content-Type", "application/json")
+		result := httptest.NewRecorder()
+		handler.ServeHTTP(result, req)
+		return result
+	}
+	created := create(`{"image":"alpine:latest","network_policy":{"mode":"none"}}`)
+	if created.Code != http.StatusCreated {
+		t.Fatalf("default create status=%d body=%s", created.Code, created.Body.String())
+	}
+	var response SessionResponse
+	if err := json.Unmarshal(created.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Limits.DiskMB != 0 {
+		t.Fatalf("reported disk limit=%d; want 0 for unsupported quota", response.Limits.DiskMB)
+	}
+	explicit := create(`{"image":"alpine:latest","limits":{"disk_mb":512}}`)
+	if explicit.Code != http.StatusUnprocessableEntity || !strings.Contains(explicit.Body.String(), "disk_limit_unsupported") {
+		t.Fatalf("explicit disk request status=%d body=%s", explicit.Code, explicit.Body.String())
 	}
 }

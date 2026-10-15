@@ -95,10 +95,21 @@ func (s *server) createSession(w http.ResponseWriter, r *http.Request) {
 		problem.Write(w, problem.Problem{Title: "Invalid environment", Status: http.StatusUnprocessableEntity, Code: "env_invalid", Detail: err.Error()})
 		return
 	}
+	caps := runtime.Capabilities{}
+	if s.backend != nil {
+		caps = s.backend.Capabilities()
+	}
+	if req.Limits.DiskMB > 0 && !caps.DiskLimits {
+		problem.Write(w, problem.Problem{Title: "Unsupported disk limit", Status: http.StatusUnprocessableEntity, Code: "disk_limit_unsupported", Detail: "the selected runtime does not enforce per-session disk limits"})
+		return
+	}
 	limits, err := s.resolveLimits(req)
 	if err != nil {
 		problem.Write(w, problem.Problem{Title: "Invalid limits", Status: http.StatusUnprocessableEntity, Code: "limit_invalid", Detail: err.Error()})
 		return
+	}
+	if !caps.DiskLimits {
+		limits.DiskMB = 0
 	}
 	now := time.Now().UTC()
 	sessionID, err := id.New("ses")

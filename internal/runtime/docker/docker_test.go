@@ -198,7 +198,7 @@ func TestCreateAppliesIsolationAndStartsContainer(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				t.Error(err)
 			}
-			if body.HostConfig.Memory != 512<<20 || body.HostConfig.MemorySwap != 512<<20 || body.HostConfig.NetworkMode != "none" || len(body.HostConfig.CapDrop) != 1 || body.HostConfig.CapDrop[0] != "ALL" || len(body.HostConfig.SecurityOpt) != 1 || body.HostConfig.StorageOpt["size"] != "1024M" {
+			if body.HostConfig.Memory != 512<<20 || body.HostConfig.MemorySwap != 512<<20 || body.HostConfig.NetworkMode != "none" || len(body.HostConfig.CapDrop) != 1 || body.HostConfig.CapDrop[0] != "ALL" || len(body.HostConfig.SecurityOpt) != 1 || len(body.HostConfig.StorageOpt) != 0 {
 				t.Errorf("unsafe Docker config: %+v", body.HostConfig)
 			}
 			created = true
@@ -215,7 +215,7 @@ func TestCreateAppliesIsolationAndStartsContainer(t *testing.T) {
 		}
 	}))
 	defer s.Close()
-	b, err := testRuntime(s).Create(context.Background(), runtime.SandboxSpec{ID: "ses_one", Image: runtime.ImageInfo{Reference: "python:3.12"}, Limits: runtime.Limits{MemoryMB: 512, CPUMillicores: 1000, PIDs: 100, DiskMB: 1024}})
+	b, err := testRuntime(s).Create(context.Background(), runtime.SandboxSpec{ID: "ses_one", Image: runtime.ImageInfo{Reference: "python:3.12"}, Limits: runtime.Limits{MemoryMB: 512, CPUMillicores: 1000, PIDs: 100}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -224,6 +224,28 @@ func TestCreateAppliesIsolationAndStartsContainer(t *testing.T) {
 	}
 	if err = b.Destroy(context.Background()); err != nil {
 		t.Fatalf("destroy: %v", err)
+	}
+}
+
+func TestCreateRejectsUnsupportedDiskQuota(t *testing.T) {
+	r := &Runtime{}
+	_, err := r.Create(context.Background(), runtime.SandboxSpec{
+		Image:  runtime.ImageInfo{Reference: "image"},
+		Limits: runtime.Limits{MemoryMB: 512, CPUMillicores: 1000, PIDs: 100, DiskMB: 1024},
+	})
+	if !errors.Is(err, runtime.ErrUnsupported) {
+		t.Fatalf("disk limit error=%v, want ErrUnsupported", err)
+	}
+}
+
+func TestDockerDoesNotClaimDiskQuotaSupport(t *testing.T) {
+	if New("").Capabilities().DiskLimits {
+		t.Fatal("Docker runtime must not claim unsupported disk quota enforcement")
+	}
+	box := &sandbox{runtime: &Runtime{}, id: "c1"}
+	err := box.UpdateLimits(context.Background(), runtime.Limits{MemoryMB: 512, CPUMillicores: 1000, PIDs: 100, DiskMB: 1024})
+	if !errors.Is(err, runtime.ErrUnsupported) {
+		t.Fatalf("disk limit update error=%v, want ErrUnsupported", err)
 	}
 }
 
