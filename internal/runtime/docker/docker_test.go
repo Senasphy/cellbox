@@ -333,6 +333,35 @@ func TestExecOutputCapCountsDiscardedBytes(t *testing.T) {
 	}
 }
 
+type finalEOFReader struct {
+	data []byte
+	done bool
+}
+
+func (r *finalEOFReader) Read(p []byte) (int, error) {
+	if r.done {
+		return 0, io.EOF
+	}
+	r.done = true
+	return copy(p, r.data), io.EOF
+}
+
+func TestTTYOutputPreservesBytesReturnedWithEOF(t *testing.T) {
+	out := make(chan runtime.OutputChunk, 1)
+	total, truncated, err := readExecOutput(&finalEOFReader{data: []byte("final")}, true, 64, out)
+	close(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var output string
+	for chunk := range out {
+		output += string(chunk.Data)
+	}
+	if total != 5 || truncated || output != "final" {
+		t.Fatalf("total=%d truncated=%v output=%q", total, truncated, output)
+	}
+}
+
 func TestExecTimeoutKillsDockerContainer(t *testing.T) {
 	killed := make(chan struct{}, 1)
 	release := make(chan struct{})

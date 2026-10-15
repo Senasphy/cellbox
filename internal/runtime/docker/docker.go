@@ -672,6 +672,7 @@ func readExecOutput(r io.Reader, tty bool, capBytes int64, out chan<- runtime.Ou
 	for {
 		var stream byte
 		var payload []byte
+		var ttyReadErr error
 		if tty {
 			buf := make([]byte, 32<<10)
 			n, err := r.Read(buf)
@@ -679,11 +680,15 @@ func readExecOutput(r io.Reader, tty bool, capBytes int64, out chan<- runtime.Ou
 				stream = 1
 				payload = buf[:n]
 			}
-			if err == io.EOF {
-				return total, truncated, nil
-			}
-			if err != nil {
-				return total, truncated, err
+			ttyReadErr = err
+			if n == 0 {
+				if err == io.EOF {
+					return total, truncated, nil
+				}
+				if err != nil {
+					return total, truncated, err
+				}
+				continue
 			}
 		} else {
 			header := make([]byte, 8)
@@ -726,5 +731,11 @@ func readExecOutput(r io.Reader, tty bool, capBytes int64, out chan<- runtime.Ou
 			out <- runtime.OutputChunk{Stream: name, Data: append([]byte(nil), payload[:allowed]...)}
 		}
 		total += int64(len(payload))
+		if ttyReadErr == io.EOF {
+			return total, truncated, nil
+		}
+		if ttyReadErr != nil {
+			return total, truncated, ttyReadErr
+		}
 	}
 }
