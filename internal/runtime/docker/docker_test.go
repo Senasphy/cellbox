@@ -215,6 +215,8 @@ func TestCreateAppliesIsolationAndStartsContainer(t *testing.T) {
 				HostConfig struct {
 					Memory      int64             `json:"Memory"`
 					MemorySwap  int64             `json:"MemorySwap"`
+					NanoCPUs    int64             `json:"NanoCpus"`
+					PIDsLimit   int64             `json:"PidsLimit"`
 					NetworkMode string            `json:"NetworkMode"`
 					CapDrop     []string          `json:"CapDrop"`
 					SecurityOpt []string          `json:"SecurityOpt"`
@@ -224,7 +226,7 @@ func TestCreateAppliesIsolationAndStartsContainer(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				t.Error(err)
 			}
-			if body.HostConfig.Memory != 512<<20 || body.HostConfig.MemorySwap != 512<<20 || body.HostConfig.NetworkMode != "none" || len(body.HostConfig.CapDrop) != 1 || body.HostConfig.CapDrop[0] != "ALL" || len(body.HostConfig.SecurityOpt) != 1 || len(body.HostConfig.StorageOpt) != 0 {
+			if body.HostConfig.Memory != 512<<20 || body.HostConfig.MemorySwap != 512<<20 || body.HostConfig.NanoCPUs != 1_000_000_000 || body.HostConfig.PIDsLimit != 100 || body.HostConfig.NetworkMode != "none" || len(body.HostConfig.CapDrop) != 1 || body.HostConfig.CapDrop[0] != "ALL" || len(body.HostConfig.SecurityOpt) != 1 || len(body.HostConfig.StorageOpt) != 0 {
 				t.Errorf("unsafe Docker config: %+v", body.HostConfig)
 			}
 			created = true
@@ -250,6 +252,52 @@ func TestCreateAppliesIsolationAndStartsContainer(t *testing.T) {
 	}
 	if err = b.Destroy(context.Background()); err != nil {
 		t.Fatalf("destroy: %v", err)
+	}
+}
+
+func TestUpdateLimitsAndStats(t *testing.T) {
+	updated := false
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/containers/test-container/update":
+			var config struct {
+				Memory     int64 `json:"Memory"`
+				MemorySwap int64 `json:"MemorySwap"`
+				NanoCPUs   int64 `json:"NanoCpus"`
+				PIDsLimit  int64 `json:"PidsLimit"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&config); err != nil {
+				t.Errorf("decode update request: %v", err)
+			}
+			if config.Memory != 192<<20 || config.MemorySwap != 192<<20 || config.NanoCPUs != 500_000_000 || config.PIDsLimit != 48 {
+				t.Errorf("unexpected update config: %+v", config)
+			}
+			updated = true
+			_, _ = w.Write([]byte(`{"Warnings":[]}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/containers/test-container/stats":
+			if r.URL.Query().Get("stream") != "false" {
+				t.Errorf("expected one-shot stats request, query=%s", r.URL.RawQuery)
+			}
+			_, _ = w.Write([]byte(`{"cpu_stats":{"cpu_usage":{"total_usage":123}} ,"memory_stats":{"usage":456},"pids_stats":{"current":2}}`))
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.String())
+			http.NotFound(w, r)
+		}
+	}))
+	defer s.Close()
+	box := &sandbox{runtime: testRuntime(s), id: "test-container"}
+	if err := box.UpdateLimits(context.Background(), runtime.Limits{MemoryMB: 192, CPUMillicores: 500, PIDs: 48}); err != nil {
+		t.Fatal(err)
+	}
+	if !updated {
+		t.Fatal("Docker update request was not sent")
+	}
+	stats, err := box.Stats(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.CPUUsageNS != 123 || stats.MemoryBytes != 456 || stats.PIDs != 2 {
+		t.Fatalf("unexpected stats: %+v", stats)
 	}
 }
 
