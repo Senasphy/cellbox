@@ -16,6 +16,8 @@ make build
 
 `cellbox serve` initializes the configured data directory and database, prints a bootstrap admin key once, and starts the preliminary HTTP API. It binds to loopback by default. `cellbox keys create` creates additional admin keys; `cellbox keys ls` lists metadata, and `cellbox keys revoke <id>` revokes a key.
 
+Set `CELLBOX_KEY` to an API key and run a one-off command with `cellbox run --image alpine:latest -- sh -c 'echo hello'`. The command creates an isolated session with networking disabled, streams output, and destroys the session afterward. Set `CELLBOX_URL` or pass `--url` to use a service at another address.
+
 The currently implemented endpoints and a Docker-backed curl walkthrough are in [docs/API.md](docs/API.md). The walkthrough is documented but has not been verified against a live Docker daemon.
 
 ## Security model

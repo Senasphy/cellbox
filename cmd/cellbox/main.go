@@ -1,8 +1,12 @@
 package main
 
 import (
+	"bufio"
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -42,6 +46,7 @@ func newRoot() *cobra.Command {
 		return nil
 	}})
 	root.AddCommand(newKeysCommand())
+	root.AddCommand(newRunCommand())
 	var cfgPath string
 	var listen, dataDir, backend, logLevel, logFormat string
 	var allowRemote bool
@@ -150,6 +155,193 @@ func newRoot() *cobra.Command {
 	serve.Flags().BoolVar(&allowRemote, "allow-remote", false, "allow a non-loopback listen address")
 	root.AddCommand(serve)
 	return root
+}
+
+func newRunCommand() *cobra.Command {
+	var image string
+	var endpoint string
+	cmd := &cobra.Command{
+		Use:     "run --image IMAGE -- COMMAND [ARG...]",
+		Short:   "Create a session, stream a command, and destroy the session",
+		Args:    cobra.MinimumNArgs(1),
+		Example: "cellbox run --image python:3.12 -- python -c 'print(\"hello\")'",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			key := os.Getenv("CELLBOX_KEY")
+			if key == "" {
+				return fmt.Errorf("CELLBOX_KEY is required")
+			}
+			if endpoint == "" {
+				endpoint = "http://127.0.0.1:8080"
+			}
+			if image == "" {
+				return fmt.Errorf("--image is required")
+			}
+			client := &http.Client{Timeout: 0}
+			base := strings.TrimRight(endpoint, "/")
+			var session struct {
+				ID string `json:"id"`
+			}
+			if err := runJSONRequest(cmd.Context(), client, base, key, http.MethodPost, "/v1/sessions", map[string]any{"image": image, "network_policy": map[string]string{"mode": "none"}}, &session); err != nil {
+				return fmt.Errorf("create session: %w", err)
+			}
+			if session.ID == "" {
+				return fmt.Errorf("create session returned no id")
+			}
+			defer func() {
+				_ = runJSONRequest(context.Background(), client, base, key, http.MethodDelete, "/v1/sessions/"+session.ID, nil, nil)
+			}()
+			var execution struct {
+				ID        string `json:"id"`
+				StreamURL string `json:"stream_url"`
+			}
+			path := "/v1/sessions/" + session.ID + "/execs"
+			if err := runJSONRequest(cmd.Context(), client, base, key, http.MethodPost, path, map[string]any{"argv": args}, &execution); err != nil {
+				return fmt.Errorf("start command: %w", err)
+			}
+			if execution.ID == "" {
+				return fmt.Errorf("exec response returned no id")
+			}
+			streamPath := execution.StreamURL
+			if streamPath == "" {
+				streamPath = path + "/" + execution.ID + "/stream"
+			}
+			return streamRunOutput(cmd.Context(), client, base, key, streamPath, cmd.OutOrStdout(), cmd.ErrOrStderr())
+		},
+	}
+	cmd.Flags().StringVar(&image, "image", "", "OCI image to run")
+	cmd.Flags().StringVar(&endpoint, "url", os.Getenv("CELLBOX_URL"), "cellbox service URL (defaults to CELLBOX_URL or loopback)")
+	return cmd
+}
+
+func runJSONRequest(ctx context.Context, client *http.Client, base, key, method, path string, input, output any) error {
+	var body io.Reader
+	if input != nil {
+		data, err := json.Marshal(input)
+		if err != nil {
+			return err
+		}
+		body = strings.NewReader(string(data))
+	}
+	req, err := http.NewRequestWithContext(ctx, method, base+path, body)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+key)
+	if input != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		message, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(message)))
+	}
+	if output != nil {
+		return json.NewDecoder(resp.Body).Decode(output)
+	}
+	return nil
+}
+
+func streamRunOutput(ctx context.Context, client *http.Client, base, key, target string, stdout, stderr io.Writer) error {
+	if strings.HasPrefix(target, "http://") || strings.HasPrefix(target, "https://") {
+		// Stream URLs are normally relative; only accept absolute URLs on the configured origin.
+		if !strings.HasPrefix(target, base+"/") {
+			return fmt.Errorf("stream URL is outside configured service")
+		}
+		target = strings.TrimPrefix(target, base)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+target, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+key)
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		message, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+		return fmt.Errorf("stream HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(message)))
+	}
+	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 4096), 1<<20)
+	event := ""
+	var data strings.Builder
+	var exitCode int
+	gotExit := false
+	flushEvent := func() error {
+		if data.Len() == 0 {
+			event = ""
+			return nil
+		}
+		payload := strings.TrimSpace(data.String())
+		switch event {
+		case "output":
+			var item struct {
+				Stream string `json:"stream"`
+				Data   string `json:"data"`
+			}
+			if err := json.Unmarshal([]byte(payload), &item); err != nil {
+				return err
+			}
+			decoded, err := base64.StdEncoding.DecodeString(item.Data)
+			if err != nil {
+				return err
+			}
+			writer := stdout
+			if item.Stream == "stderr" {
+				writer = stderr
+			}
+			if _, err := writer.Write(decoded); err != nil {
+				return err
+			}
+		case "exit", "error":
+			var result struct {
+				ExitCode int `json:"exit_code"`
+			}
+			if err := json.Unmarshal([]byte(payload), &result); err != nil {
+				return err
+			}
+			exitCode, gotExit = result.ExitCode, true
+		}
+		event, data = "", strings.Builder{}
+		return nil
+	}
+	for scanner.Scan() {
+		line := scanner.Text()
+		if line == "" {
+			if err := flushEvent(); err != nil {
+				return err
+			}
+			continue
+		}
+		if strings.HasPrefix(line, "event: ") {
+			event = strings.TrimPrefix(line, "event: ")
+		}
+		if strings.HasPrefix(line, "data: ") {
+			if data.Len() > 0 {
+				data.WriteByte('\n')
+			}
+			data.WriteString(strings.TrimPrefix(line, "data: "))
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return err
+	}
+	if err := flushEvent(); err != nil {
+		return err
+	}
+	if !gotExit {
+		return fmt.Errorf("stream ended before command exit event")
+	}
+	if exitCode != 0 {
+		return fmt.Errorf("command exited with status %d", exitCode)
+	}
+	return nil
 }
 
 func loopbackAddress(address string) bool {
