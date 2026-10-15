@@ -6,6 +6,8 @@ The current contract is in [api/openapi.yaml](../api/openapi.yaml). All routes a
 
 This walkthrough covers the current Phase 1 surface. It requires a reachable Docker Engine socket, a Linux host, `curl`, and `jq`. The Docker backend is a bootstrap backend, and the full sequence has not yet been verified against a live Docker daemon.
 
+The repository includes an automated version of this flow at `scripts/docker-walkthrough.sh`. After building `bin/cellbox`, run it on a Docker-enabled host. `make test-integration` runs the live Docker runtime contract and fails if the daemon is unavailable. CI runs both checks on its Ubuntu runner; a local pass against a stub is not a substitute for that live-daemon result.
+
 Start the service. On its first run it prints the admin key once; keep that value for local use.
 
 ```sh

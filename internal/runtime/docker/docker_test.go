@@ -23,12 +23,15 @@ import (
 )
 
 func TestRuntimeContract(t *testing.T) {
+	if os.Getenv("CELLBOX_RUN_DOCKER_CONTRACT") != "1" {
+		t.Skip("set CELLBOX_RUN_DOCKER_CONTRACT=1 to run the live Docker contract")
+	}
 	socket := os.Getenv("CELLBOX_DOCKER_SOCKET")
 	if socket == "" {
 		socket = "/var/run/docker.sock"
 	}
 	if _, err := os.Stat(filepath.Clean(socket)); err != nil {
-		t.Skipf("Docker contract requires an available daemon socket at %s: %v", socket, err)
+		t.Fatalf("Docker contract requires an available daemon socket at %s: %v", socket, err)
 	}
 	image := os.Getenv("CELLBOX_CONTRACT_IMAGE")
 	if image == "" {

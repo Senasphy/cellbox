@@ -10,7 +10,10 @@ lint:
 	test -z "$$(gofmt -l $$(find . -name '*.go' -not -path './web/node_modules/*'))"
 	go vet ./...
 
-test-integration test-security fuzz bench release-dry-run:
+test-integration:
+	CELLBOX_RUN_DOCKER_CONTRACT=1 go test -race ./internal/runtime/docker -run '^TestRuntimeContract$$' -count=1
+
+test-security fuzz bench release-dry-run:
 	@echo "$@ is added in the corresponding implementation phase"
 
 web:
