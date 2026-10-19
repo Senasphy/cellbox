@@ -143,6 +143,9 @@ func newRoot() *cobra.Command {
 				logger.Error("session TTL sweep failed", "error", reaperErr)
 			})
 		}
+		go reconcile.RunRetention(serveCtx, db, cfg.Retention.OutputDays, cfg.Retention.AuditDays, func(retentionErr error) {
+			logger.Error("retention sweep failed", "error", retentionErr)
+		})
 		result := make(chan error, 1)
 		go func() {
 			var e error

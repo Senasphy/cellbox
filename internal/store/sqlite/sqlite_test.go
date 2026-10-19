@@ -68,6 +68,10 @@ func TestLifecycleAuditEventsShareStateTransactions(t *testing.T) {
 			t.Fatalf("event[%d]=%+v; want type %s", i, event, want[i])
 		}
 	}
+	pruned, err := s.PruneAuditEvents(context.Background(), now.Add(time.Hour))
+	if err != nil || pruned != 4 {
+		t.Fatalf("pruned audit events=%d err=%v", pruned, err)
+	}
 }
 
 func TestSessionsPersistLifecycleAndScope(t *testing.T) {
@@ -304,6 +308,14 @@ func TestExecOutputIsStoredBeforeItCanBeResumed(t *testing.T) {
 	}
 	if got.State != "exited" || got.ExitCode == nil || *got.ExitCode != 7 || got.OutputBytes != 6 {
 		t.Fatalf("exec=%+v", got)
+	}
+	pruned, e := s.PruneExecOutput(context.Background(), now.Add(time.Second))
+	if e != nil || pruned != 2 {
+		t.Fatalf("pruned output chunks=%d err=%v", pruned, e)
+	}
+	remaining, e := s.ListExecOutput(context.Background(), exec.ID, 0)
+	if e != nil || len(remaining) != 0 {
+		t.Fatalf("output after retention=%+v err=%v", remaining, e)
 	}
 }
 
