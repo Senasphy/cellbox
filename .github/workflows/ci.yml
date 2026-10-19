@@ -28,3 +28,4 @@ jobs:
       - run: make test-integration
       - run: go build -o /tmp/cellbox-integration ./cmd/cellbox
       - run: CELLBOX_BIN=/tmp/cellbox-integration ./scripts/docker-walkthrough.sh
+      - run: CELLBOX_BIN=/tmp/cellbox-integration ./scripts/recovery-walkthrough.sh
