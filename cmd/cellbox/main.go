@@ -23,6 +23,8 @@ import (
 	"github.com/senasphy/cellbox/internal/doctor"
 	"github.com/senasphy/cellbox/internal/id"
 	"github.com/senasphy/cellbox/internal/logging"
+	"github.com/senasphy/cellbox/internal/reconcile"
+	"github.com/senasphy/cellbox/internal/runtime"
 	dockerruntime "github.com/senasphy/cellbox/internal/runtime/docker"
 	sqlitestore "github.com/senasphy/cellbox/internal/store/sqlite"
 	"github.com/spf13/cobra"
@@ -122,12 +124,17 @@ func newRoot() *cobra.Command {
 		if !loopbackAddress(cfg.Listen) && cfg.TLS.Cert == "" {
 			logger.Warn("service is bound to a non-loopback address without TLS")
 		}
-		var handler http.Handler
+		var runtimeBackend runtime.Runtime
 		if cfg.Backend == "docker" {
-			handler = api.NewHandlerWithConfig(db, dockerruntime.New(cfg.DockerSocket), cfg.Backend, cfg)
-		} else {
-			handler = api.NewHandlerWithConfig(db, nil, cfg.Backend, cfg)
+			runtimeBackend = dockerruntime.New(cfg.DockerSocket)
 		}
+		reconcileCtx, reconcileCancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		if err = reconcile.Startup(reconcileCtx, runtimeBackend, db); err != nil {
+			reconcileCancel()
+			return fmt.Errorf("startup reconciliation failed: %w", err)
+		}
+		reconcileCancel()
+		handler := api.NewHandlerWithConfig(db, runtimeBackend, cfg.Backend, cfg)
 		srv := &http.Server{Addr: cfg.Listen, Handler: handler, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 1 << 20}
 		serveCtx, stop := signalContext(cmd.Context())
 		defer stop()

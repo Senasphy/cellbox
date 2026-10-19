@@ -42,6 +42,33 @@ func TestRuntimeContract(t *testing.T) {
 	contract.RunBasic(t, New(socket), image)
 }
 
+func TestReconcileRemovesOnlyLabeledCellboxContainers(t *testing.T) {
+	var deleted []string
+	engine := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1.41/containers/json":
+			if r.URL.Query().Get("all") != "true" || r.URL.Query().Get("filters") == "" {
+				t.Errorf("reconcile list query=%s", r.URL.RawQuery)
+			}
+			_, _ = w.Write([]byte(`[{"Id":"cellbox-1","Labels":{"io.cellbox.session":"ses_a"}},{"Id":"other","Labels":{"other":"value"}}]`))
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1.41/containers/cellbox-1":
+			deleted = append(deleted, r.URL.Path)
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.String())
+			http.NotFound(w, r)
+		}
+	}))
+	defer engine.Close()
+	r := &Runtime{client: engine.Client(), host: engine.URL}
+	if err := r.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(deleted) != 1 || deleted[0] != "/v1.41/containers/cellbox-1" {
+		t.Fatalf("deleted containers=%v", deleted)
+	}
+}
+
 func TestRuntimeContractAgainstEngineStub(t *testing.T) {
 	files := map[string][]byte{}
 	execs := map[string]struct {

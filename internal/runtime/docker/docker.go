@@ -55,8 +55,35 @@ func (*Runtime) Capabilities() runtime.Capabilities {
 	return runtime.Capabilities{Snapshots: true, CPULimits: true}
 }
 
-// Reconcile is currently a no-op; persistent container ownership labels are added with startup reconciliation.
-func (*Runtime) Reconcile(context.Context) error { return nil }
+// Reconcile removes every container previously created for a cellbox session.
+// Session workers are not persisted across service restarts, so retaining those
+// containers would leave unmanaged workloads running.
+func (r *Runtime) Reconcile(ctx context.Context) error {
+	filters, _ := json.Marshal(map[string][]string{"label": {"io.cellbox.session"}})
+	resp, err := r.request(ctx, http.MethodGet, "/containers/json?all=true&filters="+url.QueryEscape(string(filters)), nil)
+	if err != nil {
+		return fmt.Errorf("list cellbox containers for reconciliation: %w", err)
+	}
+	var containers []struct {
+		ID     string            `json:"Id"`
+		Labels map[string]string `json:"Labels"`
+	}
+	err = json.NewDecoder(io.LimitReader(resp.Body, 16<<20)).Decode(&containers)
+	resp.Body.Close()
+	if err != nil {
+		return fmt.Errorf("decode cellbox containers for reconciliation: %w", err)
+	}
+	for _, container := range containers {
+		if container.ID == "" || container.Labels["io.cellbox.session"] == "" {
+			continue
+		}
+		endpoint := "/containers/" + url.PathEscape(container.ID) + "?force=true&v=true"
+		if err := r.simple(ctx, http.MethodDelete, endpoint, nil); err != nil && !strings.Contains(err.Error(), "returned 404") {
+			return fmt.Errorf("remove orphaned cellbox container %s: %w", container.ID, err)
+		}
+	}
+	return nil
+}
 
 func (r *Runtime) request(ctx context.Context, method, endpoint string, body any) (*http.Response, error) {
 	var reader io.Reader
