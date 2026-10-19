@@ -26,18 +26,13 @@ type cursorPayload struct {
 
 func parseListQuery(w http.ResponseWriter, r *http.Request) (int, *store.ListCursor, bool) {
 	query := r.URL.Query()
-	if len(query["limit"]) > 1 || len(query["cursor"]) > 1 {
-		writeListQueryProblem(w, "list_query_invalid", "limit and cursor may appear only once")
+	limit, ok := parseListLimit(w, r)
+	if !ok {
 		return 0, nil, false
 	}
-	limit := defaultPageSize
-	if raw := query.Get("limit"); raw != "" {
-		parsed, err := strconv.Atoi(raw)
-		if err != nil || parsed < 1 || parsed > maxPageSize {
-			writeListQueryProblem(w, "limit_invalid", fmt.Sprintf("limit must be between 1 and %d", maxPageSize))
-			return 0, nil, false
-		}
-		limit = parsed
+	if len(query["cursor"]) > 1 {
+		writeListQueryProblem(w, "list_query_invalid", "cursor may appear only once")
+		return 0, nil, false
 	}
 	rawCursor := query.Get("cursor")
 	if rawCursor == "" {
@@ -70,6 +65,24 @@ func parseListQuery(w http.ResponseWriter, r *http.Request) (int, *store.ListCur
 		return 0, nil, false
 	}
 	return limit, &store.ListCursor{Timestamp: timestamp.UTC(), ID: payload.ID}, true
+}
+
+func parseListLimit(w http.ResponseWriter, r *http.Request) (int, bool) {
+	query := r.URL.Query()
+	if len(query["limit"]) > 1 {
+		writeListQueryProblem(w, "list_query_invalid", "limit may appear only once")
+		return 0, false
+	}
+	limit := defaultPageSize
+	if raw := query.Get("limit"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 1 || parsed > maxPageSize {
+			writeListQueryProblem(w, "limit_invalid", fmt.Sprintf("limit must be between 1 and %d", maxPageSize))
+			return 0, false
+		}
+		limit = parsed
+	}
+	return limit, true
 }
 
 func encodeListCursor(timestamp time.Time, id string) string {

@@ -202,6 +202,9 @@ paths:
     get:
       operationId: listFiles
       security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+        - { name: cursor, in: query, schema: { type: string } }
       responses:
         '200': { description: Directory entries, content: { application/json: { schema: { $ref: '#/components/schemas/FileList' } } } }
         default: { description: Problem response, content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } } }
@@ -345,6 +348,7 @@ components:
       required: [items]
       properties:
         items: { type: array, items: { $ref: '#/components/schemas/FileInfo' } }
+        next_cursor: { type: string }
     CreateSession:
       type: object
       required: [image]

@@ -27,6 +27,7 @@ import (
 
 const apiVersion = "v1.41"
 const cleanupRequestTimeout = 5 * time.Second
+const maxDirectoryEntries = 100_000
 
 // Runtime is a Docker Engine-backed sandbox runtime.
 type Runtime struct {
@@ -377,6 +378,9 @@ func (s *sandbox) ListDir(ctx context.Context, p string) ([]runtime.FileInfo, er
 			continue
 		}
 		result = append(result, runtime.FileInfo{Path: path.Join(clean, rel), Size: h.Size, Mode: os.FileMode(h.Mode), IsDir: h.Typeflag == tar.TypeDir})
+		if len(result) > maxDirectoryEntries {
+			return nil, fmt.Errorf("directory listing exceeds %d entries", maxDirectoryEntries)
+		}
 	}
 	return result, nil
 }

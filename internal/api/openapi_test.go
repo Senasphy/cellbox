@@ -244,6 +244,7 @@ func TestOpenAPIResponses(t *testing.T) {
 	check(http.MethodGet, "/v1/sessions/"+session.ID+"/files/list", "", true)
 	filePath := "/v1/sessions/" + session.ID + "/files?path=%2Ftmp%2Fopenapi.txt"
 	check(http.MethodPut, filePath, "contract file", true)
+	check(http.MethodGet, "/v1/sessions/"+session.ID+"/files/list?path=%2Ftmp&limit=1", "", true)
 	check(http.MethodGet, filePath, "", true)
 	check(http.MethodGet, "/v1/sessions/"+session.ID+"/files/list?path=%2Ftmp", "", true)
 	check(http.MethodDelete, filePath, "", true)

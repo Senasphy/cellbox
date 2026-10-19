@@ -286,12 +286,51 @@ func TestSessionLifecycleAndOwnership(t *testing.T) {
 	if fileResult.Code != http.StatusOK || fileResult.Body.String() != "file contents" {
 		t.Fatalf("file read status=%d body=%q", fileResult.Code, fileResult.Body.String())
 	}
-	listFiles := httptest.NewRequest(http.MethodGet, "/v1/sessions/"+response.ID+"/files/list?path=%2Ftmp", nil)
+	backend.box.files["/tmp/a.txt"] = []byte("a")
+	backend.box.files["/tmp/z.txt"] = []byte("z")
+	listFiles := httptest.NewRequest(http.MethodGet, "/v1/sessions/"+response.ID+"/files/list?path=%2Ftmp&limit=1", nil)
 	listFiles.Header.Set("Authorization", "Bearer "+user.Secret)
 	listedFiles := httptest.NewRecorder()
 	handler.ServeHTTP(listedFiles, listFiles)
-	if listedFiles.Code != http.StatusOK || !strings.Contains(listedFiles.Body.String(), "note.txt") {
+	var filePage struct {
+		Items      []runtime.FileInfo `json:"items"`
+		NextCursor string             `json:"next_cursor"`
+	}
+	if err := json.Unmarshal(listedFiles.Body.Bytes(), &filePage); err != nil || listedFiles.Code != http.StatusOK || len(filePage.Items) != 1 || filePage.Items[0].Path != "/tmp/a.txt" || filePage.NextCursor == "" {
 		t.Fatalf("file list status=%d body=%s", listedFiles.Code, listedFiles.Body.String())
+	}
+	fileCursor := filePage.NextCursor
+	filePage = struct {
+		Items      []runtime.FileInfo `json:"items"`
+		NextCursor string             `json:"next_cursor"`
+	}{}
+	listFilesNext := httptest.NewRequest(http.MethodGet, "/v1/sessions/"+response.ID+"/files/list?path=%2Ftmp&limit=1&cursor="+fileCursor, nil)
+	listFilesNext.Header.Set("Authorization", "Bearer "+user.Secret)
+	listedFilesNext := httptest.NewRecorder()
+	handler.ServeHTTP(listedFilesNext, listFilesNext)
+	if err := json.Unmarshal(listedFilesNext.Body.Bytes(), &filePage); err != nil || listedFilesNext.Code != http.StatusOK || len(filePage.Items) != 1 || filePage.Items[0].Path != "/tmp/note.txt" || filePage.NextCursor == "" {
+		t.Fatalf("second file page status=%d body=%s", listedFilesNext.Code, listedFilesNext.Body.String())
+	}
+	fileCursor = filePage.NextCursor
+	filePage = struct {
+		Items      []runtime.FileInfo `json:"items"`
+		NextCursor string             `json:"next_cursor"`
+	}{}
+	listFilesFinal := httptest.NewRequest(http.MethodGet, "/v1/sessions/"+response.ID+"/files/list?path=%2Ftmp&limit=1&cursor="+fileCursor, nil)
+	listFilesFinal.Header.Set("Authorization", "Bearer "+user.Secret)
+	listedFilesFinal := httptest.NewRecorder()
+	handler.ServeHTTP(listedFilesFinal, listFilesFinal)
+	if err := json.Unmarshal(listedFilesFinal.Body.Bytes(), &filePage); err != nil || listedFilesFinal.Code != http.StatusOK || len(filePage.Items) != 1 || filePage.Items[0].Path != "/tmp/z.txt" || filePage.NextCursor != "" {
+		t.Fatalf("final file page status=%d body=%s", listedFilesFinal.Code, listedFilesFinal.Body.String())
+	}
+	for _, target := range []string{"/v1/sessions/" + response.ID + "/files/list?path=%2Ftmp&limit=201", "/v1/sessions/" + response.ID + "/files/list?path=%2Ftmp&cursor=invalid"} {
+		invalidList := httptest.NewRequest(http.MethodGet, target, nil)
+		invalidList.Header.Set("Authorization", "Bearer "+user.Secret)
+		invalidListResult := httptest.NewRecorder()
+		handler.ServeHTTP(invalidListResult, invalidList)
+		if invalidListResult.Code != http.StatusBadRequest {
+			t.Fatalf("invalid file list query %s status=%d body=%s", target, invalidListResult.Code, invalidListResult.Body.String())
+		}
 	}
 	traversal := httptest.NewRequest(http.MethodGet, "/v1/sessions/"+response.ID+"/files?path=..%2F..%2Fetc%2Fpasswd", nil)
 	traversal.Header.Set("Authorization", "Bearer "+user.Secret)

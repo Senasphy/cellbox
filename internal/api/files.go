@@ -8,6 +8,7 @@ import (
 	"mime"
 	"net/http"
 	"path"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -103,12 +104,34 @@ func (s *server) listFiles(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	limit, ok := parseListLimit(w, r)
+	if !ok {
+		return
+	}
+	cursor, ok := parseFileCursor(w, r)
+	if !ok {
+		return
+	}
 	items, err := box.ListDir(r.Context(), target)
 	if err != nil {
 		writeFileError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+	sort.Slice(items, func(i, j int) bool { return items[i].Path < items[j].Path })
+	start := 0
+	if cursor != "" {
+		start = sort.Search(len(items), func(i int) bool { return items[i].Path > cursor })
+	}
+	items = items[start:]
+	hasMore := len(items) > limit
+	if hasMore {
+		items = items[:limit]
+	}
+	response := map[string]any{"items": items}
+	if hasMore && len(items) > 0 {
+		response["next_cursor"] = encodeFileCursor(items[len(items)-1].Path)
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 func (s *server) downloadArchive(w http.ResponseWriter, r *http.Request) {
