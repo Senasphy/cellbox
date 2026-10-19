@@ -126,3 +126,8 @@ type AuditEventRecord struct {
 	Timestamp time.Time
 	Detail    []byte
 }
+
+// AuditEventStore pages lifecycle events scoped to one session.
+type AuditEventStore interface {
+	PageAuditEvents(context.Context, string, int, *ListCursor) ([]AuditEventRecord, bool, error)
+}

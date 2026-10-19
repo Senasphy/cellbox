@@ -62,3 +62,44 @@ func (s *Store) ListAuditEvents(ctx context.Context, sessionID string, limit int
 	}
 	return items, nil
 }
+
+func (s *Store) PageAuditEvents(ctx context.Context, sessionID string, limit int, cursor *store.ListCursor) ([]store.AuditEventRecord, bool, error) {
+	if limit < 1 {
+		return nil, false, fmt.Errorf("audit event limit must be positive")
+	}
+	query := `SELECT id,COALESCE(session_id,''),key_id,type,timestamp,detail_json FROM audit_events WHERE session_id=?`
+	args := []any{sessionID}
+	if cursor != nil {
+		ts := stamp(cursor.Timestamp)
+		query += ` AND (timestamp > ? OR (timestamp = ? AND id > ?))`
+		args = append(args, ts, ts, cursor.ID)
+	}
+	query += ` ORDER BY timestamp,id LIMIT ?`
+	args = append(args, limit+1)
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, false, fmt.Errorf("page audit events: %w", err)
+	}
+	defer rows.Close()
+	items := []store.AuditEventRecord{}
+	for rows.Next() {
+		var item store.AuditEventRecord
+		var ts string
+		if err := rows.Scan(&item.ID, &item.SessionID, &item.KeyID, &item.Type, &ts, &item.Detail); err != nil {
+			return nil, false, fmt.Errorf("scan audit event page: %w", err)
+		}
+		item.Timestamp, err = time.Parse(time.RFC3339Nano, ts)
+		if err != nil {
+			return nil, false, fmt.Errorf("parse audit event timestamp: %w", err)
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, fmt.Errorf("iterate audit event page: %w", err)
+	}
+	hasMore := len(items) > limit
+	if hasMore {
+		items = items[:limit]
+	}
+	return items, hasMore, nil
+}

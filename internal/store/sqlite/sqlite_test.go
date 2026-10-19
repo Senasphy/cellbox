@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"fmt"
+	mathrand "math/rand"
 	"path/filepath"
 	"testing"
 	"time"
@@ -131,6 +132,52 @@ func TestSessionStateTransitionsRejectInvalidMoves(t *testing.T) {
 	}
 	if got.State != "ready" {
 		t.Fatalf("persisted state=%q; want ready", got.State)
+	}
+}
+
+func TestSessionStateMachinePropertyOverRandomTransitions(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "state-property.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	states := []string{"creating", "ready", "stopping", "stopped", "expired", "failed", "lost", "unknown"}
+	legal := map[string]map[string]bool{
+		"creating": {"creating": true, "ready": true, "failed": true, "stopping": true, "lost": true},
+		"ready":    {"ready": true, "stopping": true, "failed": true, "expired": true, "lost": true},
+		"stopping": {"stopping": true, "stopped": true, "expired": true, "lost": true},
+		"stopped":  {"stopped": true},
+		"expired":  {"expired": true},
+		"failed":   {"failed": true},
+		"lost":     {"lost": true},
+	}
+	now := time.Now().UTC()
+	item := store.SessionRecord{ID: "ses_property", OwnerKeyID: "key_property", ImageReference: "alpine", State: "creating", LimitsJSON: []byte(`{}`), NetworkPolicyJSON: []byte(`{}`), EnvJSON: []byte(`{}`), LabelsJSON: []byte(`{}`), CreatedAt: now, LastActivityAt: now, ExpiresAt: now.Add(time.Hour)}
+	if err := s.CreateSession(context.Background(), item); err != nil {
+		t.Fatal(err)
+	}
+	rng := mathrand.New(mathrand.NewSource(42))
+	current := "creating"
+	for step := 0; step < 500; step++ {
+		next := states[rng.Intn(len(states))]
+		item.State = next
+		err := s.UpdateSession(context.Background(), item)
+		want := legal[current][next]
+		if want != (err == nil) {
+			t.Fatalf("step %d: transition %q -> %q returned %v; legal=%t", step, current, next, err, want)
+		}
+		if want {
+			current = next
+		} else {
+			item.State = current
+		}
+	}
+	got, err := s.GetSession(context.Background(), item.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State != current {
+		t.Fatalf("final persisted state=%q; model state=%q", got.State, current)
 	}
 }
 

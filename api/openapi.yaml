@@ -111,6 +111,38 @@ paths:
       responses:
         '204': { description: Session destroyed }
         default: { description: Problem response, content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+  /v1/sessions/{id}/events:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    get:
+      operationId: listSessionEvents
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+        - { name: cursor, in: query, schema: { type: string } }
+      responses:
+        '200':
+          description: Audit events for the session
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      required: [id, session_id, key_id, type, timestamp, detail]
+                      properties:
+                        id: { type: string }
+                        session_id: { type: string }
+                        key_id: { type: string }
+                        type: { type: string }
+                        timestamp: { type: string, format: date-time }
+                        detail: { type: object }
+                  next_cursor: { type: string }
+        default: { description: Problem response, content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } } }
   /v1/sessions/{id}/execs:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string } }

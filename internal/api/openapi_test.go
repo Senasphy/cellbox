@@ -165,6 +165,15 @@ func TestOpenAPIResponses(t *testing.T) {
 	if session.ID == "" {
 		t.Fatal("create returned empty session id")
 	}
+	firstAuditPage := check(http.MethodGet, "/v1/sessions/"+session.ID+"/events?limit=1", "", true)
+	var auditPage struct {
+		Items      []auditEventResponse `json:"items"`
+		NextCursor string               `json:"next_cursor"`
+	}
+	if err := json.Unmarshal(firstAuditPage.Body.Bytes(), &auditPage); err != nil || len(auditPage.Items) != 1 || auditPage.NextCursor == "" {
+		t.Fatalf("invalid audit event page: page=%+v err=%v", auditPage, err)
+	}
+	check(http.MethodGet, "/v1/sessions/"+session.ID+"/events?limit=1&cursor="+auditPage.NextCursor, "", true)
 	for i := 0; i < 2; i++ {
 		check(http.MethodPost, "/v1/sessions", `{"image":"python:3.12","network_policy":{"mode":"none"}}`, true)
 	}

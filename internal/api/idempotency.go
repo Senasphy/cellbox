@@ -77,6 +77,9 @@ func (s *server) idempotencyMiddleware(next http.Handler) http.Handler {
 		}
 		existing, err := idemStore.GetIdempotency(r.Context(), authKey[:])
 		if err == nil {
+			if _, valid := s.authenticate(w, r); !valid {
+				return
+			}
 			if !bytes.Equal(existing.RequestHash, requestHash[:]) {
 				problem.Write(w, problem.Problem{Title: "Unprocessable request", Status: http.StatusUnprocessableEntity, Code: "idempotency_key_reused", Detail: "this Idempotency-Key was already used with a different request"})
 				return

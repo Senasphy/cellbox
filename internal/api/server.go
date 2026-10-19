@@ -63,6 +63,7 @@ func NewHandlerWithConfig(store KeyStore, backend runtime.Runtime, backendName s
 	s.mux.Handle("POST /v1/sessions", withTimeout(15*time.Minute, http.HandlerFunc(s.createSession)))
 	s.mux.Handle("GET /v1/sessions", withTimeout(10*time.Second, http.HandlerFunc(s.listSessions)))
 	s.mux.Handle("GET /v1/sessions/{id}", withTimeout(10*time.Second, http.HandlerFunc(s.getSession)))
+	s.mux.Handle("GET /v1/sessions/{id}/events", withTimeout(10*time.Second, http.HandlerFunc(s.listSessionEvents)))
 	s.mux.Handle("DELETE /v1/sessions/{id}", withTimeout(2*time.Minute, http.HandlerFunc(s.deleteSession)))
 	s.mux.Handle("POST /v1/sessions/{id}/execs", withTimeout(time.Duration(sessionLimitMaxTimeout(cfg.Limits.Max.TTLS)+30_000)*time.Millisecond, http.HandlerFunc(s.createExec)))
 	s.mux.Handle("GET /v1/sessions/{id}/execs", withTimeout(10*time.Second, http.HandlerFunc(s.listExecs)))

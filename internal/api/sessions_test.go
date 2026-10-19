@@ -472,6 +472,13 @@ func TestSessionCreateIdempotencyReplayAndBodyMismatch(t *testing.T) {
 	if changed.Code != http.StatusUnprocessableEntity || !strings.Contains(changed.Body.String(), "idempotency_key_reused") {
 		t.Fatalf("mismatched request status=%d body=%s", changed.Code, changed.Body.String())
 	}
+	if err := db.RevokeKey(context.Background(), user.ID); err != nil {
+		t.Fatal(err)
+	}
+	revokedReplay := request(body)
+	if revokedReplay.Code != http.StatusUnauthorized {
+		t.Fatalf("revoked key replay status=%d body=%s", revokedReplay.Code, revokedReplay.Body.String())
+	}
 }
 
 func TestSessionCreateEnforcesKeyQuotaBeforeCapacity(t *testing.T) {
@@ -577,6 +584,59 @@ func TestPrometheusMetricsReportSessionsExecsAndCapacity(t *testing.T) {
 		if !strings.Contains(w.Body.String(), metric) {
 			t.Errorf("metrics output missing %q:\n%s", metric, w.Body.String())
 		}
+	}
+}
+
+func TestExecCollectorPersistsOutputAndDrains(t *testing.T) {
+	db, err := sqlite.Open(filepath.Join(t.TempDir(), "collector.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	now := time.Now().UTC()
+	session := store.SessionRecord{ID: "ses_collect", OwnerKeyID: "key_collect", ImageReference: "alpine", State: "creating", LimitsJSON: []byte(`{}`), NetworkPolicyJSON: []byte(`{}`), EnvJSON: []byte(`{}`), LabelsJSON: []byte(`{}`), CreatedAt: now, LastActivityAt: now, ExpiresAt: now.Add(time.Hour)}
+	if err := db.CreateSession(context.Background(), session); err != nil {
+		t.Fatal(err)
+	}
+	session.State = "ready"
+	if err := db.UpdateSession(context.Background(), session); err != nil {
+		t.Fatal(err)
+	}
+	handle := &fakeExecHandle{output: make(chan runtime.OutputChunk, 1), result: runtime.ExecResult{ExitCode: 0, OutputBytes: 5}}
+	handle.output <- runtime.OutputChunk{Stream: "stdout", Data: []byte("hello")}
+	close(handle.output)
+	exec := store.ExecRecord{ID: "exe_collect", SessionID: session.ID, ArgvJSON: []byte(`[]`), EnvJSON: []byte(`{}`), State: "starting", StartedAt: now}
+	if err := db.CreateExec(context.Background(), exec); err != nil {
+		t.Fatal(err)
+	}
+	exec.State = "running"
+	if err := db.UpdateExec(context.Background(), exec); err != nil {
+		t.Fatal(err)
+	}
+	s := &server{store: db, activeExecs: map[string]runtime.ExecHandle{exec.ID: handle}}
+	done := make(chan struct{})
+	go s.collectExecOutput(db, handle, exec, done)
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("exec collector did not drain")
+	}
+	finished, err := db.GetExec(context.Background(), exec.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if finished.State != "exited" || finished.OutputBytes != 5 {
+		t.Fatalf("exec after collector=%+v", finished)
+	}
+	output, err := db.ListExecOutput(context.Background(), exec.ID, 0)
+	if err != nil || len(output) != 1 || string(output[0].Data) != "hello" {
+		t.Fatalf("persisted output=%+v err=%v", output, err)
+	}
+	s.execMu.RLock()
+	_, active := s.activeExecs[exec.ID]
+	s.execMu.RUnlock()
+	if active {
+		t.Fatal("completed exec remains registered as active")
 	}
 }
 
