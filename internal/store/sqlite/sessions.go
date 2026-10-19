@@ -12,9 +12,19 @@ import (
 
 // CreateSession writes a creating session before runtime side effects begin.
 func (s *Store) CreateSession(ctx context.Context, v store.SessionRecord) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO sessions(id,owner_key_id,image_ref,image_digest,runtime_id,state,limits_json,network_policy_json,env_json,labels_json,created_at,last_activity_at,expires_at,parent_snapshot_id,failure_reason) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, v.ID, v.OwnerKeyID, v.ImageReference, v.ImageDigest, v.RuntimeID, v.State, v.LimitsJSON, v.NetworkPolicyJSON, v.EnvJSON, v.LabelsJSON, stamp(v.CreatedAt), stamp(v.LastActivityAt), stamp(v.ExpiresAt), nullText(v.ParentSnapshotID), v.FailureReason)
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
+		return fmt.Errorf("begin session creation: %w", err)
+	}
+	defer tx.Rollback()
+	if _, err = tx.ExecContext(ctx, `INSERT INTO sessions(id,owner_key_id,image_ref,image_digest,runtime_id,state,limits_json,network_policy_json,env_json,labels_json,created_at,last_activity_at,expires_at,parent_snapshot_id,failure_reason) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, v.ID, v.OwnerKeyID, v.ImageReference, v.ImageDigest, v.RuntimeID, v.State, v.LimitsJSON, v.NetworkPolicyJSON, v.EnvJSON, v.LabelsJSON, stamp(v.CreatedAt), stamp(v.LastActivityAt), stamp(v.ExpiresAt), nullText(v.ParentSnapshotID), v.FailureReason); err != nil {
 		return fmt.Errorf("insert session: %w", err)
+	}
+	if err = insertAudit(ctx, tx, v.ID, v.OwnerKeyID, "session.create", map[string]string{"state": v.State}, v.CreatedAt); err != nil {
+		return err
+	}
+	if err = tx.Commit(); err != nil {
+		return fmt.Errorf("commit session creation: %w", err)
 	}
 	return nil
 }
@@ -46,6 +56,12 @@ func (s *Store) UpdateSession(ctx context.Context, v store.SessionRecord) error 
 	}
 	if n == 0 {
 		return sql.ErrNoRows
+	}
+	if current != v.State {
+		detail := map[string]string{"from": current, "to": v.State}
+		if err = insertAudit(ctx, tx, v.ID, v.OwnerKeyID, "session."+v.State, detail, v.LastActivityAt); err != nil {
+			return err
+		}
 	}
 	if err = tx.Commit(); err != nil {
 		return fmt.Errorf("commit session update: %w", err)

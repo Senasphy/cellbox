@@ -23,8 +23,49 @@ func TestOpenMigratesEmptyDatabaseAndIsIdempotent(t *testing.T) {
 	if e = s.db.QueryRow("SELECT COUNT(*) FROM schema_migrations").Scan(&n); e != nil {
 		t.Fatal(e)
 	}
-	if n != 4 {
+	if n != 5 {
 		t.Fatalf("migration count=%d", n)
+	}
+}
+
+func TestLifecycleAuditEventsShareStateTransactions(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "audit.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	now := time.Now().UTC()
+	session := store.SessionRecord{ID: "ses_audit", OwnerKeyID: "key_audit", ImageReference: "alpine", State: "creating", LimitsJSON: []byte(`{}`), NetworkPolicyJSON: []byte(`{}`), EnvJSON: []byte(`{}`), LabelsJSON: []byte(`{}`), CreatedAt: now, LastActivityAt: now, ExpiresAt: now.Add(time.Hour)}
+	if err := s.CreateSession(context.Background(), session); err != nil {
+		t.Fatal(err)
+	}
+	session.State = "ready"
+	session.LastActivityAt = now.Add(500 * time.Millisecond)
+	if err := s.UpdateSession(context.Background(), session); err != nil {
+		t.Fatal(err)
+	}
+	exec := store.ExecRecord{ID: "exe_audit", SessionID: session.ID, ArgvJSON: []byte(`[]`), EnvJSON: []byte(`{}`), State: "starting", StartedAt: now.Add(time.Second)}
+	if err := s.CreateExec(context.Background(), exec); err != nil {
+		t.Fatal(err)
+	}
+	exec.State = "exited"
+	ended := now.Add(2 * time.Second)
+	exec.EndedAt = &ended
+	if err := s.UpdateExec(context.Background(), exec); err != nil {
+		t.Fatal(err)
+	}
+	events, err := s.ListAuditEvents(context.Background(), session.ID, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 4 {
+		t.Fatalf("audit event count=%d: %+v", len(events), events)
+	}
+	want := []string{"session.create", "session.ready", "exec.start", "exec.end"}
+	for i, event := range events {
+		if event.Type != want[i] || event.KeyID != session.OwnerKeyID || event.SessionID != session.ID {
+			t.Fatalf("event[%d]=%+v; want type %s", i, event, want[i])
+		}
 	}
 }
 

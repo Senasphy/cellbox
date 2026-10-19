@@ -116,3 +116,13 @@ type IdempotencyStore interface {
 	GetIdempotency(context.Context, []byte) (IdempotencyRecord, error)
 	SaveIdempotency(context.Context, IdempotencyRecord) error
 }
+
+// AuditEventRecord is an append-only lifecycle or security event.
+type AuditEventRecord struct {
+	ID        string
+	SessionID string
+	KeyID     string
+	Type      string
+	Timestamp time.Time
+	Detail    []byte
+}

@@ -119,6 +119,7 @@ func TestOpenAPIResponses(t *testing.T) {
 	}
 
 	check(http.MethodGet, "/healthz", "", false)
+	check(http.MethodGet, "/metrics", "", false)
 	check(http.MethodGet, "/v1/system", "", false)
 	createdKey := check(http.MethodPost, "/v1/keys", `{"name":"contract key","scope":"session"}`, true)
 	var apiKey struct {

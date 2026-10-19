@@ -55,6 +55,7 @@ func NewHandlerWithConfig(store KeyStore, backend runtime.Runtime, backendName s
 		_, _ = w.Write([]byte("ok\n"))
 	})))
 	s.mux.Handle("GET /readyz", withTimeout(5*time.Second, http.HandlerFunc(s.ready)))
+	s.mux.Handle("GET /metrics", withTimeout(10*time.Second, http.HandlerFunc(s.metrics)))
 	s.mux.Handle("GET /v1/system", withTimeout(5*time.Second, http.HandlerFunc(s.system)))
 	s.mux.Handle("POST /v1/keys", withTimeout(10*time.Second, http.HandlerFunc(s.createKey)))
 	s.mux.Handle("GET /v1/keys", withTimeout(10*time.Second, http.HandlerFunc(s.listKeys)))

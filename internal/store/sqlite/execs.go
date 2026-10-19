@@ -11,9 +11,23 @@ import (
 
 // CreateExec persists an exec before output is streamed.
 func (s *Store) CreateExec(ctx context.Context, v store.ExecRecord) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO execs(id,session_id,argv_json,shell,cwd,env_json,tty,state,started_at) VALUES(?,?,?,?,?,?,?,?,?)`, v.ID, v.SessionID, v.ArgvJSON, v.Shell, v.Cwd, v.EnvJSON, v.TTY, v.State, stamp(v.StartedAt))
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
+		return fmt.Errorf("begin exec creation: %w", err)
+	}
+	defer tx.Rollback()
+	if _, err = tx.ExecContext(ctx, `INSERT INTO execs(id,session_id,argv_json,shell,cwd,env_json,tty,state,started_at) VALUES(?,?,?,?,?,?,?,?,?)`, v.ID, v.SessionID, v.ArgvJSON, v.Shell, v.Cwd, v.EnvJSON, v.TTY, v.State, stamp(v.StartedAt)); err != nil {
 		return fmt.Errorf("insert exec: %w", err)
+	}
+	var keyID string
+	if err = tx.QueryRowContext(ctx, `SELECT owner_key_id FROM sessions WHERE id=?`, v.SessionID).Scan(&keyID); err != nil {
+		return fmt.Errorf("read exec owner key: %w", err)
+	}
+	if err = insertAudit(ctx, tx, v.SessionID, keyID, "exec.start", map[string]string{"exec_id": v.ID, "state": v.State}, v.StartedAt); err != nil {
+		return err
+	}
+	if err = tx.Commit(); err != nil {
+		return fmt.Errorf("commit exec creation: %w", err)
 	}
 	return nil
 }
@@ -24,7 +38,19 @@ func (s *Store) UpdateExec(ctx context.Context, v store.ExecRecord) error {
 	if v.EndedAt != nil {
 		ended = stamp(*v.EndedAt)
 	}
-	result, err := s.db.ExecContext(ctx, `UPDATE execs SET state=?,exit_code=?,signal=?,ended_at=?,output_bytes=?,truncated=? WHERE id=?`, v.State, v.ExitCode, v.Signal, ended, v.OutputBytes, v.Truncated, v.ID)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin exec update: %w", err)
+	}
+	defer tx.Rollback()
+	var current, sessionID string
+	if err = tx.QueryRowContext(ctx, `SELECT state,session_id FROM execs WHERE id=?`, v.ID).Scan(&current, &sessionID); err != nil {
+		if err == sql.ErrNoRows {
+			return sql.ErrNoRows
+		}
+		return fmt.Errorf("read current exec state: %w", err)
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE execs SET state=?,exit_code=?,signal=?,ended_at=?,output_bytes=?,truncated=? WHERE id=? AND state=?`, v.State, v.ExitCode, v.Signal, ended, v.OutputBytes, v.Truncated, v.ID, current)
 	if err != nil {
 		return fmt.Errorf("update exec: %w", err)
 	}
@@ -34,6 +60,23 @@ func (s *Store) UpdateExec(ctx context.Context, v store.ExecRecord) error {
 	}
 	if n == 0 {
 		return sql.ErrNoRows
+	}
+	if current != v.State && (v.State == "exited" || v.State == "killed" || v.State == "timed_out" || v.State == "failed") {
+		var keyID string
+		if err = tx.QueryRowContext(ctx, `SELECT owner_key_id FROM sessions WHERE id=?`, sessionID).Scan(&keyID); err != nil {
+			return fmt.Errorf("read exec owner key: %w", err)
+		}
+		at := time.Now().UTC()
+		if v.EndedAt != nil {
+			at = *v.EndedAt
+		}
+		detail := map[string]any{"exec_id": v.ID, "state": v.State, "output_bytes": v.OutputBytes, "truncated": v.Truncated}
+		if err = insertAudit(ctx, tx, sessionID, keyID, "exec.end", detail, at); err != nil {
+			return err
+		}
+	}
+	if err = tx.Commit(); err != nil {
+		return fmt.Errorf("commit exec update: %w", err)
 	}
 	return nil
 }

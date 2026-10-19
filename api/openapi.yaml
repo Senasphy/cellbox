@@ -6,6 +6,14 @@ info:
 servers:
   - url: http://127.0.0.1:8080
 paths:
+  /metrics:
+    get:
+      operationId: metrics
+      responses:
+        '200':
+          description: Prometheus metrics
+          content: { text/plain: { schema: { type: string } } }
+        default: { description: Problem response, content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } } }
   /healthz:
     get:
       operationId: health

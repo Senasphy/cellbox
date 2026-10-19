@@ -20,6 +20,7 @@ import (
 	"github.com/senasphy/cellbox/internal/auth"
 	"github.com/senasphy/cellbox/internal/config"
 	"github.com/senasphy/cellbox/internal/runtime"
+	"github.com/senasphy/cellbox/internal/store"
 	"github.com/senasphy/cellbox/internal/store/sqlite"
 )
 
@@ -537,6 +538,45 @@ func TestSessionCreateRejectsWhenCapacityIsCommitted(t *testing.T) {
 	}
 	if len(backend.boxes) != 0 {
 		t.Fatalf("capacity rejection created %d sandboxes", len(backend.boxes))
+	}
+}
+
+func TestPrometheusMetricsReportSessionsExecsAndCapacity(t *testing.T) {
+	db, err := sqlite.Open(filepath.Join(t.TempDir(), "metrics.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	now := time.Now().UTC()
+	limits, _ := json.Marshal(runtime.Limits{CPUMillicores: 500, MemoryMB: 256, PIDs: 32})
+	session := store.SessionRecord{ID: "ses_metrics", OwnerKeyID: "key_metrics", ImageReference: "alpine", State: "creating", LimitsJSON: limits, NetworkPolicyJSON: []byte(`{}`), EnvJSON: []byte(`{}`), LabelsJSON: []byte(`{}`), CreatedAt: now, LastActivityAt: now, ExpiresAt: now.Add(time.Hour)}
+	if err := db.CreateSession(context.Background(), session); err != nil {
+		t.Fatal(err)
+	}
+	session.State = "ready"
+	if err := db.UpdateSession(context.Background(), session); err != nil {
+		t.Fatal(err)
+	}
+	started := now.Add(time.Second)
+	exec := store.ExecRecord{ID: "exe_metrics", SessionID: session.ID, ArgvJSON: []byte(`[]`), EnvJSON: []byte(`{}`), State: "starting", StartedAt: started}
+	if err := db.CreateExec(context.Background(), exec); err != nil {
+		t.Fatal(err)
+	}
+	exitCode := 0
+	ended := started.Add(150 * time.Millisecond)
+	exec.State, exec.ExitCode, exec.EndedAt, exec.OutputBytes = "exited", &exitCode, &ended, 12
+	if err := db.UpdateExec(context.Background(), exec); err != nil {
+		t.Fatal(err)
+	}
+	w := httptest.NewRecorder()
+	NewHandlerWithConfig(db, nil, "fake", config.Defaults()).ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if w.Code != http.StatusOK || !strings.Contains(w.Header().Get("Content-Type"), "text/plain") {
+		t.Fatalf("metrics status=%d content-type=%q body=%s", w.Code, w.Header().Get("Content-Type"), w.Body.String())
+	}
+	for _, metric := range []string{"cellbox_sessions{state=\"ready\"} 1", "cellbox_capacity_committed{resource=\"memory_mb\"} 256", "cellbox_exec_total{result=\"ok\"} 1", "cellbox_output_bytes_total 12", "cellbox_exec_seconds_count 1", "cellbox_session_create_seconds_count{source=\"cold\"} 1"} {
+		if !strings.Contains(w.Body.String(), metric) {
+			t.Errorf("metrics output missing %q:\n%s", metric, w.Body.String())
+		}
 	}
 }
 
