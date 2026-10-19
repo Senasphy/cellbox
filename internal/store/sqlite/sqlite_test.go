@@ -65,6 +65,34 @@ func TestSessionsPersistLifecycleAndScope(t *testing.T) {
 	}
 }
 
+func TestSessionStateTransitionsRejectInvalidMoves(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "state-machine.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	now := time.Now().UTC()
+	item := store.SessionRecord{ID: "ses_state", OwnerKeyID: "key_a", ImageReference: "alpine", State: "creating", LimitsJSON: []byte(`{}`), NetworkPolicyJSON: []byte(`{}`), EnvJSON: []byte(`{}`), LabelsJSON: []byte(`{}`), CreatedAt: now, LastActivityAt: now, ExpiresAt: now.Add(time.Hour)}
+	if err := s.CreateSession(context.Background(), item); err != nil {
+		t.Fatal(err)
+	}
+	item.State = "ready"
+	if err := s.UpdateSession(context.Background(), item); err != nil {
+		t.Fatal(err)
+	}
+	item.State = "creating"
+	if err := s.UpdateSession(context.Background(), item); err == nil {
+		t.Fatal("expected invalid transition to fail")
+	}
+	got, err := s.GetSession(context.Background(), item.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State != "ready" {
+		t.Fatalf("persisted state=%q; want ready", got.State)
+	}
+}
+
 func TestKeysetPaginationForSessionsAndExecs(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "pagination.db"))
 	if err != nil {

@@ -28,14 +28,15 @@ type createKeyRequest struct {
 }
 
 type keyResponse struct {
-	ID         string     `json:"id"`
-	Name       string     `json:"name"`
-	Prefix     string     `json:"prefix"`
-	Scope      string     `json:"scope"`
-	CreatedAt  time.Time  `json:"created_at"`
-	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
-	RevokedAt  *time.Time `json:"revoked_at,omitempty"`
-	Secret     string     `json:"secret,omitempty"`
+	ID         string          `json:"id"`
+	Name       string          `json:"name"`
+	Prefix     string          `json:"prefix"`
+	Scope      string          `json:"scope"`
+	Quotas     store.KeyQuotas `json:"quotas"`
+	CreatedAt  time.Time       `json:"created_at"`
+	LastUsedAt *time.Time      `json:"last_used_at,omitempty"`
+	RevokedAt  *time.Time      `json:"revoked_at,omitempty"`
+	Secret     string          `json:"secret,omitempty"`
 }
 
 func (s *server) createKey(w http.ResponseWriter, r *http.Request) {
@@ -60,6 +61,11 @@ func (s *server) createKey(w http.ResponseWriter, r *http.Request) {
 		problem.Write(w, problem.Problem{Title: "Invalid key scope", Status: http.StatusUnprocessableEntity, Code: "key_scope_invalid", Detail: "scope must be admin or session"})
 		return
 	}
+	quotas := store.KeyQuotas{}
+	if req.Scope == "session" {
+		quotas = store.KeyQuotas{MaxSessions: 20, MaxTotalMemoryMB: 8192, RequestsPerSecond: 20}
+	}
+	quotasJSON, _ := json.Marshal(quotas)
 	keyID, err := id.New("key")
 	if err != nil {
 		problem.Write(w, problem.Problem{Title: "Internal error", Status: http.StatusInternalServerError, Code: "id_generation_failed"})
@@ -70,7 +76,7 @@ func (s *server) createKey(w http.ResponseWriter, r *http.Request) {
 		problem.Write(w, problem.Problem{Title: "Internal error", Status: http.StatusInternalServerError, Code: "key_generation_failed"})
 		return
 	}
-	record := store.KeyRecord{ID: key.ID, Name: key.Name, Prefix: key.Prefix, Hash: key.Hash, Scope: key.Scope, CreatedAt: time.Now().UTC()}
+	record := store.KeyRecord{ID: key.ID, Name: key.Name, Prefix: key.Prefix, Hash: key.Hash, Scope: key.Scope, QuotasJSON: quotasJSON, CreatedAt: time.Now().UTC()}
 	if err := persist.CreateKey(r.Context(), record); err != nil {
 		problem.Write(w, problem.Problem{Title: "Internal error", Status: http.StatusInternalServerError, Code: "key_create_failed"})
 		return
@@ -142,5 +148,7 @@ func (s *server) keyStore(w http.ResponseWriter) (keyPersistence, bool) {
 }
 
 func toKeyResponse(key store.KeyRecord, secret string) keyResponse {
-	return keyResponse{ID: key.ID, Name: key.Name, Prefix: key.Prefix, Scope: key.Scope, CreatedAt: key.CreatedAt, LastUsedAt: key.LastUsedAt, RevokedAt: key.RevokedAt, Secret: secret}
+	var quotas store.KeyQuotas
+	_ = json.Unmarshal(key.QuotasJSON, &quotas)
+	return keyResponse{ID: key.ID, Name: key.Name, Prefix: key.Prefix, Scope: key.Scope, Quotas: quotas, CreatedAt: key.CreatedAt, LastUsedAt: key.LastUsedAt, RevokedAt: key.RevokedAt, Secret: secret}
 }

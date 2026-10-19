@@ -68,3 +68,26 @@ func TestSystemRequiresValidAdminKey(t *testing.T) {
 		t.Fatalf("session key status=%d body=%s", scoped.Code, scoped.Body.String())
 	}
 }
+
+func TestAuthenticationEnforcesPerKeyRequestRateQuota(t *testing.T) {
+	key, err := auth.Generate("key_rate", "limited", "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	db := fakeStore{key: store.KeyRecord{ID: key.ID, Prefix: key.Prefix, Hash: key.Hash, Scope: "admin", QuotasJSON: []byte(`{"requests_per_second":1}`)}}
+	h := NewHandler(db, nil, "native")
+	request := func() *httptest.ResponseRecorder {
+		r := httptest.NewRequest(http.MethodGet, "/v1/system", nil)
+		r.Header.Set("Authorization", "Bearer "+key.Secret)
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		return w
+	}
+	if first := request(); first.Code != http.StatusOK {
+		t.Fatalf("first request status=%d body=%s", first.Code, first.Body.String())
+	}
+	limited := request()
+	if limited.Code != http.StatusTooManyRequests || limited.Header().Get("Retry-After") != "1" || !strings.Contains(limited.Body.String(), "rate_limited") {
+		t.Fatalf("limited request status=%d headers=%v body=%s", limited.Code, limited.Header(), limited.Body.String())
+	}
+}

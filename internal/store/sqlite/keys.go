@@ -14,7 +14,11 @@ type KeyRecord = store.KeyRecord
 
 // CreateKey stores key metadata and its digest, never the secret itself.
 func (s *Store) CreateKey(ctx context.Context, k KeyRecord) error {
-	if _, err := s.db.ExecContext(ctx, `INSERT INTO api_keys(id,name,prefix,secret_sha256,scope,created_at) VALUES(?,?,?,?,?,?)`, k.ID, k.Name, k.Prefix, k.Hash, k.Scope, k.CreatedAt.UTC().Format(time.RFC3339Nano)); err != nil {
+	quotas := k.QuotasJSON
+	if len(quotas) == 0 {
+		quotas = []byte(`{}`)
+	}
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO api_keys(id,name,prefix,secret_sha256,scope,quotas_json,created_at) VALUES(?,?,?,?,?,?,?)`, k.ID, k.Name, k.Prefix, k.Hash, k.Scope, quotas, k.CreatedAt.UTC().Format(time.RFC3339Nano)); err != nil {
 		return fmt.Errorf("insert API key: %w", err)
 	}
 	return nil
@@ -22,7 +26,7 @@ func (s *Store) CreateKey(ctx context.Context, k KeyRecord) error {
 
 // ListKeys returns key metadata in creation order.
 func (s *Store) ListKeys(ctx context.Context) ([]KeyRecord, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,name,prefix,secret_sha256,scope,created_at,last_used_at,revoked_at FROM api_keys ORDER BY created_at,id`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,name,prefix,secret_sha256,scope,quotas_json,created_at,last_used_at,revoked_at FROM api_keys ORDER BY created_at,id`)
 	if err != nil {
 		return nil, fmt.Errorf("list API keys: %w", err)
 	}
@@ -32,7 +36,7 @@ func (s *Store) ListKeys(ctx context.Context) ([]KeyRecord, error) {
 		var k KeyRecord
 		var created string
 		var last, revoked sql.NullString
-		if err = rows.Scan(&k.ID, &k.Name, &k.Prefix, &k.Hash, &k.Scope, &created, &last, &revoked); err != nil {
+		if err = rows.Scan(&k.ID, &k.Name, &k.Prefix, &k.Hash, &k.Scope, &k.QuotasJSON, &created, &last, &revoked); err != nil {
 			return nil, fmt.Errorf("scan API key: %w", err)
 		}
 		if k.CreatedAt, err = time.Parse(time.RFC3339Nano, created); err != nil {
@@ -64,7 +68,7 @@ func (s *Store) ListKeys(ctx context.Context) ([]KeyRecord, error) {
 func (s *Store) FindKeyByPrefix(ctx context.Context, prefix string) (KeyRecord, error) {
 	var k KeyRecord
 	var created string
-	err := s.db.QueryRowContext(ctx, `SELECT id,name,prefix,secret_sha256,scope,created_at FROM api_keys WHERE prefix=? AND revoked_at IS NULL LIMIT 1`, prefix).Scan(&k.ID, &k.Name, &k.Prefix, &k.Hash, &k.Scope, &created)
+	err := s.db.QueryRowContext(ctx, `SELECT id,name,prefix,secret_sha256,scope,quotas_json,created_at FROM api_keys WHERE prefix=? AND revoked_at IS NULL LIMIT 1`, prefix).Scan(&k.ID, &k.Name, &k.Prefix, &k.Hash, &k.Scope, &k.QuotasJSON, &created)
 	if err != nil {
 		return k, fmt.Errorf("find API key: %w", err)
 	}

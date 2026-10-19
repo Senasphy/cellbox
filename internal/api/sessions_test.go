@@ -473,6 +473,73 @@ func TestSessionCreateIdempotencyReplayAndBodyMismatch(t *testing.T) {
 	}
 }
 
+func TestSessionCreateEnforcesKeyQuotaBeforeCapacity(t *testing.T) {
+	db, err := sqlite.Open(filepath.Join(t.TempDir(), "quota.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	user, err := auth.Generate("key_quota", "limited", "session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	quotas, _ := json.Marshal(map[string]int{"max_sessions": 1})
+	if err = db.CreateKey(context.Background(), sqlite.KeyRecord{ID: user.ID, Name: user.Name, Prefix: user.Prefix, Hash: user.Hash, Scope: user.Scope, QuotasJSON: quotas, CreatedAt: time.Now().UTC()}); err != nil {
+		t.Fatal(err)
+	}
+	backend := &fakeRuntime{}
+	handler := NewHandlerWithConfig(db, backend, "fake", config.Defaults())
+	create := func() *httptest.ResponseRecorder {
+		r := httptest.NewRequest(http.MethodPost, "/v1/sessions", strings.NewReader(`{"image":"python:3.12"}`))
+		r.Header.Set("Authorization", "Bearer "+user.Secret)
+		r.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, r)
+		return w
+	}
+	if first := create(); first.Code != http.StatusCreated {
+		t.Fatalf("first create status=%d body=%s", first.Code, first.Body.String())
+	}
+	limited := create()
+	if limited.Code != http.StatusTooManyRequests || !strings.Contains(limited.Body.String(), "quota_exceeded") {
+		t.Fatalf("second create status=%d body=%s", limited.Code, limited.Body.String())
+	}
+	if len(backend.boxes) != 1 {
+		t.Fatalf("runtime created %d sandboxes; want one", len(backend.boxes))
+	}
+}
+
+func TestSessionCreateRejectsWhenCapacityIsCommitted(t *testing.T) {
+	db, err := sqlite.Open(filepath.Join(t.TempDir(), "capacity.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	user, err := auth.Generate("key_capacity", "user", "session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = db.CreateKey(context.Background(), sqlite.KeyRecord{ID: user.ID, Name: user.Name, Prefix: user.Prefix, Hash: user.Hash, Scope: user.Scope, CreatedAt: time.Now().UTC()}); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Defaults()
+	cfg.Capacity.MemoryOvercommit = 0.000001
+	cfg.Capacity.CPUOvercommit = 0.000001
+	backend := &fakeRuntime{}
+	handler := NewHandlerWithConfig(db, backend, "fake", cfg)
+	r := httptest.NewRequest(http.MethodPost, "/v1/sessions", strings.NewReader(`{"image":"python:3.12"}`))
+	r.Header.Set("Authorization", "Bearer "+user.Secret)
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, r)
+	if w.Code != http.StatusServiceUnavailable || w.Header().Get("Retry-After") == "" || !strings.Contains(w.Body.String(), "capacity_exceeded") {
+		t.Fatalf("create status=%d headers=%v body=%s", w.Code, w.Header(), w.Body.String())
+	}
+	if len(backend.boxes) != 0 {
+		t.Fatalf("capacity rejection created %d sandboxes", len(backend.boxes))
+	}
+}
+
 func TestSessionRejectsUnsupportedNetworkAndOutOfRangeLimits(t *testing.T) {
 	db, err := sqlite.Open(filepath.Join(t.TempDir(), "invalid.db"))
 	if err != nil {

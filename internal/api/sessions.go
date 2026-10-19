@@ -54,6 +54,7 @@ type sessionPersistence interface {
 	CreateSession(context.Context, store.SessionRecord) error
 	UpdateSession(context.Context, store.SessionRecord) error
 	GetSession(context.Context, string) (store.SessionRecord, error)
+	ListSessions(context.Context, string, bool) ([]store.SessionRecord, error)
 	PageSessions(context.Context, string, bool, int, *store.ListCursor) ([]store.SessionRecord, bool, error)
 }
 type sandboxResolver interface{ SandboxByID(string) runtime.Sandbox }
@@ -110,6 +111,9 @@ func (s *server) createSession(w http.ResponseWriter, r *http.Request) {
 	}
 	if !caps.DiskLimits {
 		limits.DiskMB = 0
+	}
+	if !s.enforceKeyQuota(w, r, key, limits) || !s.enforceCapacity(w, r, limits) {
+		return
 	}
 	now := time.Now().UTC()
 	sessionID, err := id.New("ses")
@@ -221,7 +225,7 @@ func (s *server) deleteSession(w http.ResponseWriter, r *http.Request) {
 		problem.Write(w, problem.Problem{Title: "Not found", Status: http.StatusNotFound, Code: "session_not_found"})
 		return
 	}
-	if record.State == "stopped" || (record.RuntimeID == "" && (record.State == "expired" || record.State == "failed" || record.State == "lost")) {
+	if record.State == "stopped" || record.State == "expired" || record.State == "failed" || record.State == "lost" {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}

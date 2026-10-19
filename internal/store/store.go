@@ -18,9 +18,17 @@ type KeyRecord struct {
 	Prefix     string
 	Hash       []byte
 	Scope      string
+	QuotasJSON []byte
 	CreatedAt  time.Time
 	LastUsedAt *time.Time
 	RevokedAt  *time.Time
+}
+
+// KeyQuotas limits the resources and request rate consumed by one API key.
+type KeyQuotas struct {
+	MaxSessions       int `json:"max_sessions"`
+	MaxTotalMemoryMB  int `json:"max_total_memory_mb"`
+	RequestsPerSecond int `json:"requests_per_second"`
 }
 
 // SessionRecord contains the persisted, backend-neutral session state.

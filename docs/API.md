@@ -55,7 +55,7 @@ curl -fsS -X DELETE "$CELLBOX_URL/v1/sessions/$session_id" \
   -H "Authorization: Bearer $CELLBOX_KEY"
 ```
 
-The current Docker backend forces `NetworkMode=none`; only `network_policy.mode=none` is accepted. It reports `disk_limits: false`, returns `disk_mb: 0` for sessions without an explicit disk request, and rejects explicit `limits.disk_mb` requests because Docker quota support depends on daemon storage configuration. Interactive terminals, egress allowlists, quotas, and the dashboard are not implemented yet.
+The current Docker backend forces `NetworkMode=none`; only `network_policy.mode=none` is accepted. It reports `disk_limits: false`, returns `disk_mb: 0` for sessions without an explicit disk request, and rejects explicit `limits.disk_mb` requests because Docker quota support depends on daemon storage configuration. Interactive terminals, egress allowlists, and the dashboard are not implemented yet.
 
 Mutating POST requests accept an optional `Idempotency-Key` header (up to 255 bytes). Successful responses are retained for 24 hours per authenticated API key. Repeating the same method, path, query, key, and body returns the stored status, headers, and response body. Reusing the key with a different request returns `422 idempotency_key_reused`. Errors are not cached.
 
@@ -66,6 +66,8 @@ An active exec can receive a POSIX signal with `POST /v1/sessions/{session_id}/e
 ## API key management
 
 An admin key can create and list API keys, and revoke a key by ID. The full secret is returned only by the create call; list responses contain key metadata without the digest or secret.
+
+New session-scoped keys receive quotas of 20 active sessions, 8192 MB aggregate memory, and 20 requests per second. Admin keys are unmetered. Session creation also checks committed CPU, memory, and PID capacity using the host or enclosing cgroup limits; when capacity is exhausted it returns `503 capacity_exceeded` and `Retry-After`.
 
 ```sh
 created_key=$(curl -fsS -X POST "$CELLBOX_URL/v1/keys" \

@@ -138,6 +138,11 @@ func newRoot() *cobra.Command {
 		srv := &http.Server{Addr: cfg.Listen, Handler: handler, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 1 << 20}
 		serveCtx, stop := signalContext(cmd.Context())
 		defer stop()
+		if reaperBackend, ok := runtimeBackend.(interface{ SandboxByID(string) runtime.Sandbox }); ok {
+			go reconcile.Run(serveCtx, reaperBackend, db, 5*time.Second, func(reaperErr error) {
+				logger.Error("session TTL sweep failed", "error", reaperErr)
+			})
+		}
 		result := make(chan error, 1)
 		go func() {
 			var e error

@@ -37,6 +37,8 @@ type server struct {
 	activeExecs map[string]runtime.ExecHandle
 	idemMu      sync.Mutex
 	idemLocks   map[string]*idemLock
+	rateMu      sync.Mutex
+	rateCounts  map[string]rateWindow
 }
 
 // NewHandler builds the initial HTTP handler with health and authenticated system routes.
@@ -46,7 +48,7 @@ func NewHandler(store KeyStore, backend runtime.Runtime, backendName string) htt
 
 // NewHandlerWithConfig builds the service routes with configured session limits.
 func NewHandlerWithConfig(store KeyStore, backend runtime.Runtime, backendName string, cfg config.Config) http.Handler {
-	s := &server{store: store, backend: backend, backendName: backendName, mux: http.NewServeMux(), cfg: cfg, activeExecs: map[string]runtime.ExecHandle{}, idemLocks: map[string]*idemLock{}}
+	s := &server{store: store, backend: backend, backendName: backendName, mux: http.NewServeMux(), cfg: cfg, activeExecs: map[string]runtime.ExecHandle{}, idemLocks: map[string]*idemLock{}, rateCounts: map[string]rateWindow{}}
 	s.mux.Handle("GET /healthz", withTimeout(5*time.Second, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
@@ -129,10 +131,46 @@ func (s *server) authenticate(w http.ResponseWriter, r *http.Request) (store.Key
 		problem.Write(w, problem.Problem{Title: "Unauthorized", Status: http.StatusUnauthorized, Code: "unauthorized"})
 		return store.KeyRecord{}, false
 	}
+	if !s.allowKeyRequest(w, record) {
+		return store.KeyRecord{}, false
+	}
 	if updater, ok := s.store.(interface {
 		MarkKeyUsed(context.Context, string, time.Time) error
 	}); ok {
 		_ = updater.MarkKeyUsed(r.Context(), record.ID, time.Now().UTC())
 	}
 	return record, true
+}
+
+type rateWindow struct {
+	requests []time.Time
+}
+
+func (s *server) allowKeyRequest(w http.ResponseWriter, record store.KeyRecord) bool {
+	var quotas store.KeyQuotas
+	_ = json.Unmarshal(record.QuotasJSON, &quotas)
+	if quotas.RequestsPerSecond <= 0 {
+		return true
+	}
+	now := time.Now()
+	s.rateMu.Lock()
+	window := s.rateCounts[record.ID]
+	cutoff := now.Add(-time.Second)
+	first := 0
+	for first < len(window.requests) && !window.requests[first].After(cutoff) {
+		first++
+	}
+	window.requests = append(window.requests[:0], window.requests[first:]...)
+	allowed := len(window.requests) < quotas.RequestsPerSecond
+	if allowed {
+		window.requests = append(window.requests, now)
+	}
+	s.rateCounts[record.ID] = window
+	s.rateMu.Unlock()
+	if allowed {
+		return true
+	}
+	w.Header().Set("Retry-After", "1")
+	problem.Write(w, problem.Problem{Title: "Rate limit exceeded", Status: http.StatusTooManyRequests, Code: "rate_limited", Detail: "API key request rate quota exceeded"})
+	return false
 }

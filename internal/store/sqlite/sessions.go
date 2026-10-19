@@ -21,7 +21,22 @@ func (s *Store) CreateSession(ctx context.Context, v store.SessionRecord) error 
 
 // UpdateSession persists a session lifecycle transition and runtime metadata.
 func (s *Store) UpdateSession(ctx context.Context, v store.SessionRecord) error {
-	result, err := s.db.ExecContext(ctx, `UPDATE sessions SET image_digest=?,runtime_id=?,state=?,limits_json=?,network_policy_json=?,env_json=?,labels_json=?,last_activity_at=?,expires_at=?,failure_reason=? WHERE id=?`, v.ImageDigest, v.RuntimeID, v.State, v.LimitsJSON, v.NetworkPolicyJSON, v.EnvJSON, v.LabelsJSON, stamp(v.LastActivityAt), stamp(v.ExpiresAt), v.FailureReason, v.ID)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin session update: %w", err)
+	}
+	defer tx.Rollback()
+	var current string
+	if err = tx.QueryRowContext(ctx, `SELECT state FROM sessions WHERE id=?`, v.ID).Scan(&current); err != nil {
+		if err == sql.ErrNoRows {
+			return sql.ErrNoRows
+		}
+		return fmt.Errorf("read current session state: %w", err)
+	}
+	if !validSessionTransition(current, v.State) {
+		return fmt.Errorf("invalid session state transition %q -> %q", current, v.State)
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE sessions SET image_digest=?,runtime_id=?,state=?,limits_json=?,network_policy_json=?,env_json=?,labels_json=?,last_activity_at=?,expires_at=?,failure_reason=? WHERE id=? AND state=?`, v.ImageDigest, v.RuntimeID, v.State, v.LimitsJSON, v.NetworkPolicyJSON, v.EnvJSON, v.LabelsJSON, stamp(v.LastActivityAt), stamp(v.ExpiresAt), v.FailureReason, v.ID, current)
 	if err != nil {
 		return fmt.Errorf("update session: %w", err)
 	}
@@ -32,7 +47,26 @@ func (s *Store) UpdateSession(ctx context.Context, v store.SessionRecord) error 
 	if n == 0 {
 		return sql.ErrNoRows
 	}
+	if err = tx.Commit(); err != nil {
+		return fmt.Errorf("commit session update: %w", err)
+	}
 	return nil
+}
+
+func validSessionTransition(from, to string) bool {
+	if from == to {
+		return from == "creating" || from == "ready" || from == "stopping" || from == "stopped" || from == "expired" || from == "failed" || from == "lost"
+	}
+	switch from {
+	case "creating":
+		return to == "ready" || to == "failed" || to == "stopping" || to == "lost"
+	case "ready":
+		return to == "stopping" || to == "failed" || to == "expired" || to == "lost"
+	case "stopping":
+		return to == "stopped" || to == "expired" || to == "lost"
+	default:
+		return false
+	}
 }
 
 // GetSession returns one persisted session.
