@@ -20,6 +20,7 @@ import (
 	"github.com/senasphy/cellbox/internal/api"
 	"github.com/senasphy/cellbox/internal/auth"
 	"github.com/senasphy/cellbox/internal/config"
+	"github.com/senasphy/cellbox/internal/dashboard"
 	"github.com/senasphy/cellbox/internal/doctor"
 	"github.com/senasphy/cellbox/internal/id"
 	"github.com/senasphy/cellbox/internal/logging"
@@ -63,6 +64,7 @@ func newRoot() *cobra.Command {
 	}})
 	root.AddCommand(newKeysCommand())
 	root.AddCommand(newRunCommand())
+	root.AddCommand(newMCPCommand())
 	var cfgPath string
 	var listen, dataDir, backend, logLevel, logFormat string
 	var allowRemote bool
@@ -134,7 +136,7 @@ func newRoot() *cobra.Command {
 			return fmt.Errorf("startup reconciliation failed: %w", err)
 		}
 		reconcileCancel()
-		handler := api.NewHandlerWithConfig(db, runtimeBackend, cfg.Backend, cfg)
+		handler := dashboard.Wrap(api.NewHandlerWithConfig(db, runtimeBackend, cfg.Backend, cfg))
 		srv := &http.Server{Addr: cfg.Listen, Handler: handler, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 1 << 20}
 		serveCtx, stop := signalContext(cmd.Context())
 		defer stop()

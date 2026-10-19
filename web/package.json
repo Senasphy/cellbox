@@ -1,0 +1,1 @@
+{"name":"cellbox-dashboard","private":true,"scripts":{"build":"next build","test:e2e":"playwright test"},"dependencies":{"next":"15.1.6","react":"19.0.0","react-dom":"19.0.0"},"devDependencies":{"@playwright/test":"^1.49.1","@types/node":"^22.10.2","@types/react":"^19.0.3","typescript":"^5.7.2"}}

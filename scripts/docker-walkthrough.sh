@@ -3,6 +3,7 @@ set -euo pipefail
 
 cellbox_bin=${CELLBOX_BIN:-./bin/cellbox}
 cellbox_bin=$(realpath "$cellbox_bin")
+repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 work_dir=$(mktemp -d)
 port=$(python3 - <<'PY'
 import socket
@@ -71,6 +72,13 @@ curl -fsS "$base/v1/sessions/$session_id/files/list?path=%2Ftmp" \
 curl -fsS "$base/v1/sessions/$session_id/files?path=%2Ftmp%2Fcellbox-upload.txt" \
 	-H "Authorization: Bearer $api_key" -o "$work_dir/download.txt"
 cmp "$work_dir/upload.txt" "$work_dir/download.txt"
+if [[ "${CELLBOX_PYTHON_SDK:-0}" == "1" ]]; then
+	CELLBOX_URL="$base" CELLBOX_KEY="$api_key" PYTHONPATH="$repo_root/sdk/python/src" \
+		python3 -m pytest -q "$repo_root/sdk/python/tests" -m integration
+fi
+if [[ "${CELLBOX_PLAYWRIGHT:-0}" == "1" ]]; then
+	CELLBOX_URL="$base" CELLBOX_KEY="$api_key" npm run test:e2e --prefix "$repo_root/web"
+fi
 curl -fsS -X DELETE "$base/v1/sessions/$session_id" \
 	-H "Authorization: Bearer $api_key" >/dev/null
 session_id=

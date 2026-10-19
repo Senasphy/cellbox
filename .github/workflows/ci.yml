@@ -1,6 +1,27 @@
 name: ci
 on: [push, pull_request]
 jobs:
+  sdk:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -e 'sdk/python[test]'
+      - run: pytest -q sdk/python/tests -m 'not integration'
+      - run: pytest -q sdk/tools/test_cellbox_tools.py
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm install
+        working-directory: web
+      - run: npm run build
+        working-directory: web
+      - run: npm install
+        working-directory: sdk/typescript
+      - run: npm run build
+        working-directory: sdk/typescript
   go:
     strategy:
       matrix:
@@ -27,5 +48,13 @@ jobs:
       - run: docker info
       - run: make test-integration
       - run: go build -o /tmp/cellbox-integration ./cmd/cellbox
-      - run: CELLBOX_BIN=/tmp/cellbox-integration ./scripts/docker-walkthrough.sh
+      - run: python -m pip install -e 'sdk/python[test]'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm install
+        working-directory: web
+      - run: npx playwright install --with-deps chromium
+        working-directory: web
+      - run: CELLBOX_PYTHON_SDK=1 CELLBOX_PLAYWRIGHT=1 CELLBOX_BIN=/tmp/cellbox-integration ./scripts/docker-walkthrough.sh
       - run: CELLBOX_BIN=/tmp/cellbox-integration ./scripts/recovery-walkthrough.sh
