@@ -431,6 +431,48 @@ func TestSessionLifecycleAndOwnership(t *testing.T) {
 	}
 }
 
+func TestSessionCreateIdempotencyReplayAndBodyMismatch(t *testing.T) {
+	db, err := sqlite.Open(filepath.Join(t.TempDir(), "idempotency.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	user, err := auth.Generate("key_user", "user", "session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = db.CreateKey(context.Background(), sqlite.KeyRecord{ID: user.ID, Name: user.Name, Prefix: user.Prefix, Hash: user.Hash, Scope: user.Scope, CreatedAt: time.Now().UTC()}); err != nil {
+		t.Fatal(err)
+	}
+	backend := &fakeRuntime{}
+	handler := NewHandlerWithConfig(db, backend, "fake", config.Defaults())
+	request := func(body string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(http.MethodPost, "/v1/sessions", strings.NewReader(body))
+		r.Header.Set("Authorization", "Bearer "+user.Secret)
+		r.Header.Set("Content-Type", "application/json")
+		r.Header.Set("Idempotency-Key", "create-session-1")
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, r)
+		return w
+	}
+	body := `{"image":"python:3.12","network_policy":{"mode":"none"}}`
+	first := request(body)
+	if first.Code != http.StatusCreated {
+		t.Fatalf("first status=%d body=%s", first.Code, first.Body.String())
+	}
+	second := request(body)
+	if second.Code != first.Code || second.Body.String() != first.Body.String() {
+		t.Fatalf("replay status=%d body=%s; first status=%d body=%s", second.Code, second.Body.String(), first.Code, first.Body.String())
+	}
+	if len(backend.boxes) != 1 {
+		t.Fatalf("runtime created %d sandboxes; want one", len(backend.boxes))
+	}
+	changed := request(`{"image":"alpine:3.20","network_policy":{"mode":"none"}}`)
+	if changed.Code != http.StatusUnprocessableEntity || !strings.Contains(changed.Body.String(), "idempotency_key_reused") {
+		t.Fatalf("mismatched request status=%d body=%s", changed.Code, changed.Body.String())
+	}
+}
+
 func TestSessionRejectsUnsupportedNetworkAndOutOfRangeLimits(t *testing.T) {
 	db, err := sqlite.Open(filepath.Join(t.TempDir(), "invalid.db"))
 	if err != nil {

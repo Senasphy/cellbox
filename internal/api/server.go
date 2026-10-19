@@ -35,6 +35,8 @@ type server struct {
 	cfg         config.Config
 	execMu      sync.RWMutex
 	activeExecs map[string]runtime.ExecHandle
+	idemMu      sync.Mutex
+	idemLocks   map[string]*idemLock
 }
 
 // NewHandler builds the initial HTTP handler with health and authenticated system routes.
@@ -44,7 +46,7 @@ func NewHandler(store KeyStore, backend runtime.Runtime, backendName string) htt
 
 // NewHandlerWithConfig builds the service routes with configured session limits.
 func NewHandlerWithConfig(store KeyStore, backend runtime.Runtime, backendName string, cfg config.Config) http.Handler {
-	s := &server{store: store, backend: backend, backendName: backendName, mux: http.NewServeMux(), cfg: cfg, activeExecs: map[string]runtime.ExecHandle{}}
+	s := &server{store: store, backend: backend, backendName: backendName, mux: http.NewServeMux(), cfg: cfg, activeExecs: map[string]runtime.ExecHandle{}, idemLocks: map[string]*idemLock{}}
 	s.mux.Handle("GET /healthz", withTimeout(5*time.Second, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
@@ -70,7 +72,7 @@ func NewHandlerWithConfig(store KeyStore, backend runtime.Runtime, backendName s
 	s.mux.Handle("GET /v1/sessions/{id}/files/list", withTimeout(10*time.Minute, http.HandlerFunc(s.listFiles)))
 	s.mux.Handle("GET /v1/sessions/{id}/archive", withTimeout(20*time.Minute, http.HandlerFunc(s.downloadArchive)))
 	s.mux.Handle("PUT /v1/sessions/{id}/archive", withTimeout(20*time.Minute, http.HandlerFunc(s.uploadArchive)))
-	return s.mux
+	return s.idempotencyMiddleware(s.mux)
 }
 
 func withTimeout(timeout time.Duration, next http.Handler) http.Handler {

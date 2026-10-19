@@ -92,3 +92,19 @@ type ExecStore interface {
 	AppendExecOutput(context.Context, string, string, []byte, time.Time) (ExecOutputRecord, error)
 	ListExecOutput(context.Context, string, int64) ([]ExecOutputRecord, error)
 }
+
+// IdempotencyRecord stores a successful POST response for safe retries.
+type IdempotencyRecord struct {
+	KeyHash     []byte
+	RequestHash []byte
+	StatusCode  int
+	HeadersJSON []byte
+	Body        []byte
+	CreatedAt   time.Time
+}
+
+// IdempotencyStore persists completed idempotent requests.
+type IdempotencyStore interface {
+	GetIdempotency(context.Context, []byte) (IdempotencyRecord, error)
+	SaveIdempotency(context.Context, IdempotencyRecord) error
+}
