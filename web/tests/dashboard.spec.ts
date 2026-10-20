@@ -72,10 +72,11 @@ test("dashboard creates a sandbox, streams a command, transfers a file and loads
       await page.getByRole("button", { name: "Images" }).click();
       await expect(page.getByRole("heading", { name: "Container images" })).toBeVisible();
       await auditWCAG(page);
-      await expect(page.getByRole("row").filter({ hasText: "alpine:latest" })).toBeVisible();
+      const imageInventory = page.locator("section").filter({ has: page.getByRole("heading", { name: "Container images" }) });
+      await expect(imageInventory.getByRole("row").filter({ hasText: "alpine:latest" })).toBeVisible();
       await page.getByLabel("Image reference").fill("alpine:latest");
       await page.getByRole("button", { name: "Pull image" }).click();
-      await expect(page.getByRole("row").filter({ hasText: "alpine:latest" })).toBeVisible();
+      await expect(imageInventory.getByRole("row").filter({ hasText: "alpine:latest" })).toBeVisible();
       await page.getByRole("button", { name: "Overview" }).click();
     });
     await test.step("create a session", async () => {
