@@ -6,6 +6,8 @@ export type ExecList = components["schemas"]["ExecList"];
 export type FileList = components["schemas"]["FileList"];
 export type KeyList = components["schemas"]["KeyList"];
 export type SystemInfo = components["schemas"]["System"];
+export type ImageInfo = components["schemas"]["ImageInfo"];
+export type ImageList = { images: ImageInfo[] };
 export type LimitBreachList = operations["listRecentLimitBreaches"]["responses"][200]["content"]["application/json"];
 export const apiClient = createClient<paths>({ baseUrl: "" });
 
@@ -43,6 +45,29 @@ export async function fetchLimitBreaches(signal: AbortSignal): Promise<LimitBrea
   const result = await apiClient.GET("/v1/limit-breaches", { signal });
   if (!result.response.ok || !result.data) throw problemError(result.response.status, result.error);
   return result.data;
+}
+
+export async function fetchImageList(signal: AbortSignal): Promise<ImageList> {
+  const result = await apiClient.GET("/v1/images", { signal });
+  if (!result.response.ok || !result.data) throw problemError(result.response.status, result.error);
+  return result.data;
+}
+
+export async function pullContainerImage(reference: string, csrf: string): Promise<ImageInfo> {
+  const result = await apiClient.POST("/v1/images", {
+    body: { reference },
+    headers: { "X-CSRF-Token": csrf },
+  });
+  if (!result.response.ok || !result.data) throw problemError(result.response.status, result.error);
+  return result.data;
+}
+
+export async function removeContainerImage(reference: string, csrf: string): Promise<void> {
+  const result = await apiClient.DELETE("/v1/images", {
+    params: { query: { reference } },
+    headers: { "X-CSRF-Token": csrf },
+  });
+  if (!result.response.ok) throw problemError(result.response.status, result.error);
 }
 
 export async function fetchExecHistory(sessionID: string, signal: AbortSignal): Promise<ExecList["items"]> {
