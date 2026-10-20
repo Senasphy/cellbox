@@ -266,6 +266,42 @@ func TestEnsureImageReturnsResolvedDigest(t *testing.T) {
 	}
 }
 
+func TestImageManagerListsAndRemovesImages(t *testing.T) {
+	var removed bool
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1.41/images/json":
+			if r.URL.Query().Get("all") != "true" {
+				t.Fatalf("query=%s", r.URL.RawQuery)
+			}
+			_, _ = w.Write([]byte(`[{"Id":"sha256:abc","RepoTags":["alpine:latest"],"Size":42},{"Id":"sha256:empty","RepoTags":["<none>:<none>"],"Size":1}]`))
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1.41/images/alpine:latest":
+			if r.URL.Query().Get("force") != "false" || r.URL.Query().Get("noprune") != "true" {
+				t.Fatalf("query=%s", r.URL.RawQuery)
+			}
+			removed = true
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.String())
+		}
+	}))
+	defer s.Close()
+	rt := testRuntime(s)
+	images, err := rt.ListImages(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(images) != 1 || images[0].Reference != "alpine:latest" || images[0].Size != 42 {
+		t.Fatalf("images=%+v", images)
+	}
+	if err := rt.RemoveImage(context.Background(), "alpine:latest"); err != nil {
+		t.Fatal(err)
+	}
+	if !removed {
+		t.Fatal("image was not removed")
+	}
+}
+
 func TestSnapshotUsesDockerCommit(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || !strings.HasPrefix(r.URL.Path, "/v1.41/commit") || r.URL.Query().Get("container") != "c1" {

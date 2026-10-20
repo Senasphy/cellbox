@@ -32,6 +32,64 @@ type fakeRuntime struct {
 
 type noDiskLimitRuntime struct{ *fakeRuntime }
 
+type imageManagerRuntime struct {
+	*fakeRuntime
+	images  []runtime.ImageInfo
+	removed string
+}
+
+func (f *imageManagerRuntime) ListImages(context.Context) ([]runtime.ImageInfo, error) {
+	return f.images, nil
+}
+func (f *imageManagerRuntime) RemoveImage(_ context.Context, ref string) error {
+	f.removed = ref
+	return nil
+}
+
+func TestImageManagementRequiresAdminAndSupportsLifecycle(t *testing.T) {
+	db, err := sqlite.Open(filepath.Join(t.TempDir(), "images.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	admin, err := auth.Generate("key_admin", "admin", "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = db.CreateKey(context.Background(), sqlite.KeyRecord{ID: admin.ID, Name: admin.Name, Prefix: admin.Prefix, Hash: admin.Hash, Scope: admin.Scope, CreatedAt: time.Now().UTC()}); err != nil {
+		t.Fatal(err)
+	}
+	user, err := auth.Generate("key_user", "user", "session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = db.CreateKey(context.Background(), sqlite.KeyRecord{ID: user.ID, Name: user.Name, Prefix: user.Prefix, Hash: user.Hash, Scope: user.Scope, CreatedAt: time.Now().UTC()}); err != nil {
+		t.Fatal(err)
+	}
+	backend := &imageManagerRuntime{fakeRuntime: &fakeRuntime{}, images: []runtime.ImageInfo{{Reference: "alpine:latest", Digest: "sha256:abc", Size: 42}}}
+	handler := NewHandlerWithConfig(db, backend, "fake", config.Defaults())
+	request := func(method, path, token, body string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(method, path, strings.NewReader(body))
+		r.Header.Set("Authorization", "Bearer "+token)
+		r.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, r)
+		return w
+	}
+	if got := request(http.MethodGet, "/v1/images", user.Secret, ""); got.Code != http.StatusForbidden {
+		t.Fatalf("session key list status=%d", got.Code)
+	}
+	if got := request(http.MethodGet, "/v1/images", admin.Secret, ""); got.Code != http.StatusOK || !strings.Contains(got.Body.String(), "alpine:latest") {
+		t.Fatalf("list status=%d body=%s", got.Code, got.Body.String())
+	}
+	if got := request(http.MethodPost, "/v1/images", admin.Secret, `{"reference":"alpine:3.20"}`); got.Code != http.StatusCreated || !strings.Contains(got.Body.String(), "alpine:3.20") {
+		t.Fatalf("pull status=%d body=%s", got.Code, got.Body.String())
+	}
+	if got := request(http.MethodDelete, "/v1/images?reference=alpine%3Alatest", admin.Secret, ""); got.Code != http.StatusNoContent || backend.removed != "alpine:latest" {
+		t.Fatalf("remove status=%d ref=%q", got.Code, backend.removed)
+	}
+}
+
 func (*noDiskLimitRuntime) Capabilities() runtime.Capabilities {
 	return runtime.Capabilities{CPULimits: true}
 }

@@ -188,6 +188,49 @@ func (r *Runtime) EnsureImage(ctx context.Context, ref string) (runtime.ImageInf
 	return runtime.ImageInfo{Reference: ref, Digest: digest, Size: data.Size}, nil
 }
 
+// ListImages returns Docker images, expanding each tag into a selectable reference.
+func (r *Runtime) ListImages(ctx context.Context) ([]runtime.ImageInfo, error) {
+	resp, err := r.request(ctx, http.MethodGet, "/images/json?all=true", nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	var rows []struct {
+		ID          string   `json:"Id"`
+		RepoTags    []string `json:"RepoTags"`
+		RepoDigests []string `json:"RepoDigests"`
+		Size        int64    `json:"Size"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 16<<20)).Decode(&rows); err != nil {
+		return nil, fmt.Errorf("decode Docker image list: %w", err)
+	}
+	images := make([]runtime.ImageInfo, 0, len(rows))
+	for _, row := range rows {
+		refs := row.RepoTags
+		if len(refs) == 0 {
+			refs = []string{row.ID}
+		}
+		for _, ref := range refs {
+			if ref != "<none>:<none>" {
+				images = append(images, runtime.ImageInfo{Reference: ref, Digest: row.ID, Size: row.Size})
+			}
+		}
+	}
+	return images, nil
+}
+
+// RemoveImage removes a cached image without forcing removal of containers that use it.
+func (r *Runtime) RemoveImage(ctx context.Context, ref string) error {
+	if strings.TrimSpace(ref) == "" {
+		return errors.New("image reference must not be empty")
+	}
+	resp, err := r.request(ctx, http.MethodDelete, "/images/"+url.PathEscape(ref)+"?force=false&noprune=true", nil)
+	if err != nil {
+		return err
+	}
+	return resp.Body.Close()
+}
+
 // Create starts an isolated container with the requested resource limits.
 func (r *Runtime) Create(ctx context.Context, spec runtime.SandboxSpec) (runtime.Sandbox, error) {
 	if spec.Image.Reference == "" {

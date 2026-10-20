@@ -127,6 +127,12 @@ type Runtime interface {
 	Reconcile(context.Context) error
 }
 
+// ImageManager is an optional runtime capability for managing cached images.
+type ImageManager interface {
+	ListImages(context.Context) ([]ImageInfo, error)
+	RemoveImage(context.Context, string) error
+}
+
 // Sandbox provides process, filesystem, lifecycle and resource operations.
 type Sandbox interface {
 	ID() string
