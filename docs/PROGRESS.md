@@ -4,6 +4,8 @@
 
 Added admin-only `GET`, `POST`, and `DELETE /v1/images` handlers, optional runtime image-management capability, Docker Engine list/remove support, and dashboard controls to browse, pull, and remove cached images. API/runtime tests pass and the dashboard production build passes. OpenAPI operations and generated types are present in the working tree alongside pre-existing uncommitted edits to those files; they were not included in the implementation commit. CI run [39431711062](https://github.com/Senasphy/cellbox/actions/runs/39431711062) is running. This closes the image-management dashboard/API gap; it does not complete the full specification or advance the pending phase gate.
 
+The Phase 3 CLI also now provides `cellbox images ls|pull|rm`, uses `CELLBOX_URL`/`CELLBOX_KEY`, and supports JSON output for listing. Command tests cover all three authenticated requests and a missing key. The live dashboard inventory/pull browser test is running in CI [39432063944](https://github.com/Senasphy/cellbox/actions/runs/39432063944); the overall Phase 3 gate remains pending, including a live real-model example run.
+
 ## Phase 0: Foundations — complete (local acceptance passed)
 
 Implemented: Go module, CLI skeleton (`version`, `doctor`, `serve`), strict config loading with environment overrides, slog redaction, SQLite WAL store and forward-only migration runner, problem+json type, prefixed sortable IDs, OpenAPI skeleton, Makefile, CI workflow, Apache-2.0 license.
