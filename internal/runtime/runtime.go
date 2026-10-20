@@ -111,9 +111,11 @@ type SnapshotInfo struct {
 
 // Stats contains current sandbox resource measurements.
 type Stats struct {
-	CPUUsageNS  uint64 `json:"cpu_usage_ns"`
-	MemoryBytes uint64 `json:"memory_bytes"`
-	PIDs        int    `json:"pids"`
+	CPUUsageNS   uint64 `json:"cpu_usage_ns"`
+	MemoryBytes  uint64 `json:"memory_bytes"`
+	PIDs         int    `json:"pids"`
+	IOReadBytes  uint64 `json:"io_read_bytes"`
+	IOWriteBytes uint64 `json:"io_write_bytes"`
 }
 
 // Runtime creates and reconciles sandboxes for one backend.

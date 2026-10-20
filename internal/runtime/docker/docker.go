@@ -614,11 +614,26 @@ func (s *sandbox) Stats(ctx context.Context) (runtime.Stats, error) {
 		PIDs struct {
 			Current int `json:"current"`
 		} `json:"pids_stats"`
+		IO struct {
+			ServiceBytes []struct {
+				Op    string `json:"op"`
+				Value uint64 `json:"value"`
+			} `json:"io_service_bytes_recursive"`
+		} `json:"blkio_stats"`
 	}
 	if err = json.NewDecoder(io.LimitReader(resp.Body, 2<<20)).Decode(&raw); err != nil {
 		return runtime.Stats{}, fmt.Errorf("decode Docker stats: %w", err)
 	}
-	return runtime.Stats{CPUUsageNS: raw.CPU.Usage.Total, MemoryBytes: raw.Memory.Usage, PIDs: raw.PIDs.Current}, nil
+	stats := runtime.Stats{CPUUsageNS: raw.CPU.Usage.Total, MemoryBytes: raw.Memory.Usage, PIDs: raw.PIDs.Current}
+	for _, entry := range raw.IO.ServiceBytes {
+		switch strings.ToLower(entry.Op) {
+		case "read":
+			stats.IOReadBytes += entry.Value
+		case "write":
+			stats.IOWriteBytes += entry.Value
+		}
+	}
+	return stats, nil
 }
 func (s *sandbox) Kill(ctx context.Context) error {
 	err := s.runtime.simple(ctx, http.MethodPost, "/containers/"+url.PathEscape(s.id)+"/kill", nil)

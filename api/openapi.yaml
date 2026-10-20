@@ -95,6 +95,18 @@ paths:
         '201': { description: Session created, content: { application/json: { schema: { $ref: '#/components/schemas/Session' } } } }
         '422': { description: Invalid request, content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } } }
         default: { description: Problem response, content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+  /v1/sessions/stream:
+    get:
+      operationId: streamSessions
+      security: [{ bearerAuth: [] }]
+      description: A current session list snapshot is emitted every two seconds until the client disconnects.
+      responses:
+        "200":
+          description: Live session snapshots
+          content:
+            text/event-stream:
+              schema: { type: string, description: SSE sessions events carrying SessionSnapshotList JSON }
+        default: { description: Problem response, content: { application/problem+json: { schema: { $ref: "#/components/schemas/Problem" } } } }
   /v1/sessions/{id}:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string } }
@@ -143,6 +155,33 @@ paths:
                         detail: { type: object }
                   next_cursor: { type: string }
         default: { description: Problem response, content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+  /v1/sessions/{id}/metrics:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    get:
+      operationId: getSessionMetrics
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Current resource usage and configured limits
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SessionMetrics" }
+        default: { description: Problem response, content: { application/problem+json: { schema: { $ref: "#/components/schemas/Problem" } } } }
+  /v1/sessions/{id}/metrics/stream:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    get:
+      operationId: streamSessionMetrics
+      security: [{ bearerAuth: [] }]
+      description: Server-sent metrics samples emitted once per second until the client disconnects.
+      responses:
+        "200":
+          description: Live session usage samples
+          content:
+            text/event-stream:
+              schema: { type: string, description: SSE metrics events carrying SessionMetrics JSON }
+        default: { description: Problem response, content: { application/problem+json: { schema: { $ref: "#/components/schemas/Problem" } } } }
   /v1/sessions/{id}/execs:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string } }
@@ -335,6 +374,33 @@ components:
         last_activity_at: { type: string, format: date-time }
         expires_at: { type: string, format: date-time }
         failure_reason: { type: string }
+    SessionMetrics:
+      type: object
+      required: [sampled_at, cpu_usage_ns, memory_bytes, pids, io_read_bytes, io_write_bytes, limits]
+      properties:
+        sampled_at: { type: string, format: date-time }
+        cpu_usage_ns: { type: integer, format: uint64 }
+        memory_bytes: { type: integer, format: uint64 }
+        pids: { type: integer }
+        io_read_bytes: { type: integer, format: uint64 }
+        io_write_bytes: { type: integer, format: uint64 }
+        limits: { type: object }
+    SessionSnapshotList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+            required: [id, image, state, limits, labels, created_at]
+            properties:
+              id: { type: string }
+              image: { type: string }
+              state: { type: string }
+              limits: { type: object }
+              labels: { type: object, additionalProperties: { type: string } }
+              created_at: { type: string, format: date-time }
     SessionList:
       type: object
       required: [items]

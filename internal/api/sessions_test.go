@@ -68,6 +68,7 @@ type fakeSandbox struct {
 	destroyed  bool
 	files      map[string][]byte
 	execHandle runtime.ExecHandle
+	stats      runtime.Stats
 }
 
 type fakeExecHandle struct {
@@ -191,7 +192,7 @@ func (f *fakeSandbox) UpdateLimits(context.Context, runtime.Limits) error {
 	return runtime.ErrUnsupported
 }
 func (f *fakeSandbox) Stats(context.Context) (runtime.Stats, error) {
-	return runtime.Stats{}, runtime.ErrUnsupported
+	return f.stats, nil
 }
 func (f *fakeSandbox) Kill(context.Context) error    { f.killed = true; return nil }
 func (f *fakeSandbox) Destroy(context.Context) error { f.destroyed = true; return nil }
@@ -232,6 +233,37 @@ func TestSessionLifecycleAndOwnership(t *testing.T) {
 	}
 	if response.State != "ready" || response.ImageDigest != "sha256:test" || response.Limits.MemoryMB != 512 {
 		t.Fatalf("response=%+v", response)
+	}
+	backend.box.stats = runtime.Stats{CPUUsageNS: 42, MemoryBytes: 2048, PIDs: 3, IOReadBytes: 4096, IOWriteBytes: 8192}
+	metricsRequest := httptest.NewRequest(http.MethodGet, "/v1/sessions/"+response.ID+"/metrics", nil)
+	metricsRequest.Header.Set("Authorization", "Bearer "+user.Secret)
+	metricsResult := httptest.NewRecorder()
+	handler.ServeHTTP(metricsResult, metricsRequest)
+	var sample sessionMetricsSample
+	if metricsResult.Code != http.StatusOK || json.Unmarshal(metricsResult.Body.Bytes(), &sample) != nil {
+		t.Fatalf("session metrics status=%d body=%s", metricsResult.Code, metricsResult.Body.String())
+	}
+	if sample.CPUUsageNS != 42 || sample.MemoryBytes != 2048 || sample.PIDs != 3 || sample.IOReadBytes != 4096 || sample.IOWriteBytes != 8192 || sample.Limits.MemoryMB != 512 {
+		t.Fatalf("session metrics sample=%+v", sample)
+	}
+	streamCtx, cancelMetrics := context.WithCancel(context.Background())
+	streamRequest := httptest.NewRequest(http.MethodGet, "/v1/sessions/"+response.ID+"/metrics/stream", nil).WithContext(streamCtx)
+	streamRequest.Header.Set("Authorization", "Bearer "+user.Secret)
+	streamResult := httptest.NewRecorder()
+	finished := make(chan struct{})
+	go func() {
+		handler.ServeHTTP(streamResult, streamRequest)
+		close(finished)
+	}()
+	time.Sleep(20 * time.Millisecond)
+	cancelMetrics()
+	select {
+	case <-finished:
+	case <-time.After(time.Second):
+		t.Fatal("metrics stream did not close after client cancellation")
+	}
+	if streamResult.Code != http.StatusOK || !strings.Contains(streamResult.Body.String(), "event: metrics") || !strings.Contains(streamResult.Body.String(), `"cpu_usage_ns":42`) {
+		t.Fatalf("metrics stream status=%d body=%s", streamResult.Code, streamResult.Body.String())
 	}
 	blocking := &blockingExecHandle{output: make(chan runtime.OutputChunk), done: make(chan struct{}), signals: make(chan int, 1)}
 	defer blocking.finish()

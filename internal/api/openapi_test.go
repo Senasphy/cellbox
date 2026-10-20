@@ -68,6 +68,12 @@ func TestOpenAPIResponses(t *testing.T) {
 		if authKey {
 			req.Header.Set("Authorization", "Bearer "+key.Secret)
 		}
+		if strings.HasSuffix(target, "/stream") && method == http.MethodGet {
+			streamCtx, cancel := context.WithCancel(req.Context())
+			req = req.WithContext(streamCtx)
+			stopCancel := time.AfterFunc(20*time.Millisecond, cancel)
+			defer func() { stopCancel.Stop(); cancel() }()
+		}
 		route, pathParams, err := router.FindRoute(req)
 		if err != nil {
 			t.Fatalf("route %s %s: %v", method, target, err)
@@ -92,7 +98,13 @@ func TestOpenAPIResponses(t *testing.T) {
 			Status:                 rec.Code, Header: rec.Header(), Body: io.NopCloser(bytes.NewReader(rec.Body.Bytes())),
 		}
 		if strings.HasSuffix(target, "/stream") && method == http.MethodGet {
-			if !strings.HasPrefix(rec.Header().Get("Content-Type"), "text/event-stream") || !strings.Contains(rec.Body.String(), "event: exit") {
+			expectedEvent := "event: exit"
+			if strings.HasSuffix(target, "/metrics/stream") {
+				expectedEvent = "event: metrics"
+			} else if target == "/v1/sessions/stream" {
+				expectedEvent = "event: sessions"
+			}
+			if !strings.HasPrefix(rec.Header().Get("Content-Type"), "text/event-stream") || !strings.Contains(rec.Body.String(), expectedEvent) {
 				t.Errorf("invalid event stream response: content-type=%q body=%q", rec.Header().Get("Content-Type"), rec.Body.String())
 			}
 			input.Options = &openapi3filter.Options{ExcludeResponseBody: true}
@@ -220,7 +232,10 @@ func TestOpenAPIResponses(t *testing.T) {
 		}
 	}
 	check(http.MethodGet, "/v1/sessions", "", true)
+	check(http.MethodGet, "/v1/sessions/stream", "", true)
 	check(http.MethodGet, "/v1/sessions/"+session.ID, "", true)
+	check(http.MethodGet, "/v1/sessions/"+session.ID+"/metrics", "", true)
+	check(http.MethodGet, "/v1/sessions/"+session.ID+"/metrics/stream", "", true)
 	execPath := "/v1/sessions/" + session.ID + "/execs"
 	started := check(http.MethodPost, execPath, `{"argv":["echo","hi"]}`, true)
 	var execution struct {
@@ -232,8 +247,12 @@ func TestOpenAPIResponses(t *testing.T) {
 	check(http.MethodGet, execPath, "", true)
 	check(http.MethodGet, execPath+"/"+execution.ID, "", true)
 	check(http.MethodPost, execPath+"/"+execution.ID+"/signal", `{"signal":15}`, true)
-	check(http.MethodGet, execPath+"/"+execution.ID+"/stream", "", true)
-	check(http.MethodPost, execPath+"?wait=true", `{"argv":["echo","wait"]}`, true)
+	waited := check(http.MethodPost, execPath+"?wait=true", `{"argv":["echo","wait"]}`, true)
+	var waitedExec waitExecResponse
+	if err := json.Unmarshal(waited.Body.Bytes(), &waitedExec); err != nil || waitedExec.Exec.ID == "" {
+		t.Fatalf("invalid waited exec response: %+v err=%v", waitedExec, err)
+	}
+	check(http.MethodGet, execPath+"/"+waitedExec.Exec.ID+"/stream", "", true)
 	firstExecPage := check(http.MethodGet, execPath+"?limit=1", "", true)
 	var execPage struct {
 		Items      []execResponse `json:"items"`

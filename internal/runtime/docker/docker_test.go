@@ -356,7 +356,7 @@ func TestUpdateLimitsAndStats(t *testing.T) {
 			if r.URL.Query().Get("stream") != "false" {
 				t.Errorf("expected one-shot stats request, query=%s", r.URL.RawQuery)
 			}
-			_, _ = w.Write([]byte(`{"cpu_stats":{"cpu_usage":{"total_usage":123}} ,"memory_stats":{"usage":456},"pids_stats":{"current":2}}`))
+			_, _ = w.Write([]byte(`{"cpu_stats":{"cpu_usage":{"total_usage":123}} ,"memory_stats":{"usage":456},"pids_stats":{"current":2},"blkio_stats":{"io_service_bytes_recursive":[{"op":"Read","value":100},{"op":"Write","value":200},{"op":"Read","value":23}]}}`))
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.String())
 			http.NotFound(w, r)
@@ -374,7 +374,7 @@ func TestUpdateLimitsAndStats(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stats.CPUUsageNS != 123 || stats.MemoryBytes != 456 || stats.PIDs != 2 {
+	if stats.CPUUsageNS != 123 || stats.MemoryBytes != 456 || stats.PIDs != 2 || stats.IOReadBytes != 123 || stats.IOWriteBytes != 200 {
 		t.Fatalf("unexpected stats: %+v", stats)
 	}
 }

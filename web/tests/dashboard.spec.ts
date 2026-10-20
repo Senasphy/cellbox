@@ -24,6 +24,8 @@ test("dashboard creates a sandbox, streams a command, transfers a file and loads
       await expect(row).toBeVisible({ timeout: 90_000 });
       await expect(row.getByRole("button", { name: `Run in ${createdID}` })).toBeVisible();
       await row.getByRole("button", { name: `Details ${createdID}` }).click();
+      await page.getByRole("button", { name: "Metrics" }).click();
+      await expect(page.getByRole("img", { name: "CPU chart" })).toBeVisible({ timeout: 20_000 });
       await page.getByRole("button", { name: "Timeline" }).click();
       await page.getByRole("button", { name: "Events" }).click();
       await page.getByRole("button", { name: "Sessions" }).click();
