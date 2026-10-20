@@ -30,6 +30,7 @@ func (s *server) metrics(w http.ResponseWriter, r *http.Request) {
 	}
 	states := map[string]int{"creating": 0, "ready": 0, "stopping": 0, "stopped": 0, "expired": 0, "failed": 0, "lost": 0}
 	committed := committedResources{}
+	var sessionErrors uint64
 	var outputBytes uint64
 	var execCount uint64
 	var execTime time.Duration
@@ -40,6 +41,9 @@ func (s *server) metrics(w http.ResponseWriter, r *http.Request) {
 	for _, session := range sessions {
 		if _, exists := states[session.State]; exists {
 			states[session.State]++
+		}
+		if session.State == "failed" || session.State == "lost" {
+			sessionErrors++
 		}
 		if activeSession(session.State) {
 			limits := sessionResources(session)
@@ -88,6 +92,9 @@ func (s *server) metrics(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			results[result]++
+			if result == "failed" || result == "timed_out" || result == "oom_killed" {
+				sessionErrors++
+			}
 			if exec.EndedAt != nil {
 				execCount++
 				seconds := exec.EndedAt.Sub(exec.StartedAt).Seconds()
@@ -141,6 +148,8 @@ func (s *server) metrics(w http.ResponseWriter, r *http.Request) {
 	f("cellbox_exec_seconds_bucket{le=\"+Inf\"} %d\n", execCount)
 	f("cellbox_exec_seconds_sum %s\ncellbox_exec_seconds_count %d\n", strconv.FormatFloat(execTime.Seconds(), 'f', -1, 64), execCount)
 	f("# HELP cellbox_output_bytes_total Exec output bytes persisted.\n# TYPE cellbox_output_bytes_total counter\ncellbox_output_bytes_total %d\n", outputBytes)
+	f("# HELP cellbox_session_create_total Persisted session creation attempts.\n# TYPE cellbox_session_create_total counter\ncellbox_session_create_total %d\n", len(sessions))
+	f("# HELP cellbox_error_total Failed sessions and exec operations.\n# TYPE cellbox_error_total counter\ncellbox_error_total %d\n", sessionErrors)
 }
 
 func renderHistogram(write func(string, ...any), name, labels string, bounds []float64, values []float64) {

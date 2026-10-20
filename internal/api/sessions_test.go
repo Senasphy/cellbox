@@ -607,12 +607,20 @@ func TestPrometheusMetricsReportSessionsExecsAndCapacity(t *testing.T) {
 	if err := db.UpdateExec(context.Background(), exec); err != nil {
 		t.Fatal(err)
 	}
+	timedOutExec := store.ExecRecord{ID: "exe_metrics_timeout", SessionID: session.ID, ArgvJSON: []byte(`[]`), EnvJSON: []byte(`{}`), State: "starting", StartedAt: started}
+	if err := db.CreateExec(context.Background(), timedOutExec); err != nil {
+		t.Fatal(err)
+	}
+	timedOutExec.State, timedOutExec.EndedAt = "timed_out", &ended
+	if err := db.UpdateExec(context.Background(), timedOutExec); err != nil {
+		t.Fatal(err)
+	}
 	w := httptest.NewRecorder()
 	NewHandlerWithConfig(db, nil, "fake", config.Defaults()).ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/metrics", nil))
 	if w.Code != http.StatusOK || !strings.Contains(w.Header().Get("Content-Type"), "text/plain") {
 		t.Fatalf("metrics status=%d content-type=%q body=%s", w.Code, w.Header().Get("Content-Type"), w.Body.String())
 	}
-	for _, metric := range []string{"cellbox_sessions{state=\"ready\"} 1", "cellbox_capacity_committed{resource=\"memory_mb\"} 256", "cellbox_exec_total{result=\"ok\"} 1", "cellbox_output_bytes_total 12", "cellbox_exec_seconds_count 1", "cellbox_session_create_seconds_count{source=\"cold\"} 1"} {
+	for _, metric := range []string{"cellbox_sessions{state=\"ready\"} 1", "cellbox_capacity_committed{resource=\"memory_mb\"} 256", "cellbox_exec_total{result=\"ok\"} 1", "cellbox_output_bytes_total 12", "cellbox_exec_seconds_count 2", "cellbox_session_create_seconds_count{source=\"cold\"} 1", "cellbox_session_create_total 1", "cellbox_error_total 1"} {
 		if !strings.Contains(w.Body.String(), metric) {
 			t.Errorf("metrics output missing %q:\n%s", metric, w.Body.String())
 		}

@@ -18,6 +18,8 @@ test("dashboard creates a sandbox, streams a command, transfers a file and loads
       await page.getByPlaceholder("cbx_…").fill(key!);
       await page.getByRole("button", { name: "Connect" }).click();
       await expect(page.getByRole("meter", { name: "CPU capacity" })).toBeVisible();
+      await expect(page.getByRole("img", { name: "Session create rate sparkline" })).toBeVisible();
+      await expect(page.getByRole("img", { name: "Error rate sparkline" })).toBeVisible();
       await page.keyboard.press("Control+k");
       const palette = page.getByRole("dialog", { name: "Command palette" });
       await expect(palette).toBeVisible();
@@ -53,11 +55,11 @@ test("dashboard creates a sandbox, streams a command, transfers a file and loads
       await expect(page.getByLabel("Output")).toContainText("dashboard-file-ok");
       await page.getByRole("button", { name: `Details ${createdID}` }).click();
       await page.getByRole("button", { name: "Files", exact: true }).click();
-      await page.getByRole("button", { name: "tmp", exact: true }).click();
-      await page.getByRole("button", { name: "dashboard-e2e.txt", exact: true }).click();
+      await page.getByRole("button", { name: "Open directory tmp", exact: true }).click();
+      await page.getByRole("button", { name: "Open file dashboard-e2e.txt", exact: true }).click();
       await expect(page.getByLabel("Code viewer for /tmp/dashboard-e2e.txt")).toContainText("dashboard-file-ok");
       await page.getByLabel("Choose files to upload").setInputFiles({ name: "dashboard-upload.txt", mimeType: "text/plain", buffer: Buffer.from("file-browser-upload-ok") });
-      await page.getByRole("button", { name: "dashboard-upload.txt", exact: true }).click();
+      await page.getByRole("button", { name: "Open file dashboard-upload.txt", exact: true }).click();
       await expect(page.getByLabel("Code viewer for /tmp/dashboard-upload.txt")).toContainText("file-browser-upload-ok");
       const tarDownload = page.waitForEvent("download");
       await page.getByRole("button", { name: "Download directory as tar" }).click();
