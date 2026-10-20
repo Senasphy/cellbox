@@ -59,6 +59,10 @@ func TestCreateSessionCgroupRejectsUnsafeIDAndLimits(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(parent, "ses_bad")); !os.IsNotExist(err) {
 		t.Fatalf("failed create left a cgroup directory: %v", err)
 	}
+	cgroup := &SessionCgroup{path: parent}
+	if err := cgroup.UpdateLimits(runtime.Limits{CPUMillicores: int(^uint(0) >> 1), MemoryMB: 1, PIDs: 1}); err == nil {
+		t.Fatal("accepted CPU limit that overflows cpu.max")
+	}
 }
 
 func TestInitializeCgroupRootRequiresControllersAndCreatesHierarchy(t *testing.T) {

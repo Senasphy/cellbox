@@ -88,14 +88,20 @@ func (c *SessionCgroup) UpdateLimits(limits runtime.Limits) error {
 	if limits.CPUMillicores <= 0 || limits.MemoryMB <= 0 || limits.PIDs <= 0 {
 		return fmt.Errorf("CPU, memory, and PID limits must be positive")
 	}
+	maxInt := int(^uint(0) >> 1)
+	maxInt64 := uint64(^uint64(0) >> 1)
+	if uint64(limits.MemoryMB) > maxInt64>>20 || limits.CPUMillicores > maxInt/100 {
+		return fmt.Errorf("CPU or memory limit overflows cgroup v2 settings")
+	}
 	memoryBytes := int64(limits.MemoryMB) << 20
+	memoryHigh := memoryBytes/10*9 + memoryBytes%10*9/10
 	settings := []struct{ file, value string }{
 		{"memory.max", strconv.FormatInt(memoryBytes, 10)},
 		{"memory.swap.max", "0"},
 		{"memory.oom.group", "1"},
-		{"memory.high", strconv.FormatInt(memoryBytes*9/10, 10)},
+		{"memory.high", strconv.FormatInt(memoryHigh, 10)},
 		{"pids.max", strconv.Itoa(limits.PIDs)},
-		{"cpu.max", fmt.Sprintf("%d %d", limits.CPUMillicores*int(cgroupPeriod)/1000, cgroupPeriod)},
+		{"cpu.max", fmt.Sprintf("%d %d", limits.CPUMillicores*100, cgroupPeriod)},
 		{"cpu.weight", "100"},
 	}
 	for _, setting := range settings {
