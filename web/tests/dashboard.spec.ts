@@ -56,10 +56,17 @@ test("dashboard creates a sandbox, streams a command, transfers a file and loads
       const palette = page.getByRole("dialog", { name: "Command palette" });
       await expect(palette).toBeVisible();
       await auditWCAG(page);
-      await auditLightTheme(page);
-      await palette.getByLabel("Filter commands").fill("Open Sessions");
-      await palette.getByLabel("Filter commands").press("Enter");
-      await expect(palette).toBeHidden();
+      await palette.getByRole("button", { name: "Close" }).click();
+      await page.getByRole("button", { name: "Switch to light theme" }).click();
+      await auditWCAG(page);
+      await page.keyboard.press("Control+k");
+      const lightPalette = page.getByRole("dialog", { name: "Command palette" });
+      await expect(lightPalette).toBeVisible();
+      await auditWCAG(page);
+      await lightPalette.getByLabel("Filter commands").fill("Open Sessions");
+      await lightPalette.getByLabel("Filter commands").press("Enter");
+      await expect(lightPalette).toBeHidden();
+      await page.getByRole("button", { name: "Switch to dark theme" }).click();
       const createdResponse = page.waitForResponse(response =>
         response.request().method() === "POST" && new URL(response.url()).pathname === "/v1/sessions",
       );
