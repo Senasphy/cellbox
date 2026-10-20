@@ -11,6 +11,7 @@ import (
 	"github.com/senasphy/cellbox/internal/api/problem"
 	"github.com/senasphy/cellbox/internal/auth"
 	"github.com/senasphy/cellbox/internal/config"
+	"github.com/senasphy/cellbox/internal/doctor"
 	"github.com/senasphy/cellbox/internal/runtime"
 	"github.com/senasphy/cellbox/internal/store"
 )
@@ -25,6 +26,8 @@ type KeyStore interface {
 type System struct {
 	Backend      string               `json:"backend"`
 	Capabilities runtime.Capabilities `json:"capabilities"`
+	DoctorStatus string               `json:"doctor_status"`
+	DoctorChecks []string             `json:"doctor_checks"`
 }
 
 type server struct {
@@ -39,6 +42,10 @@ type server struct {
 	idemLocks   map[string]*idemLock
 	rateMu      sync.Mutex
 	rateCounts  map[string]rateWindow
+	doctorOnce  sync.Once
+	doctorMu    sync.RWMutex
+	doctorState string
+	doctorInfo  []string
 }
 
 // NewHandler builds the initial HTTP handler with health and authenticated system routes.
@@ -113,8 +120,36 @@ func (s *server) system(w http.ResponseWriter, r *http.Request) {
 	if s.backend != nil {
 		caps = s.backend.Capabilities()
 	}
+	s.doctorOnce.Do(func() {
+		s.doctorMu.Lock()
+		s.doctorState = "checking"
+		s.doctorMu.Unlock()
+		go s.loadDoctorChecks()
+	})
+	s.doctorMu.RLock()
+	doctorStatus := s.doctorState
+	doctorChecks := append([]string(nil), s.doctorInfo...)
+	s.doctorMu.RUnlock()
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(System{Backend: s.backendName, Capabilities: caps})
+	_ = json.NewEncoder(w).Encode(System{Backend: s.backendName, Capabilities: caps, DoctorStatus: doctorStatus, DoctorChecks: doctorChecks})
+}
+
+func (s *server) loadDoctorChecks() {
+	checks := doctor.Check()
+	status := summarizeDoctor(checks)
+	s.doctorMu.Lock()
+	s.doctorInfo = append([]string(nil), checks...)
+	s.doctorState = status
+	s.doctorMu.Unlock()
+}
+
+func summarizeDoctor(checks []string) string {
+	for _, check := range checks {
+		if strings.Contains(check, "(fix:") {
+			return "degraded"
+		}
+	}
+	return "ready"
 }
 func (s *server) authenticate(w http.ResponseWriter, r *http.Request) (store.KeyRecord, bool) {
 	parts := strings.Fields(r.Header.Get("Authorization"))

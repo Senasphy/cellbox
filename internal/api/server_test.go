@@ -57,7 +57,7 @@ func TestSystemRequiresValidAdminKey(t *testing.T) {
 	req.Header.Set("Authorization", "Bearer "+key.Secret)
 	authorized := httptest.NewRecorder()
 	h.ServeHTTP(authorized, req)
-	if authorized.Code != http.StatusOK || !strings.Contains(authorized.Body.String(), `"backend":"native"`) {
+	if authorized.Code != http.StatusOK || !strings.Contains(authorized.Body.String(), `"backend":"native"`) || !strings.Contains(authorized.Body.String(), `"doctor_status":`) {
 		t.Fatalf("status=%d body=%s", authorized.Code, authorized.Body.String())
 	}
 	db.key.Scope = "session"
@@ -66,6 +66,23 @@ func TestSystemRequiresValidAdminKey(t *testing.T) {
 	h.ServeHTTP(scoped, req)
 	if scoped.Code != http.StatusForbidden {
 		t.Fatalf("session key status=%d body=%s", scoped.Code, scoped.Body.String())
+	}
+}
+
+func TestSummarizeDoctorChecks(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		checks []string
+		want   string
+	}{
+		{name: "ready", checks: []string{"kernel version: 6.8.0", "seccomp: available"}, want: "ready"},
+		{name: "degraded", checks: []string{"kernel version: 6.8.0", "cgroup delegation: not writable (fix: configure Delegate=yes)"}, want: "degraded"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := summarizeDoctor(test.checks); got != test.want {
+				t.Fatalf("summarizeDoctor()=%q, want %q", got, test.want)
+			}
+		})
 	}
 }
 
