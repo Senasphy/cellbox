@@ -43,13 +43,14 @@ def main() -> int:
         parser.error("set OPENAI_API_KEY or pass --fake-model")
 
     source = "def add(a, b):\n    return a - b\n"
-    test = "from app import add; assert add(2, 3) == 5, f'expected 5, got {add(2, 3)}'"
     with Client(os.getenv("CELLBOX_URL", "http://127.0.0.1:8080"), os.environ["CELLBOX_KEY"]) as client:
         with client.sessions.create("python:3.12-slim", memory_mb=512, network_policy={"mode": "none"}) as box:
             box.exec(["mkdir", "-p", "/work"])
-            box.write_file("/work/app.py", source)
             for attempt in range(1, args.max_attempts + 1):
-                result = box.exec(["python", "-c", test], cwd="/work", timeout_s=30)
+                module = f"app_{attempt}"
+                box.write_file(f"/work/{module}.py", source)
+                command = f"from {module} import add; assert add(2, 3) == 5, 'expected 5'"
+                result = box.exec(["python", "-c", command], cwd="/work", timeout_s=30)
                 print(f"attempt {attempt}: exit={result.exit_code}\n{result.stdout}{result.stderr}")
                 if result.exit_code == 0:
                     return 0
