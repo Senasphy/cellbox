@@ -11,6 +11,7 @@ test("dashboard creates a sandbox, streams a command, transfers a file and loads
     await test.step("load dashboard and create session", async () => {
       await page.goto("/");
       await expect(page.getByRole("heading", { name: "cellbox" })).toBeVisible();
+      await expect(page.locator("main")).toHaveAttribute("data-hydrated", "true");
       await page.getByPlaceholder("cbx_…").fill(key!);
       await page.getByRole("button", { name: "Connect" }).click();
       const createdResponse = page.waitForResponse(response =>
