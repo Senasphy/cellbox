@@ -128,7 +128,7 @@ func (s *server) system(w http.ResponseWriter, r *http.Request) {
 	})
 	s.doctorMu.RLock()
 	doctorStatus := s.doctorState
-	doctorChecks := append([]string(nil), s.doctorInfo...)
+	doctorChecks := append([]string{}, s.doctorInfo...)
 	s.doctorMu.RUnlock()
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(System{Backend: s.backendName, Capabilities: caps, DoctorStatus: doctorStatus, DoctorChecks: doctorChecks})
@@ -138,7 +138,7 @@ func (s *server) loadDoctorChecks() {
 	checks := doctor.Check()
 	status := summarizeDoctor(checks)
 	s.doctorMu.Lock()
-	s.doctorInfo = append([]string(nil), checks...)
+	s.doctorInfo = append([]string{}, checks...)
 	s.doctorState = status
 	s.doctorMu.Unlock()
 }

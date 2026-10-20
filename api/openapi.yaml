@@ -324,10 +324,12 @@ components:
         code: { type: string }
     System:
       type: object
-      required: [backend, capabilities]
+      required: [backend, capabilities, doctor_status, doctor_checks]
       properties:
         backend: { type: string }
         capabilities: { type: object }
+        doctor_status: { type: string, enum: [checking, ready, degraded] }
+        doctor_checks: { type: array, items: { type: string } }
     CreateKey:
       type: object
       required: [name, scope]
