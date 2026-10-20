@@ -3,6 +3,7 @@ package docker
 
 import (
 	"archive/tar"
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/base64"
@@ -17,6 +18,7 @@ import (
 	"os"
 	"path"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -281,8 +283,80 @@ func (s *sandbox) Exec(ctx context.Context, req runtime.ExecRequest) (runtime.Ex
 	go h.run(s.runtime, s.id, created.ID, req)
 	return h, nil
 }
-func (s *sandbox) OpenTerminal(context.Context, runtime.TerminalRequest) (runtime.Terminal, error) {
-	return nil, runtime.ErrUnsupported
+func (s *sandbox) OpenTerminal(ctx context.Context, terminalReq runtime.TerminalRequest) (runtime.Terminal, error) {
+	if s.runtime.socket == "" {
+		return nil, runtime.ErrUnsupported
+	}
+	if terminalReq.Columns == 0 {
+		terminalReq.Columns = 80
+	}
+	if terminalReq.Rows == 0 {
+		terminalReq.Rows = 24
+	}
+	env := make([]string, 0, len(terminalReq.Env))
+	for key, value := range terminalReq.Env {
+		env = append(env, key+"="+value)
+	}
+	sort.Strings(env)
+	resp, err := s.runtime.request(ctx, http.MethodPost, "/containers/"+url.PathEscape(s.id)+"/exec", map[string]any{"AttachStdin": true, "AttachStdout": true, "AttachStderr": true, "Tty": true, "Cmd": []string{"/bin/sh"}, "Env": env, "WorkingDir": terminalReq.Cwd})
+	if err != nil {
+		return nil, fmt.Errorf("create Docker terminal: %w", err)
+	}
+	var created struct {
+		ID string `json:"Id"`
+	}
+	err = json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&created)
+	resp.Body.Close()
+	if err != nil {
+		return nil, fmt.Errorf("decode Docker terminal id: %w", err)
+	}
+	if created.ID == "" {
+		return nil, errors.New("Docker returned an empty terminal exec id")
+	}
+	conn, err := (&net.Dialer{}).DialContext(ctx, "unix", s.runtime.socket)
+	if err != nil {
+		return nil, fmt.Errorf("connect to Docker terminal: %w", err)
+	}
+	endpoint := "/" + apiVersion + "/exec/" + url.PathEscape(created.ID) + "/start?"
+	payload, _ := json.Marshal(map[string]any{"Detach": false, "Tty": true})
+	_, err = fmt.Fprintf(conn, "POST %s HTTP/1.1\r\nHost: docker\r\nContent-Type: application/json\r\nContent-Length: %d\r\nConnection: Upgrade\r\nUpgrade: tcp\r\n\r\n", endpoint, len(payload))
+	if err == nil {
+		_, err = conn.Write(payload)
+	}
+	reader := bufio.NewReader(conn)
+	if err == nil {
+		var response *http.Response
+		response, err = http.ReadResponse(reader, &http.Request{Method: http.MethodPost})
+		if err == nil && response.StatusCode != http.StatusSwitchingProtocols {
+			body, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
+			response.Body.Close()
+			err = fmt.Errorf("Docker terminal start returned %s: %s", response.Status, strings.TrimSpace(string(body)))
+		}
+	}
+	if err != nil {
+		conn.Close()
+		return nil, err
+	}
+	terminal := &dockerTerminal{conn: conn, reader: reader, runtime: s.runtime, execID: created.ID}
+	if err := terminal.Resize(ctx, terminalReq.Columns, terminalReq.Rows); err != nil {
+		terminal.Close()
+		return nil, err
+	}
+	return terminal, nil
+}
+
+type dockerTerminal struct {
+	conn    net.Conn
+	reader  *bufio.Reader
+	runtime *Runtime
+	execID  string
+}
+
+func (t *dockerTerminal) Read(p []byte) (int, error)  { return t.reader.Read(p) }
+func (t *dockerTerminal) Write(p []byte) (int, error) { return t.conn.Write(p) }
+func (t *dockerTerminal) Close() error                { return t.conn.Close() }
+func (t *dockerTerminal) Resize(ctx context.Context, columns, rows uint16) error {
+	return t.runtime.simple(ctx, http.MethodPost, "/exec/"+url.PathEscape(t.execID)+"/resize?h="+strconv.Itoa(int(rows))+"&w="+strconv.Itoa(int(columns)), map[string]any{})
 }
 func cleanPath(p string) (string, error) {
 	if err := sandboxpath.Validate(p); err != nil {

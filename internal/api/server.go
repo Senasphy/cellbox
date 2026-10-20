@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gorilla/websocket"
 	"github.com/senasphy/cellbox/internal/api/problem"
 	"github.com/senasphy/cellbox/internal/auth"
 	"github.com/senasphy/cellbox/internal/config"
@@ -31,21 +32,22 @@ type System struct {
 }
 
 type server struct {
-	store       KeyStore
-	backend     runtime.Runtime
-	backendName string
-	mux         *http.ServeMux
-	cfg         config.Config
-	execMu      sync.RWMutex
-	activeExecs map[string]runtime.ExecHandle
-	idemMu      sync.Mutex
-	idemLocks   map[string]*idemLock
-	rateMu      sync.Mutex
-	rateCounts  map[string]rateWindow
-	doctorOnce  sync.Once
-	doctorMu    sync.RWMutex
-	doctorState string
-	doctorInfo  []string
+	store            KeyStore
+	backend          runtime.Runtime
+	backendName      string
+	mux              *http.ServeMux
+	cfg              config.Config
+	execMu           sync.RWMutex
+	activeExecs      map[string]runtime.ExecHandle
+	idemMu           sync.Mutex
+	idemLocks        map[string]*idemLock
+	rateMu           sync.Mutex
+	rateCounts       map[string]rateWindow
+	doctorOnce       sync.Once
+	doctorMu         sync.RWMutex
+	doctorState      string
+	doctorInfo       []string
+	terminalUpgrader websocket.Upgrader
 }
 
 // NewHandler builds the initial HTTP handler with health and authenticated system routes.
@@ -55,7 +57,7 @@ func NewHandler(store KeyStore, backend runtime.Runtime, backendName string) htt
 
 // NewHandlerWithConfig builds the service routes with configured session limits.
 func NewHandlerWithConfig(store KeyStore, backend runtime.Runtime, backendName string, cfg config.Config) http.Handler {
-	s := &server{store: store, backend: backend, backendName: backendName, mux: http.NewServeMux(), cfg: cfg, activeExecs: map[string]runtime.ExecHandle{}, idemLocks: map[string]*idemLock{}, rateCounts: map[string]rateWindow{}}
+	s := &server{store: store, backend: backend, backendName: backendName, mux: http.NewServeMux(), cfg: cfg, activeExecs: map[string]runtime.ExecHandle{}, idemLocks: map[string]*idemLock{}, rateCounts: map[string]rateWindow{}, terminalUpgrader: websocket.Upgrader{ReadBufferSize: 4096, WriteBufferSize: 4096}}
 	s.mux.Handle("GET /healthz", withTimeout(5*time.Second, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
@@ -73,6 +75,7 @@ func NewHandlerWithConfig(store KeyStore, backend runtime.Runtime, backendName s
 	s.mux.Handle("GET /v1/sessions/{id}", withTimeout(10*time.Second, http.HandlerFunc(s.getSession)))
 	s.mux.Handle("GET /v1/sessions/{id}/metrics", withTimeout(10*time.Second, http.HandlerFunc(s.sessionMetrics)))
 	s.mux.HandleFunc("GET /v1/sessions/{id}/metrics/stream", s.streamSessionMetrics)
+	s.mux.HandleFunc("GET /v1/sessions/{id}/terminal", s.sessionTerminal)
 	s.mux.Handle("GET /v1/sessions/{id}/events", withTimeout(10*time.Second, http.HandlerFunc(s.listSessionEvents)))
 	s.mux.Handle("DELETE /v1/sessions/{id}", withTimeout(2*time.Minute, http.HandlerFunc(s.deleteSession)))
 	s.mux.Handle("POST /v1/sessions/{id}/execs", withTimeout(time.Duration(sessionLimitMaxTimeout(cfg.Limits.Max.TTLS)+30_000)*time.Millisecond, http.HandlerFunc(s.createExec)))
