@@ -3,6 +3,7 @@ import type { components, operations, paths } from "./schema";
 
 export type SessionList = components["schemas"]["SessionList"];
 export type ExecList = components["schemas"]["ExecList"];
+export type FileList = components["schemas"]["FileList"];
 export type KeyList = components["schemas"]["KeyList"];
 export type SystemInfo = components["schemas"]["System"];
 export type LimitBreachList = operations["listRecentLimitBreaches"]["responses"][200]["content"]["application/json"];
@@ -102,4 +103,22 @@ export async function revokeSessionKey(keyID: string, csrf: string): Promise<voi
     headers: { "X-CSRF-Token": csrf },
   });
   if (!result.response.ok) throw problemError(result.response.status, result.error);
+}
+
+export async function fetchSandboxDirectory(sessionID: string, path: string, signal?: AbortSignal, cursor?: string): Promise<FileList> {
+  const result = await apiClient.GET("/v1/sessions/{id}/files/list", {
+    params: { path: { id: sessionID }, query: { path, limit: 200, ...(cursor ? { cursor } : {}) } },
+    signal,
+  });
+  if (!result.response.ok || !result.data) throw problemError(result.response.status, result.error);
+  return result.data;
+}
+
+export async function readSandboxFile(sessionID: string, path: string, signal?: AbortSignal): Promise<string> {
+  const result = await apiClient.GET("/v1/sessions/{id}/files", {
+    params: { path: { id: sessionID }, query: { path } },
+    signal,
+  });
+  if (!result.response.ok || result.data === undefined) throw problemError(result.response.status, result.error);
+  return result.data;
 }
