@@ -6,6 +6,8 @@ Added admin-only `GET`, `POST`, and `DELETE /v1/images` handlers, optional runti
 
 The Phase 3 CLI also now provides `cellbox images ls|pull|rm`, uses `CELLBOX_URL`/`CELLBOX_KEY`, and supports JSON output for listing. Command tests cover all three authenticated requests and a missing key. The live dashboard inventory/pull browser test is running in CI [39432063944](https://github.com/Senasphy/cellbox/actions/runs/39432063944); the overall Phase 3 gate remains pending, including a live real-model example run.
 
+Added the specified `cellbox sessions ls|rm` commands with bounded cursor-page listing, JSON output, bearer auth, and matching tests. This uses the existing owner-scoped API, so session keys see only their own sessions. Local `go test ./cmd/cellbox` passes.
+
 ## Phase 0: Foundations — complete (local acceptance passed)
 
 Implemented: Go module, CLI skeleton (`version`, `doctor`, `serve`), strict config loading with environment overrides, slog redaction, SQLite WAL store and forward-only migration runner, problem+json type, prefixed sortable IDs, OpenAPI skeleton, Makefile, CI workflow, Apache-2.0 license.
