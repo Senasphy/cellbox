@@ -12,8 +12,9 @@ test("dashboard creates a sandbox, streams a command, transfers a file and loads
   expect(key, "CELLBOX_KEY is required for the live dashboard test").toBeTruthy();
   let createdID = "";
   const failures: string[] = [];
+  let expectedInvalidLogin = false;
   page.on("pageerror", error => failures.push(error.message));
-  page.on("console", message => { if (message.type() === "error") failures.push(message.text()); });
+  page.on("console", message => { if (message.type() === "error" && !(expectedInvalidLogin && message.text().includes("401 (Unauthorized)"))) failures.push(message.text()); });
   try {
     await test.step("load dashboard and create session", async () => {
       await page.goto("/");
@@ -23,10 +24,14 @@ test("dashboard creates a sandbox, streams a command, transfers a file and loads
       await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
       await page.getByRole("button", { name: "Switch to dark theme" }).click();
       await page.getByPlaceholder("cbx_…").fill("cbx_invalid-test-key");
+      expectedInvalidLogin = true;
+      const rejectedLogin = page.waitForResponse(response => new URL(response.url()).pathname === "/v1/auth/session" && response.status() === 401);
       await page.getByRole("button", { name: "Connect" }).click();
+      await rejectedLogin;
       const loginError=page.locator("p[role=alert]");
       await expect(loginError).toContainText("unauthorized");
       await expect(loginError).toContainText("Fix: sign in again with a valid API key");
+      expectedInvalidLogin = false;
       await page.getByPlaceholder("cbx_…").fill(key!);
       await page.getByRole("button", { name: "Connect" }).click();
       await expect(page.getByRole("meter", { name: "CPU capacity" })).toBeVisible();
