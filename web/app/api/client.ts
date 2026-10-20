@@ -117,6 +117,7 @@ export async function fetchSandboxDirectory(sessionID: string, path: string, sig
 export async function readSandboxFile(sessionID: string, path: string, signal?: AbortSignal): Promise<string> {
   const result = await apiClient.GET("/v1/sessions/{id}/files", {
     params: { path: { id: sessionID }, query: { path } },
+    parseAs: "text",
     signal,
   });
   if (!result.response.ok || result.data === undefined) throw problemError(result.response.status, result.error);
