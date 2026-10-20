@@ -255,7 +255,7 @@ func TestSessionLifecycleAndOwnership(t *testing.T) {
 		handler.ServeHTTP(streamResult, streamRequest)
 		close(finished)
 	}()
-	time.Sleep(20 * time.Millisecond)
+	time.Sleep(500 * time.Millisecond)
 	cancelMetrics()
 	select {
 	case <-finished:

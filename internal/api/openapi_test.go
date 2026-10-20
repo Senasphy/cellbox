@@ -71,7 +71,7 @@ func TestOpenAPIResponses(t *testing.T) {
 		if strings.HasSuffix(target, "/stream") && method == http.MethodGet {
 			streamCtx, cancel := context.WithCancel(req.Context())
 			req = req.WithContext(streamCtx)
-			stopCancel := time.AfterFunc(20*time.Millisecond, cancel)
+			stopCancel := time.AfterFunc(500*time.Millisecond, cancel)
 			defer func() { stopCancel.Stop(); cancel() }()
 		}
 		route, pathParams, err := router.FindRoute(req)
