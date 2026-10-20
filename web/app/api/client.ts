@@ -58,3 +58,48 @@ export async function fetchExecHistory(sessionID: string, signal: AbortSignal): 
   } while (cursor && all.length < 100_000);
   return all;
 }
+
+export async function createSandboxSession(input: components["schemas"]["CreateSession"], csrf: string, idempotencyKey: string) {
+  const result = await apiClient.POST("/v1/sessions", {
+    body: input,
+    headers: { "X-CSRF-Token": csrf, "Idempotency-Key": idempotencyKey },
+  });
+  if (!result.response.ok || !result.data) throw problemError(result.response.status, result.error);
+  return result.data;
+}
+
+export async function destroySandboxSession(sessionID: string, csrf: string): Promise<void> {
+  const result = await apiClient.DELETE("/v1/sessions/{id}", {
+    params: { path: { id: sessionID } },
+    headers: { "X-CSRF-Token": csrf },
+  });
+  if (!result.response.ok) throw problemError(result.response.status, result.error);
+}
+
+export async function startSessionExec(sessionID: string, shell: string, csrf: string, idempotencyKey: string) {
+  const result = await apiClient.POST("/v1/sessions/{id}/execs", {
+    params: { path: { id: sessionID } },
+    body: { shell, timeout_ms: 30_000 },
+    headers: { "X-CSRF-Token": csrf, "Idempotency-Key": idempotencyKey },
+  });
+  if (!result.response.ok || !result.data) throw problemError(result.response.status, result.error);
+  if (result.response.status !== 202) throw new Error("Exec did not start in streaming mode");
+  return result.data as components["schemas"]["Exec"];
+}
+
+export async function createSessionKey(name: string, csrf: string) {
+  const result = await apiClient.POST("/v1/keys", {
+    body: { name, scope: "session" },
+    headers: { "X-CSRF-Token": csrf },
+  });
+  if (!result.response.ok || !result.data) throw problemError(result.response.status, result.error);
+  return result.data;
+}
+
+export async function revokeSessionKey(keyID: string, csrf: string): Promise<void> {
+  const result = await apiClient.DELETE("/v1/keys/{id}", {
+    params: { path: { id: keyID } },
+    headers: { "X-CSRF-Token": csrf },
+  });
+  if (!result.response.ok) throw problemError(result.response.status, result.error);
+}
