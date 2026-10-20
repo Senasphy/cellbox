@@ -22,7 +22,7 @@ test("dashboard creates a sandbox, streams a command, transfers a file and loads
   page.on("pageerror", error => failures.push(error.message));
   page.on("console", message => { if (message.type() === "error" && !(expectedInvalidLogin && message.text().includes("401 (Unauthorized)"))) failures.push(message.text()); });
   try {
-    await test.step("load dashboard and create session", async () => {
+    await test.step("load dashboard", async () => {
       await page.goto("/");
       await expect(page.getByRole("heading", { name: "cellbox" })).toBeVisible();
       await expect(page.locator("main")).toHaveAttribute("data-hydrated", "true");
@@ -67,6 +67,18 @@ test("dashboard creates a sandbox, streams a command, transfers a file and loads
       await lightPalette.getByLabel("Filter commands").press("Enter");
       await expect(lightPalette).toBeHidden();
       await page.getByRole("button", { name: "Switch to dark theme" }).click();
+    });
+    await test.step("inspect and pull a cached image", async () => {
+      await page.getByRole("button", { name: "Images" }).click();
+      await expect(page.getByRole("heading", { name: "Container images" })).toBeVisible();
+      await auditWCAG(page);
+      await expect(page.getByRole("row").filter({ hasText: "alpine:latest" })).toBeVisible();
+      await page.getByLabel("Image reference").fill("alpine:latest");
+      await page.getByRole("button", { name: "Pull image" }).click();
+      await expect(page.getByRole("row").filter({ hasText: "alpine:latest" })).toBeVisible();
+      await page.getByRole("button", { name: "Overview" }).click();
+    });
+    await test.step("create a session", async () => {
       const createdResponse = page.waitForResponse(response =>
         response.request().method() === "POST" && new URL(response.url()).pathname === "/v1/sessions",
       );

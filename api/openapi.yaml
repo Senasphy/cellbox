@@ -6,6 +6,76 @@ info:
 servers:
   - url: http://127.0.0.1:8080
 paths:
+  /v1/images:
+    get:
+      summary: List cached container images
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Images available to the runtime
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [images]
+                properties:
+                  images:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ImageInfo'
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+    post:
+      summary: Pull an image into the runtime cache
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reference]
+              properties:
+                reference:
+                  type: string
+                  maxLength: 512
+      responses:
+        '201':
+          description: Pulled image metadata
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImageInfo'
+        '400':
+          $ref: '#/components/responses/Problem'
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+    delete:
+      summary: Remove an image from the runtime cache
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: reference
+          in: query
+          required: true
+          schema:
+            type: string
+            maxLength: 512
+      responses:
+        '204':
+          description: Image removed
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '409':
+          $ref: '#/components/responses/Problem'
   /metrics:
     get:
       operationId: metrics
@@ -344,11 +414,25 @@ paths:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }
 components:
+  responses:
+    Problem:
+      description: API problem
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
   securitySchemes:
     bearerAuth:
       type: http
       scheme: bearer
   schemas:
+    ImageInfo:
+      type: object
+      required: [reference, digest, size]
+      properties:
+        reference: { type: string }
+        digest: { type: string }
+        size: { type: integer, format: int64 }
     Problem:
       type: object
       required: [title, status, code]
