@@ -7,11 +7,12 @@ test("dashboard creates a sandbox, streams a command, transfers a file and loads
   const failures: string[] = [];
   page.on("pageerror", error => failures.push(error.message));
   page.on("console", message => { if (message.type() === "error") failures.push(message.text()); });
-  await page.addInitScript((apiKey) => localStorage.setItem("cellbox-key", apiKey), key);
   try {
     await test.step("load dashboard and create session", async () => {
       await page.goto("/");
       await expect(page.getByRole("heading", { name: "cellbox" })).toBeVisible();
+      await page.getByPlaceholder("cbx_…").fill(key!);
+      await page.getByRole("button", { name: "Connect" }).click();
       await page.getByRole("button", { name: "Create sandbox" }).click();
       const row = page.locator("tbody tr").filter({ hasText: "alpine:latest" }).first();
       await expect(row).toBeVisible({ timeout: 90_000 });
