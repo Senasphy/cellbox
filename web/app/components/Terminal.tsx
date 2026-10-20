@@ -7,6 +7,7 @@ import "@xterm/xterm/css/xterm.css";
 
 export default function Terminal({ sessionID }: { sessionID: string }) {
   const host = useRef<HTMLDivElement>(null);
+  const outputMirror = useRef<HTMLPreElement>(null);
   const terminalRef = useRef<XTerm | null>(null);
   const [status, setStatus] = useState("Connecting…");
   const [clipboardNotice, setClipboardNotice] = useState("");
@@ -65,6 +66,17 @@ export default function Terminal({ sessionID }: { sessionID: string }) {
         terminal.write(new Uint8Array(event.data));
       };
     };
+    const mirrorOutput = terminal.onWriteParsed(() => {
+      const output = outputMirror.current;
+      if (!output) return;
+      const buffer = terminal.buffer.active;
+      const first = Math.max(0, buffer.length - 100);
+      const lines: string[] = [];
+      for (let index = first; index < buffer.length; index++) {
+        lines.push(buffer.getLine(index)?.translateToString(true) || "");
+      }
+      output.textContent = lines.join("\n");
+    });
     connect();
     const input = terminal.onData(data => { if (socket?.readyState === WebSocket.OPEN) socket.send(new TextEncoder().encode(data)); });
     const observer = new ResizeObserver(() => {
@@ -78,6 +90,7 @@ export default function Terminal({ sessionID }: { sessionID: string }) {
       window.clearTimeout(reconnectTimer);
       observer.disconnect();
       input.dispose();
+      mirrorOutput.dispose();
       socket?.close();
       terminalRef.current = null;
       terminal.dispose();
@@ -108,5 +121,6 @@ export default function Terminal({ sessionID }: { sessionID: string }) {
       {clipboardNotice && <span role="status">{clipboardNotice}</span>}
     </div>
     <div ref={host} aria-label="Interactive session terminal" style={{ height: 420, padding: 8, background: "#080d19", borderRadius: 8 }} />
+    <pre ref={outputMirror} role="log" aria-label="Terminal output" aria-live="polite" style={{ position: "absolute", width: 1, height: 1, padding: 0, margin: -1, overflow: "hidden", clip: "rect(0, 0, 0, 0)", whiteSpace: "pre", border: 0 }} />
   </section>;
 }

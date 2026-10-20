@@ -29,6 +29,7 @@ func TestEmbeddedDashboardAndAPIFallback(t *testing.T) {
 	}
 	hasActionableLoginError := false
 	hasTerminalClipboard := false
+	hasTerminalOutputMirror := false
 	if err := fs.WalkDir(sub, "_next/static/chunks", func(name string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -42,12 +43,13 @@ func TestEmbeddedDashboardAndAPIFallback(t *testing.T) {
 		}
 		hasActionableLoginError = hasActionableLoginError || strings.Contains(string(bundle), "sign in again with a valid API key")
 		hasTerminalClipboard = hasTerminalClipboard || strings.Contains(string(bundle), "Copy selection")
+		hasTerminalOutputMirror = hasTerminalOutputMirror || strings.Contains(string(bundle), "Terminal output")
 		return nil
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if !hasActionableLoginError || !hasTerminalClipboard {
-		t.Fatal("embedded dashboard bundle is stale: expected actionable login errors and terminal clipboard controls")
+	if !hasActionableLoginError || !hasTerminalClipboard || !hasTerminalOutputMirror {
+		t.Fatal("embedded dashboard bundle is stale: expected actionable login errors, terminal clipboard controls, and an accessible output transcript")
 	}
 	assetReferences := regexp.MustCompile(`(?:src|href)="(/_next/[^\"]+)"`).FindAllSubmatch(document, -1)
 	if len(assetReferences) < 5 {

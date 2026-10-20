@@ -68,7 +68,7 @@ test("dashboard creates a sandbox, streams a command, transfers a file and loads
       await terminalInput.focus();
       await terminalInput.pressSequentially("printf terminal-stream-ok", {delay:50});
       await terminalInput.press("Enter");
-      await expect(terminal).toContainText("terminal-stream-ok", {timeout:20_000});
+      await expect(page.getByRole("log", {name:"Terminal output"})).toContainText("terminal-stream-ok", {timeout:20_000});
       await page.getByRole("button", { name: "Metrics", exact: true }).click();
       await expect(page.getByRole("img", { name: "CPU chart" })).toBeVisible({ timeout: 20_000 });
       await auditWCAG(page);
