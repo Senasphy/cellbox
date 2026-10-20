@@ -37,6 +37,9 @@ test("dashboard creates a sandbox, streams a command, transfers a file and loads
       const row = page.locator("tbody tr").filter({ hasText: createdID });
       await expect(row).toBeVisible({ timeout: 90_000 });
       await expect(row.getByRole("button", { name: `Run in ${createdID}` })).toBeVisible();
+      await expect(row.getByRole("img", { name: `${createdID} CPU sparkline` })).toBeVisible();
+      await expect(row.getByText(/%/)).toBeVisible({ timeout: 20_000 });
+      await expect(row.getByRole("img", { name: `${createdID} Memory sparkline` })).toBeVisible();
       await row.getByRole("button", { name: `Details ${createdID}` }).click();
       await page.getByRole("button", { name: "Metrics", exact: true }).click();
       await expect(page.getByRole("img", { name: "CPU chart" })).toBeVisible({ timeout: 20_000 });

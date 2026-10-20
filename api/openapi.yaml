@@ -99,7 +99,7 @@ paths:
     get:
       operationId: streamSessions
       security: [{ bearerAuth: [] }]
-      description: A current session list snapshot is emitted every two seconds until the client disconnects.
+      description: A current session list snapshot is emitted every two seconds until disconnect; CPU and memory resource samples are refreshed every five seconds for ready sessions.
       responses:
         "200":
           description: Live session snapshots
@@ -403,6 +403,9 @@ components:
               limits: { type: object }
               labels: { type: object, additionalProperties: { type: string } }
               created_at: { type: string, format: date-time }
+              sampled_at: { type: string, format: date-time }
+              cpu_usage_ns: { type: integer, format: uint64 }
+              memory_bytes: { type: integer, format: uint64 }
     SessionList:
       type: object
       required: [items]
