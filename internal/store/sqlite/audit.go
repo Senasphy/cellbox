@@ -63,6 +63,42 @@ func (s *Store) ListAuditEvents(ctx context.Context, sessionID string, limit int
 	return items, nil
 }
 
+func (s *Store) RecentLimitBreaches(ctx context.Context, ownerKeyID string, admin bool, limit int) ([]store.AuditEventRecord, error) {
+	if limit < 1 || limit > 100 {
+		return nil, fmt.Errorf("limit breach limit must be between 1 and 100")
+	}
+	query := `SELECT e.id,e.session_id,e.key_id,e.type,e.timestamp,e.detail_json FROM audit_events e JOIN sessions s ON s.id=e.session_id WHERE e.type='limit.breach'`
+	args := []any{}
+	if !admin {
+		query += ` AND s.owner_key_id=?`
+		args = append(args, ownerKeyID)
+	}
+	query += ` ORDER BY e.timestamp DESC,e.id DESC LIMIT ?`
+	args = append(args, limit)
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list recent limit breaches: %w", err)
+	}
+	defer rows.Close()
+	items := []store.AuditEventRecord{}
+	for rows.Next() {
+		var item store.AuditEventRecord
+		var ts string
+		if err := rows.Scan(&item.ID, &item.SessionID, &item.KeyID, &item.Type, &ts, &item.Detail); err != nil {
+			return nil, fmt.Errorf("scan limit breach: %w", err)
+		}
+		item.Timestamp, err = time.Parse(time.RFC3339Nano, ts)
+		if err != nil {
+			return nil, fmt.Errorf("parse limit breach timestamp: %w", err)
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate recent limit breaches: %w", err)
+	}
+	return items, nil
+}
+
 func (s *Store) PageAuditEvents(ctx context.Context, sessionID string, limit int, cursor *store.ListCursor) ([]store.AuditEventRecord, bool, error) {
 	if limit < 1 {
 		return nil, false, fmt.Errorf("audit event limit must be positive")

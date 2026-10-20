@@ -131,3 +131,8 @@ type AuditEventRecord struct {
 type AuditEventStore interface {
 	PageAuditEvents(context.Context, string, int, *ListCursor) ([]AuditEventRecord, bool, error)
 }
+
+// RecentLimitBreachStore returns recent limit events visible to a key.
+type RecentLimitBreachStore interface {
+	RecentLimitBreaches(context.Context, string, bool, int) ([]AuditEventRecord, error)
+}

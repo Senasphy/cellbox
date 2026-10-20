@@ -74,6 +74,12 @@ func (s *Store) UpdateExec(ctx context.Context, v store.ExecRecord) error {
 		if err = insertAudit(ctx, tx, sessionID, keyID, "exec.end", detail, at); err != nil {
 			return err
 		}
+		if v.Truncated {
+			breach := map[string]any{"kind": "output", "exec_id": v.ID, "output_bytes": v.OutputBytes}
+			if err = insertAudit(ctx, tx, sessionID, keyID, "limit.breach", breach, at); err != nil {
+				return err
+			}
+		}
 	}
 	if err = tx.Commit(); err != nil {
 		return fmt.Errorf("commit exec update: %w", err)

@@ -9,6 +9,28 @@ import (
 	"github.com/senasphy/cellbox/internal/store"
 )
 
+func (s *server) listRecentLimitBreaches(w http.ResponseWriter, r *http.Request) {
+	key, ok := s.authenticate(w, r)
+	if !ok {
+		return
+	}
+	persist, ok := s.store.(store.RecentLimitBreachStore)
+	if !ok {
+		problem.Write(w, problem.Problem{Title: "Unavailable", Status: http.StatusServiceUnavailable, Code: "audit_store_unavailable"})
+		return
+	}
+	items, err := persist.RecentLimitBreaches(r.Context(), key.ID, key.Scope == "admin", 20)
+	if err != nil {
+		problem.Write(w, problem.Problem{Title: "Unavailable", Status: http.StatusServiceUnavailable, Code: "audit_list_failed"})
+		return
+	}
+	responses := make([]auditEventResponse, 0, len(items))
+	for _, item := range items {
+		responses = append(responses, auditEventResponse{ID: item.ID, SessionID: item.SessionID, KeyID: item.KeyID, Type: item.Type, Timestamp: item.Timestamp.UTC().Format(time.RFC3339Nano), Detail: json.RawMessage(item.Detail)})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": responses})
+}
+
 type auditEventResponse struct {
 	ID        string          `json:"id"`
 	SessionID string          `json:"session_id"`

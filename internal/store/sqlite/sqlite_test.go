@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	mathrand "math/rand"
 	"path/filepath"
@@ -345,5 +346,63 @@ func TestKeyLifecycleStoresOnlyDigest(t *testing.T) {
 	}
 	if _, e = s.FindKeyByPrefix(context.Background(), key.Prefix); e == nil {
 		t.Fatal("revoked key remained active")
+	}
+}
+
+func TestTruncatedExecRecordsOutputLimitBreach(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "limit-breach.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	now := time.Now().UTC()
+	session := store.SessionRecord{ID: "ses_breach", OwnerKeyID: "key_breach", ImageReference: "alpine", State: "creating", LimitsJSON: []byte(`{}`), NetworkPolicyJSON: []byte(`{}`), EnvJSON: []byte(`{}`), LabelsJSON: []byte(`{}`), CreatedAt: now, LastActivityAt: now, ExpiresAt: now.Add(time.Hour)}
+	if err := s.CreateSession(context.Background(), session); err != nil {
+		t.Fatal(err)
+	}
+	exec := store.ExecRecord{ID: "exe_breach", SessionID: session.ID, ArgvJSON: []byte(`[]`), EnvJSON: []byte(`{}`), State: "running", StartedAt: now}
+	if err := s.CreateExec(context.Background(), exec); err != nil {
+		t.Fatal(err)
+	}
+	ended := now.Add(time.Second)
+	exec.State = "exited"
+	exec.Truncated = true
+	exec.OutputBytes = 1234
+	exec.EndedAt = &ended
+	if err := s.UpdateExec(context.Background(), exec); err != nil {
+		t.Fatal(err)
+	}
+	events, err := s.ListAuditEvents(context.Background(), session.ID, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var breach *store.AuditEventRecord
+	for i := range events {
+		if events[i].Type == "limit.breach" {
+			breach = &events[i]
+			break
+		}
+	}
+	if breach == nil {
+		t.Fatal("truncated exec did not produce a limit.breach event")
+	}
+	var detail map[string]any
+	if err := json.Unmarshal(breach.Detail, &detail); err != nil {
+		t.Fatal(err)
+	}
+	if detail["kind"] != "output" || detail["exec_id"] != exec.ID {
+		t.Fatalf("limit breach detail=%v", detail)
+	}
+	owned, err := s.RecentLimitBreaches(context.Background(), session.OwnerKeyID, false, 20)
+	if err != nil || len(owned) != 1 || owned[0].ID != breach.ID {
+		t.Fatalf("owner breach results=%+v err=%v", owned, err)
+	}
+	other, err := s.RecentLimitBreaches(context.Background(), "other-key", false, 20)
+	if err != nil || len(other) != 0 {
+		t.Fatalf("other owner's breach results=%+v err=%v", other, err)
+	}
+	admin, err := s.RecentLimitBreaches(context.Background(), "", true, 20)
+	if err != nil || len(admin) != 1 {
+		t.Fatalf("admin breach results=%+v err=%v", admin, err)
 	}
 }

@@ -587,6 +587,13 @@ func TestPrometheusMetricsReportSessionsExecsAndCapacity(t *testing.T) {
 	}
 	defer db.Close()
 	now := time.Now().UTC()
+	admin, err := auth.Generate("key_metrics", "metrics admin", "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = db.CreateKey(context.Background(), sqlite.KeyRecord{ID: admin.ID, Name: admin.Name, Prefix: admin.Prefix, Hash: admin.Hash, Scope: admin.Scope, CreatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
 	limits, _ := json.Marshal(runtime.Limits{CPUMillicores: 500, MemoryMB: 256, PIDs: 32})
 	session := store.SessionRecord{ID: "ses_metrics", OwnerKeyID: "key_metrics", ImageReference: "alpine", State: "creating", LimitsJSON: limits, NetworkPolicyJSON: []byte(`{}`), EnvJSON: []byte(`{}`), LabelsJSON: []byte(`{}`), CreatedAt: now, LastActivityAt: now, ExpiresAt: now.Add(time.Hour)}
 	if err := db.CreateSession(context.Background(), session); err != nil {
@@ -603,7 +610,7 @@ func TestPrometheusMetricsReportSessionsExecsAndCapacity(t *testing.T) {
 	}
 	exitCode := 0
 	ended := started.Add(150 * time.Millisecond)
-	exec.State, exec.ExitCode, exec.EndedAt, exec.OutputBytes = "exited", &exitCode, &ended, 12
+	exec.State, exec.ExitCode, exec.EndedAt, exec.OutputBytes, exec.Truncated = "exited", &exitCode, &ended, 12, true
 	if err := db.UpdateExec(context.Background(), exec); err != nil {
 		t.Fatal(err)
 	}
@@ -616,7 +623,15 @@ func TestPrometheusMetricsReportSessionsExecsAndCapacity(t *testing.T) {
 		t.Fatal(err)
 	}
 	w := httptest.NewRecorder()
-	NewHandlerWithConfig(db, nil, "fake", config.Defaults()).ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	handler := NewHandlerWithConfig(db, nil, "fake", config.Defaults())
+	breaches := httptest.NewRecorder()
+	breachRequest := httptest.NewRequest(http.MethodGet, "/v1/limit-breaches", nil)
+	breachRequest.Header.Set("Authorization", "Bearer "+admin.Secret)
+	handler.ServeHTTP(breaches, breachRequest)
+	if breaches.Code != http.StatusOK || !strings.Contains(breaches.Body.String(), `"kind":"output"`) || !strings.Contains(breaches.Body.String(), session.ID) {
+		t.Fatalf("limit breaches status=%d body=%s", breaches.Code, breaches.Body.String())
+	}
+	handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/metrics", nil))
 	if w.Code != http.StatusOK || !strings.Contains(w.Header().Get("Content-Type"), "text/plain") {
 		t.Fatalf("metrics status=%d content-type=%q body=%s", w.Code, w.Header().Get("Content-Type"), w.Body.String())
 	}

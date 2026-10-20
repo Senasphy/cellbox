@@ -20,6 +20,7 @@ test("dashboard creates a sandbox, streams a command, transfers a file and loads
       await expect(page.getByRole("meter", { name: "CPU capacity" })).toBeVisible();
       await expect(page.getByRole("img", { name: "Session create rate sparkline" })).toBeVisible();
       await expect(page.getByRole("img", { name: "Error rate sparkline" })).toBeVisible();
+      await expect(page.getByLabel("Recent limit breaches")).toBeVisible();
       await expect(page.getByLabel("Doctor status").getByRole("status")).toContainText(/checking|ready|degraded/);
       await expect(page.getByLabel("Doctor status")).toContainText("kernel version:", { timeout: 30_000 });
       await page.keyboard.press("Control+k");
