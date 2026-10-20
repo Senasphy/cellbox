@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -19,6 +20,23 @@ func TestEmbeddedDashboardAndAPIFallback(t *testing.T) {
 		t.Fatalf("dashboard root not served: status=%d body=%q", w.Code, w.Body.String())
 	}
 	sub, _ := fs.Sub(assets, "out")
+	document, err := fs.ReadFile(sub, "index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(document), "The key is exchanged for a short-lived HttpOnly session cookie") {
+		t.Fatal("embedded dashboard HTML is stale: cookie-backed login copy is missing")
+	}
+	assetReferences := regexp.MustCompile(`(?:src|href)="(/_next/[^\"]+)"`).FindAllSubmatch(document, -1)
+	if len(assetReferences) < 5 {
+		t.Fatalf("embedded dashboard HTML has only %d Next.js asset references", len(assetReferences))
+	}
+	for _, reference := range assetReferences {
+		asset := strings.TrimPrefix(string(reference[1]), "/")
+		if _, err := fs.Stat(sub, asset); err != nil {
+			t.Errorf("dashboard HTML references missing asset %q: %v", asset, err)
+		}
+	}
 	var scriptPath string
 	if err := fs.WalkDir(sub, "_next/static/chunks", func(name string, entry fs.DirEntry, err error) error {
 		if err != nil {
