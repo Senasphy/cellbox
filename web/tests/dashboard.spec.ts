@@ -7,6 +7,12 @@ async function auditWCAG(page:Page){
   expect(failures,JSON.stringify(failures,null,2)).toEqual([]);
 }
 
+async function auditLightTheme(page:Page){
+  await page.getByRole("button",{name:"Switch to light theme"}).click();
+  await auditWCAG(page);
+  await page.getByRole("button",{name:"Switch to dark theme"}).click();
+}
+
 test("dashboard creates a sandbox, streams a command, transfers a file and loads metrics", async ({ page }) => {
   const key = process.env.CELLBOX_KEY;
   expect(key, "CELLBOX_KEY is required for the live dashboard test").toBeTruthy();
@@ -43,12 +49,14 @@ test("dashboard creates a sandbox, streams a command, transfers a file and loads
       await auditWCAG(page);
       await page.getByRole("button", { name: "Switch to dark theme" }).click();
       await auditWCAG(page);
+      await auditLightTheme(page);
       await expect(page.getByLabel("Doctor status").getByRole("status")).toContainText(/checking|ready|degraded/);
       await expect(page.getByLabel("Doctor status")).toContainText("kernel version:", { timeout: 30_000 });
       await page.keyboard.press("Control+k");
       const palette = page.getByRole("dialog", { name: "Command palette" });
       await expect(palette).toBeVisible();
       await auditWCAG(page);
+      await auditLightTheme(page);
       await palette.getByLabel("Filter commands").fill("Open Sessions");
       await palette.getByLabel("Filter commands").press("Enter");
       await expect(palette).toBeHidden();
@@ -75,12 +83,16 @@ test("dashboard creates a sandbox, streams a command, transfers a file and loads
       await terminalInput.pressSequentially("printf terminal-stream-ok", {delay:50});
       await terminalInput.press("Enter");
       await expect(page.getByRole("log", {name:"Terminal output"})).toContainText("terminal-stream-ok", {timeout:20_000});
+      await auditLightTheme(page);
       await page.getByRole("button", { name: "Metrics", exact: true }).click();
       await expect(page.getByRole("img", { name: "CPU chart" })).toBeVisible({ timeout: 20_000 });
       await auditWCAG(page);
+      await auditLightTheme(page);
       await page.getByRole("button", { name: "Timeline" }).click();
+      await auditLightTheme(page);
       await page.getByRole("button", { name: "Events" }).click();
       await auditWCAG(page);
+      await auditLightTheme(page);
       await page.getByRole("button", { name: "Sessions" }).click();
     });
     await test.step("stream command output", async () => {
@@ -105,9 +117,11 @@ test("dashboard creates a sandbox, streams a command, transfers a file and loads
       await page.getByRole("button", { name: `Details ${createdID}` }).click();
       await page.getByRole("button", { name: "Files", exact: true }).click();
       await auditWCAG(page);
+      await auditLightTheme(page);
       await page.getByRole("button", { name: "Open directory tmp", exact: true }).click();
       await page.getByRole("button", { name: "Open file dashboard-e2e.txt", exact: true }).click();
       await expect(page.getByLabel("Code viewer for /tmp/dashboard-e2e.txt")).toContainText("dashboard-file-ok");
+      await auditLightTheme(page);
       await page.getByLabel("Choose files to upload").setInputFiles({ name: "dashboard-upload.txt", mimeType: "text/plain", buffer: Buffer.from("file-browser-upload-ok") });
       await page.getByRole("button", { name: "Open file dashboard-upload.txt", exact: true }).click();
       await expect(page.getByLabel("Code viewer for /tmp/dashboard-upload.txt")).toContainText("file-browser-upload-ok");
