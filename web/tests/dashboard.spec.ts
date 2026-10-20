@@ -12,6 +12,9 @@ test("dashboard creates a sandbox, streams a command, transfers a file and loads
       await page.goto("/");
       await expect(page.getByRole("heading", { name: "cellbox" })).toBeVisible();
       await expect(page.locator("main")).toHaveAttribute("data-hydrated", "true");
+      await page.getByRole("button", { name: "Switch to light theme" }).click();
+      await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+      await page.getByRole("button", { name: "Switch to dark theme" }).click();
       await page.getByPlaceholder("cbx_…").fill(key!);
       await page.getByRole("button", { name: "Connect" }).click();
       await page.keyboard.press("Control+k");
@@ -30,7 +33,7 @@ test("dashboard creates a sandbox, streams a command, transfers a file and loads
       await expect(row).toBeVisible({ timeout: 90_000 });
       await expect(row.getByRole("button", { name: `Run in ${createdID}` })).toBeVisible();
       await row.getByRole("button", { name: `Details ${createdID}` }).click();
-      await page.getByRole("button", { name: "Metrics" }).click();
+      await page.getByRole("button", { name: "Metrics", exact: true }).click();
       await expect(page.getByRole("img", { name: "CPU chart" })).toBeVisible({ timeout: 20_000 });
       await page.getByRole("button", { name: "Timeline" }).click();
       await page.getByRole("button", { name: "Events" }).click();
