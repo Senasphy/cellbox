@@ -37,6 +37,7 @@ test("dashboard creates a sandbox, streams a command, transfers a file and loads
       await page.keyboard.press("Control+k");
       const palette = page.getByRole("dialog", { name: "Command palette" });
       await expect(palette).toBeVisible();
+      await auditWCAG(page);
       await palette.getByLabel("Filter commands").fill("Open Sessions");
       await palette.getByLabel("Filter commands").press("Enter");
       await expect(palette).toBeHidden();
@@ -63,8 +64,10 @@ test("dashboard creates a sandbox, streams a command, transfers a file and loads
       await expect(terminal).toContainText("terminal-stream-ok", {timeout:20_000});
       await page.getByRole("button", { name: "Metrics", exact: true }).click();
       await expect(page.getByRole("img", { name: "CPU chart" })).toBeVisible({ timeout: 20_000 });
+      await auditWCAG(page);
       await page.getByRole("button", { name: "Timeline" }).click();
       await page.getByRole("button", { name: "Events" }).click();
+      await auditWCAG(page);
       await page.getByRole("button", { name: "Sessions" }).click();
     });
     await test.step("stream command output", async () => {
@@ -88,6 +91,7 @@ test("dashboard creates a sandbox, streams a command, transfers a file and loads
       await expect(page.getByLabel("Output")).toContainText("dashboard-file-ok");
       await page.getByRole("button", { name: `Details ${createdID}` }).click();
       await page.getByRole("button", { name: "Files", exact: true }).click();
+      await auditWCAG(page);
       await page.getByRole("button", { name: "Open directory tmp", exact: true }).click();
       await page.getByRole("button", { name: "Open file dashboard-e2e.txt", exact: true }).click();
       await expect(page.getByLabel("Code viewer for /tmp/dashboard-e2e.txt")).toContainText("dashboard-file-ok");
@@ -107,10 +111,13 @@ test("dashboard creates a sandbox, streams a command, transfers a file and loads
     });
     await test.step("create and revoke a session key", async () => {
       await page.getByRole("button", { name: "Keys" }).click();
+      await auditWCAG(page);
       await page.getByLabel("New key name").fill("playwright temporary key");
       await page.getByRole("button", { name: "Create session key" }).click();
       await expect(page.getByRole("status").filter({ hasText: "Copy this key now" })).toContainText("cbx_");
       await page.getByRole("button", { name: "Revoke playwright temporary key" }).click();
+      await page.getByRole("button", { name: "System" }).click();
+      await auditWCAG(page);
     });
     expect(failures, "browser console errors").toEqual([]);
   } finally {
