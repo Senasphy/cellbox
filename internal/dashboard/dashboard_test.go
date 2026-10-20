@@ -27,6 +27,28 @@ func TestEmbeddedDashboardAndAPIFallback(t *testing.T) {
 	if !strings.Contains(string(document), "The key is exchanged for a short-lived HttpOnly session cookie") {
 		t.Fatal("embedded dashboard HTML is stale: cookie-backed login copy is missing")
 	}
+	hasActionableLoginError := false
+	hasTerminalClipboard := false
+	if err := fs.WalkDir(sub, "_next/static/chunks", func(name string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() || !strings.HasSuffix(name, ".js") {
+			return nil
+		}
+		bundle, err := fs.ReadFile(sub, name)
+		if err != nil {
+			return err
+		}
+		hasActionableLoginError = hasActionableLoginError || strings.Contains(string(bundle), "sign in again with a valid API key")
+		hasTerminalClipboard = hasTerminalClipboard || strings.Contains(string(bundle), "Copy selection")
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !hasActionableLoginError || !hasTerminalClipboard {
+		t.Fatal("embedded dashboard bundle is stale: expected actionable login errors and terminal clipboard controls")
+	}
 	assetReferences := regexp.MustCompile(`(?:src|href)="(/_next/[^\"]+)"`).FindAllSubmatch(document, -1)
 	if len(assetReferences) < 5 {
 		t.Fatalf("embedded dashboard HTML has only %d Next.js asset references", len(assetReferences))

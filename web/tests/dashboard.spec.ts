@@ -24,8 +24,9 @@ test("dashboard creates a sandbox, streams a command, transfers a file and loads
       await page.getByRole("button", { name: "Switch to dark theme" }).click();
       await page.getByPlaceholder("cbx_…").fill("cbx_invalid-test-key");
       await page.getByRole("button", { name: "Connect" }).click();
-      await expect(page.getByRole("alert")).toContainText("unauthorized");
-      await expect(page.getByRole("alert")).toContainText("Fix: sign in again with a valid API key");
+      const loginError=page.locator("p[role=alert]");
+      await expect(loginError).toContainText("unauthorized");
+      await expect(loginError).toContainText("Fix: sign in again with a valid API key");
       await page.getByPlaceholder("cbx_…").fill(key!);
       await page.getByRole("button", { name: "Connect" }).click();
       await expect(page.getByRole("meter", { name: "CPU capacity" })).toBeVisible();

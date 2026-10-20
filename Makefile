@@ -17,4 +17,6 @@ test-security fuzz bench release-dry-run:
 	@echo "$@ is added in the corresponding implementation phase"
 
 web:
-	@echo "Dashboard is added in Phase 3"
+	npm ci --prefix web
+	npm run build --prefix web
+	python3 scripts/embed_dashboard.py
