@@ -8,6 +8,7 @@ import (
 	"errors"
 	"io"
 	"path"
+	"strings"
 	"testing"
 	"time"
 
@@ -218,9 +219,50 @@ func RunBasic(t testing.TB, backend runtime.Runtime, image string) {
 	if _, err := box.Stats(ctx); err != nil {
 		t.Fatalf("Stats: %v", err)
 	}
-	if !backend.Capabilities().TTY {
-		if _, err := box.OpenTerminal(ctx, runtime.TerminalRequest{}); !errors.Is(err, runtime.ErrUnsupported) {
-			t.Fatalf("OpenTerminal error=%v, want ErrUnsupported", err)
+	if backend.Capabilities().TTY {
+		terminal, err := box.OpenTerminal(ctx, runtime.TerminalRequest{Columns: 80, Rows: 24})
+		if err != nil {
+			t.Fatalf("OpenTerminal: %v", err)
+		}
+		output := make(chan string, 1)
+		go func() {
+			var collected strings.Builder
+			buffer := make([]byte, 1024)
+			for {
+				n, readErr := terminal.Read(buffer)
+				if n > 0 {
+					collected.Write(buffer[:n])
+					if strings.Contains(collected.String(), "contract-terminal-ok") {
+						output <- collected.String()
+						return
+					}
+				}
+				if readErr != nil {
+					output <- "read error: " + readErr.Error()
+					return
+				}
+			}
+		}()
+		if _, err := terminal.Write([]byte("printf contract-terminal-ok\r")); err != nil {
+			terminal.Close()
+			t.Fatalf("terminal input: %v", err)
+		}
+		select {
+		case output := <-output:
+			if !strings.Contains(output, "contract-terminal-ok") {
+				terminal.Close()
+				t.Fatalf("terminal output=%q", output)
+			}
+		case <-time.After(10 * time.Second):
+			terminal.Close()
+			t.Fatal("terminal did not return command output")
+		}
+		if err := terminal.Resize(ctx, 100, 40); err != nil {
+			terminal.Close()
+			t.Fatalf("terminal resize: %v", err)
+		}
+		if err := terminal.Close(); err != nil {
+			t.Errorf("terminal close: %v", err)
 		}
 	}
 	timed, err := box.Exec(ctx, runtime.ExecRequest{Argv: []string{"/bin/sh", "-c", ": contract-timeout; while :; do :; done"}, TimeoutMS: 100, OutputLimit: 1024})

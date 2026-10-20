@@ -53,8 +53,8 @@ func New(socket string) *Runtime {
 func (*Runtime) Name() string { return "docker" }
 
 // Capabilities reports Docker backend support.
-func (*Runtime) Capabilities() runtime.Capabilities {
-	return runtime.Capabilities{Snapshots: true, CPULimits: true}
+func (r *Runtime) Capabilities() runtime.Capabilities {
+	return runtime.Capabilities{Snapshots: true, CPULimits: true, TTY: r.socket != ""}
 }
 
 // Reconcile removes every container previously created for a cellbox session.
