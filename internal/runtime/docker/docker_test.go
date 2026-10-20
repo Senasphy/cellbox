@@ -302,6 +302,20 @@ func TestImageManagerListsAndRemovesImages(t *testing.T) {
 	}
 }
 
+func TestDestroyTreatsConcurrentRemovalAsComplete(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete || r.URL.Path != "/v1.41/containers/container-1" {
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.String())
+		}
+		http.Error(w, `{"message":"removal of container container-1 is already in progress"}`, http.StatusConflict)
+	}))
+	defer server.Close()
+	box := &sandbox{runtime: testRuntime(server), id: "container-1"}
+	if err := box.Destroy(context.Background()); err != nil {
+		t.Fatalf("concurrent destroy should be idempotent: %v", err)
+	}
+}
+
 func TestSnapshotUsesDockerCommit(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || !strings.HasPrefix(r.URL.Path, "/v1.41/commit") || r.URL.Query().Get("container") != "c1" {

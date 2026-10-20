@@ -760,7 +760,11 @@ func (s *sandbox) Kill(ctx context.Context) error {
 	return err
 }
 func (s *sandbox) Destroy(ctx context.Context) error {
-	return s.runtime.simple(ctx, http.MethodDelete, "/containers/"+url.PathEscape(s.id)+"?force=true&v=true", nil)
+	err := s.runtime.simple(ctx, http.MethodDelete, "/containers/"+url.PathEscape(s.id)+"?force=true&v=true", nil)
+	if err != nil && strings.Contains(err.Error(), "returned 409") && strings.Contains(strings.ToLower(err.Error()), "already in progress") {
+		return nil
+	}
+	return err
 }
 
 func (r *Runtime) killContainerWithTimeout(parent context.Context, id string, timeout time.Duration) error {

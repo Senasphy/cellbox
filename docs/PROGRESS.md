@@ -12,6 +12,8 @@ Added `cellbox shell <session>` using the authenticated terminal WebSocket, raw 
 
 The Docker walkthrough now pipes commands through `cellbox shell` and checks terminal output against a live Docker session. Shell syntax validation passes locally; this live check is pending hosted CI because Docker is unavailable in the workspace.
 
+The TypeScript SDK now routes JSON, files, and SSE through its injected fetch transport, enabling deterministic tests and custom transports. Added tests for session creation/destruction, binary file round trips, streamed output, idempotency-key retry reuse, and problem errors. `npm test` passes (3 tests), the ESM/CJS declaration build passes, and CI now runs the SDK test suite.
+
 ## Phase 0: Foundations — complete (local acceptance passed)
 
 Implemented: Go module, CLI skeleton (`version`, `doctor`, `serve`), strict config loading with environment overrides, slog redaction, SQLite WAL store and forward-only migration runner, problem+json type, prefixed sortable IDs, OpenAPI skeleton, Makefile, CI workflow, Apache-2.0 license.

@@ -27,12 +27,16 @@ export class Client {
   constructor(baseUrl="http://127.0.0.1:8080", readonly apiKey:string, private fetcher:typeof fetch=fetch) {
     if (!apiKey) throw new Error("apiKey is required"); this.baseUrl=baseUrl.replace(/\/$/,"");
   }
+  requestRaw(path:string,init:RequestInit):Promise<Response> {
+    const headers=new Headers(init.headers);headers.set("Authorization",`Bearer ${this.apiKey}`);
+    return this.fetcher(this.baseUrl+path,{...init,headers});
+  }
   async request<T>(method:string,path:string,body?:unknown):Promise<T> {
     const headers:Record<string,string>={Authorization:`Bearer ${this.apiKey}`};
     if (body!==undefined) { headers["Content-Type"]="application/json"; if(method==="POST") headers["Idempotency-Key"]=crypto.randomUUID(); }
     let last:unknown;
     for(let attempt=0;attempt<2;attempt++) try {
-      return await parse<T>(await this.fetcher(this.baseUrl+path,{method,headers,body:body===undefined?undefined:JSON.stringify(body)}));
+      return await parse<T>(await this.requestRaw(path,{method,headers,body:body===undefined?undefined:JSON.stringify(body)}));
     } catch(e) { if(e instanceof ProblemError || attempt) throw e; last=e; }
     throw last;
   }
@@ -56,7 +60,7 @@ export class Session {
   }
   async *execStream(command:string|string[],options:{timeout_s?:number;cwd?:string;env?:Record<string,string>}={}):AsyncIterable<OutputChunk>{
     const r=await this.client.request<any>("POST",`/v1/sessions/${encodeURIComponent(this.id)}/execs`,commandBody(command,options));
-    const response=await fetch(this.client.baseUrl+r.stream_url,{headers:{Authorization:`Bearer ${this.client.apiKey}`}});
+    const response=await this.client.requestRaw(r.stream_url,{method:"GET"});
     if(!response.ok) await parse(response);
     const reader=response.body!.getReader(),decoder=new TextDecoder();let buf="",event="",data="";
     while(true){const {value,done}=await reader.read();buf+=decoder.decode(value||new Uint8Array(),{stream:!done});let i;
@@ -66,8 +70,8 @@ export class Session {
       } if(done)break;
     }
   }
-  async readFile(path:string):Promise<Uint8Array>{const r=await fetch(`${this.client.baseUrl}/v1/sessions/${encodeURIComponent(this.id)}/files?path=${encodeURIComponent(path)}`,{headers:{Authorization:`Bearer ${this.client.apiKey}`}});if(!r.ok)await parse(r);return new Uint8Array(await r.arrayBuffer());}
-  async writeFile(path:string,contents:string|Uint8Array):Promise<void>{const r=await fetch(`${this.client.baseUrl}/v1/sessions/${encodeURIComponent(this.id)}/files?path=${encodeURIComponent(path)}`,{method:"PUT",headers:{Authorization:`Bearer ${this.client.apiKey}`,"Content-Type":"application/octet-stream"},body:typeof contents==="string"?contents:contents as BodyInit});await parse(r);}
+  async readFile(path:string):Promise<Uint8Array>{const r=await this.client.requestRaw(`/v1/sessions/${encodeURIComponent(this.id)}/files?path=${encodeURIComponent(path)}`,{method:"GET"});if(!r.ok)await parse(r);return new Uint8Array(await r.arrayBuffer());}
+  async writeFile(path:string,contents:string|Uint8Array):Promise<void>{const r=await this.client.requestRaw(`/v1/sessions/${encodeURIComponent(this.id)}/files?path=${encodeURIComponent(path)}`,{method:"PUT",headers:{"Content-Type":"application/octet-stream"},body:typeof contents==="string"?contents:contents as BodyInit});await parse(r);}
   async listFiles(path="/",limit=50):Promise<any[]>{let cursor="",out:any[]=[];do{const q=new URLSearchParams({path,limit:String(limit),...(cursor?{cursor}:{})});const r=await this.client.request<any>("GET",`/v1/sessions/${encodeURIComponent(this.id)}/files/list?${q}`);out.push(...(r.items||[]));cursor=r.next_cursor||"";}while(cursor);return out;}
   async destroy():Promise<void>{await this.client.request("DELETE",`/v1/sessions/${encodeURIComponent(this.id)}`);}
   async using<T>(fn:(session:this)=>Promise<T>):Promise<T>{try{return await fn(this);}finally{await this.destroy();}}
