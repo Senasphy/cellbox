@@ -13,10 +13,14 @@ test("dashboard creates a sandbox, streams a command, transfers a file and loads
       await expect(page.getByRole("heading", { name: "cellbox" })).toBeVisible();
       await page.getByPlaceholder("cbx_…").fill(key!);
       await page.getByRole("button", { name: "Connect" }).click();
+      const createdResponse = page.waitForResponse(response =>
+        response.request().method() === "POST" && new URL(response.url()).pathname === "/v1/sessions",
+      );
       await page.getByRole("button", { name: "Create sandbox" }).click();
-      const row = page.locator("tbody tr").filter({ hasText: "alpine:latest" }).first();
+      const created = await (await createdResponse).json() as { id: string };
+      createdID = created.id;
+      const row = page.locator("tbody tr").filter({ hasText: createdID });
       await expect(row).toBeVisible({ timeout: 90_000 });
-      createdID = (await row.locator("td").first().innerText()).trim();
       await expect(row.getByRole("button", { name: `Run in ${createdID}` })).toBeVisible();
     });
     await test.step("stream command output", async () => {
