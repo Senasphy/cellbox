@@ -57,4 +57,12 @@ jobs:
       - run: npx playwright install --with-deps chromium
         working-directory: web
       - run: CELLBOX_PYTHON_SDK=1 CELLBOX_PLAYWRIGHT=1 CELLBOX_BIN=/tmp/cellbox-integration ./scripts/docker-walkthrough.sh
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dashboard-playwright-failure
+          path: |
+            web/test-results
+            web/playwright-report
+          if-no-files-found: ignore
       - run: CELLBOX_BIN=/tmp/cellbox-integration ./scripts/recovery-walkthrough.sh
