@@ -9,7 +9,10 @@ import (
 	"strings"
 )
 
-//go:embed out
+// The Next.js exporter places assets under _next, which Go's single-directory
+// embed pattern intentionally skips because the directory begins with '_'.
+//
+//go:embed out out/_next
 var assets embed.FS
 
 func Wrap(api http.Handler) http.Handler {

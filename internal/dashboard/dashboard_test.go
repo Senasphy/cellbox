@@ -3,6 +3,7 @@ package dashboard
 import (
 	"encoding/json"
 	"io"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -16,6 +17,28 @@ func TestEmbeddedDashboardAndAPIFallback(t *testing.T) {
 	handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/", nil))
 	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "cellbox") {
 		t.Fatalf("dashboard root not served: status=%d body=%q", w.Code, w.Body.String())
+	}
+	sub, _ := fs.Sub(assets, "out")
+	var scriptPath string
+	if err := fs.WalkDir(sub, "_next/static/chunks", func(name string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !entry.IsDir() && strings.HasSuffix(name, ".js") {
+			scriptPath = "/" + name
+			return fs.SkipAll
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if scriptPath == "" {
+		t.Fatal("no embedded dashboard script found")
+	}
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, scriptPath, nil))
+	if w.Code != http.StatusOK || !strings.Contains(w.Header().Get("Content-Type"), "javascript") {
+		t.Fatalf("dashboard script not served: status=%d type=%q", w.Code, w.Header().Get("Content-Type"))
 	}
 	w = httptest.NewRecorder()
 	handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/healthz", nil))
