@@ -16,7 +16,7 @@ func (s *Store) CreateExec(ctx context.Context, v store.ExecRecord) error {
 		return fmt.Errorf("begin exec creation: %w", err)
 	}
 	defer tx.Rollback()
-	if _, err = tx.ExecContext(ctx, `INSERT INTO execs(id,session_id,argv_json,shell,cwd,env_json,tty,state,started_at) VALUES(?,?,?,?,?,?,?,?,?)`, v.ID, v.SessionID, v.ArgvJSON, v.Shell, v.Cwd, v.EnvJSON, v.TTY, v.State, stamp(v.StartedAt)); err != nil {
+	if _, err = tx.ExecContext(ctx, `INSERT INTO execs(id,session_id,argv_json,shell,cwd,env_json,tty,state,started_at,peak_memory_bytes) VALUES(?,?,?,?,?,?,?,?,?,?)`, v.ID, v.SessionID, v.ArgvJSON, v.Shell, v.Cwd, v.EnvJSON, v.TTY, v.State, stamp(v.StartedAt), v.PeakMemoryBytes); err != nil {
 		return fmt.Errorf("insert exec: %w", err)
 	}
 	var keyID string
@@ -50,7 +50,7 @@ func (s *Store) UpdateExec(ctx context.Context, v store.ExecRecord) error {
 		}
 		return fmt.Errorf("read current exec state: %w", err)
 	}
-	result, err := tx.ExecContext(ctx, `UPDATE execs SET state=?,exit_code=?,signal=?,ended_at=?,output_bytes=?,truncated=? WHERE id=? AND state=?`, v.State, v.ExitCode, v.Signal, ended, v.OutputBytes, v.Truncated, v.ID, current)
+	result, err := tx.ExecContext(ctx, `UPDATE execs SET state=?,exit_code=?,signal=?,ended_at=?,output_bytes=?,truncated=?,peak_memory_bytes=? WHERE id=? AND state=?`, v.State, v.ExitCode, v.Signal, ended, v.OutputBytes, v.Truncated, v.PeakMemoryBytes, v.ID, current)
 	if err != nil {
 		return fmt.Errorf("update exec: %w", err)
 	}
@@ -89,7 +89,7 @@ func (s *Store) UpdateExec(ctx context.Context, v store.ExecRecord) error {
 
 // GetExec returns a persisted command result.
 func (s *Store) GetExec(ctx context.Context, id string) (store.ExecRecord, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT id,session_id,argv_json,shell,cwd,env_json,tty,state,exit_code,signal,started_at,ended_at,output_bytes,truncated FROM execs WHERE id=?`, id)
+	row := s.db.QueryRowContext(ctx, `SELECT id,session_id,argv_json,shell,cwd,env_json,tty,state,exit_code,signal,started_at,ended_at,output_bytes,truncated,peak_memory_bytes FROM execs WHERE id=?`, id)
 	v, err := scanExec(row)
 	if err != nil {
 		return v, fmt.Errorf("get exec: %w", err)
@@ -99,7 +99,7 @@ func (s *Store) GetExec(ctx context.Context, id string) (store.ExecRecord, error
 
 // ListExecs returns executions for one session in start order.
 func (s *Store) ListExecs(ctx context.Context, sessionID string) ([]store.ExecRecord, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,session_id,argv_json,shell,cwd,env_json,tty,state,exit_code,signal,started_at,ended_at,output_bytes,truncated FROM execs WHERE session_id=? ORDER BY started_at,id`, sessionID)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,session_id,argv_json,shell,cwd,env_json,tty,state,exit_code,signal,started_at,ended_at,output_bytes,truncated,peak_memory_bytes FROM execs WHERE session_id=? ORDER BY started_at,id`, sessionID)
 	if err != nil {
 		return nil, fmt.Errorf("list execs: %w", err)
 	}
@@ -123,7 +123,7 @@ func (s *Store) PageExecs(ctx context.Context, sessionID string, limit int, curs
 	if limit < 1 {
 		return nil, false, fmt.Errorf("page execs: limit must be positive")
 	}
-	query := `SELECT id,session_id,argv_json,shell,cwd,env_json,tty,state,exit_code,signal,started_at,ended_at,output_bytes,truncated FROM execs WHERE session_id=?`
+	query := `SELECT id,session_id,argv_json,shell,cwd,env_json,tty,state,exit_code,signal,started_at,ended_at,output_bytes,truncated,peak_memory_bytes FROM execs WHERE session_id=?`
 	args := []any{sessionID}
 	if cursor != nil {
 		startedAt := stamp(cursor.Timestamp)
@@ -211,7 +211,7 @@ func scanExec(row scanner) (store.ExecRecord, error) {
 	var exitCode, signal sql.NullInt64
 	var started string
 	var ended sql.NullString
-	err := row.Scan(&v.ID, &v.SessionID, &v.ArgvJSON, &v.Shell, &v.Cwd, &v.EnvJSON, &tty, &v.State, &exitCode, &signal, &started, &ended, &v.OutputBytes, &truncated)
+	err := row.Scan(&v.ID, &v.SessionID, &v.ArgvJSON, &v.Shell, &v.Cwd, &v.EnvJSON, &tty, &v.State, &exitCode, &signal, &started, &ended, &v.OutputBytes, &truncated, &v.PeakMemoryBytes)
 	if err != nil {
 		return v, err
 	}

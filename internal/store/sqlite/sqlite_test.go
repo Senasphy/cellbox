@@ -25,7 +25,7 @@ func TestOpenMigratesEmptyDatabaseAndIsIdempotent(t *testing.T) {
 	if e = s.db.QueryRow("SELECT COUNT(*) FROM schema_migrations").Scan(&n); e != nil {
 		t.Fatal(e)
 	}
-	if n != 5 {
+	if n != 6 {
 		t.Fatalf("migration count=%d", n)
 	}
 }

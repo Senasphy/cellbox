@@ -35,16 +35,20 @@ type execSignalRequest struct {
 	Signal int `json:"signal"`
 }
 type execResponse struct {
-	ID          string     `json:"id"`
-	SessionID   string     `json:"session_id"`
-	State       string     `json:"state"`
-	ExitCode    *int       `json:"exit_code,omitempty"`
-	Signal      *int       `json:"signal,omitempty"`
-	StartedAt   time.Time  `json:"started_at"`
-	EndedAt     *time.Time `json:"ended_at,omitempty"`
-	OutputBytes int64      `json:"output_bytes"`
-	Truncated   bool       `json:"truncated"`
-	StreamURL   string     `json:"stream_url,omitempty"`
+	ID              string     `json:"id"`
+	SessionID       string     `json:"session_id"`
+	Argv            []string   `json:"argv,omitempty"`
+	Shell           string     `json:"shell,omitempty"`
+	Cwd             string     `json:"cwd,omitempty"`
+	State           string     `json:"state"`
+	ExitCode        *int       `json:"exit_code,omitempty"`
+	Signal          *int       `json:"signal,omitempty"`
+	StartedAt       time.Time  `json:"started_at"`
+	EndedAt         *time.Time `json:"ended_at,omitempty"`
+	OutputBytes     int64      `json:"output_bytes"`
+	Truncated       bool       `json:"truncated"`
+	PeakMemoryBytes int64      `json:"peak_memory_bytes"`
+	StreamURL       string     `json:"stream_url,omitempty"`
 }
 type outputEvent struct {
 	Seq       int64     `json:"seq"`
@@ -155,7 +159,7 @@ func (s *server) createExec(w http.ResponseWriter, r *http.Request) {
 	s.activeExecs[record.ID] = handle
 	s.execMu.Unlock()
 	done := make(chan struct{})
-	go s.collectExecOutput(persist, handle, record, done)
+	go s.collectExecOutput(persist, box, handle, record, done)
 	if r.URL.Query().Get("wait") == "true" {
 		select {
 		case <-r.Context().Done():
@@ -182,7 +186,7 @@ func (s *server) createExec(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusAccepted, toExecResponse(record, "/v1/sessions/"+session.ID+"/execs/"+execID+"/stream"))
 }
 
-func (s *server) collectExecOutput(persist execPersistence, handle runtime.ExecHandle, record store.ExecRecord, done chan<- struct{}) {
+func (s *server) collectExecOutput(persist execPersistence, box runtime.Sandbox, handle runtime.ExecHandle, record store.ExecRecord, done chan<- struct{}) {
 	defer close(done)
 	defer func() {
 		s.execMu.Lock()
@@ -190,11 +194,31 @@ func (s *server) collectExecOutput(persist execPersistence, handle runtime.ExecH
 		s.execMu.Unlock()
 	}()
 	var outputErr error
-	for chunk := range handle.Output() {
-		if outputErr != nil {
-			continue
+	output := handle.Output()
+	peakCtx, peakCancel := context.WithTimeout(context.Background(), time.Second)
+	if stats, err := box.Stats(peakCtx); err == nil {
+		record.PeakMemoryBytes = int64(stats.MemoryBytes)
+	}
+	peakCancel()
+	ticker := time.NewTicker(250 * time.Millisecond)
+	defer ticker.Stop()
+	for output != nil {
+		select {
+		case chunk, open := <-output:
+			if !open {
+				output = nil
+				continue
+			}
+			if outputErr == nil {
+				_, outputErr = persist.AppendExecOutput(context.Background(), record.ID, chunk.Stream, chunk.Data, time.Now().UTC())
+			}
+		case <-ticker.C:
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			if stats, err := box.Stats(ctx); err == nil && int64(stats.MemoryBytes) > record.PeakMemoryBytes {
+				record.PeakMemoryBytes = int64(stats.MemoryBytes)
+			}
+			cancel()
 		}
-		_, outputErr = persist.AppendExecOutput(context.Background(), record.ID, chunk.Stream, chunk.Data, time.Now().UTC())
 	}
 	result, err := handle.Wait(context.Background())
 	ended := time.Now().UTC()
@@ -437,7 +461,9 @@ func (s *server) execStore(w http.ResponseWriter) (execPersistence, bool) {
 	return p, true
 }
 func toExecResponse(v store.ExecRecord, url string) execResponse {
-	return execResponse{ID: v.ID, SessionID: v.SessionID, State: v.State, ExitCode: v.ExitCode, Signal: v.Signal, StartedAt: v.StartedAt, EndedAt: v.EndedAt, OutputBytes: v.OutputBytes, Truncated: v.Truncated, StreamURL: url}
+	var argv []string
+	_ = json.Unmarshal(v.ArgvJSON, &argv)
+	return execResponse{ID: v.ID, SessionID: v.SessionID, Argv: argv, Shell: v.Shell, Cwd: v.Cwd, State: v.State, ExitCode: v.ExitCode, Signal: v.Signal, StartedAt: v.StartedAt, EndedAt: v.EndedAt, OutputBytes: v.OutputBytes, Truncated: v.Truncated, PeakMemoryBytes: v.PeakMemoryBytes, StreamURL: url}
 }
 func encodeOutput(items []store.ExecOutputRecord, limit int) []outputEvent {
 	result := []outputEvent{}

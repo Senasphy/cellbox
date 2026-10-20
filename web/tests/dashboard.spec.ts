@@ -60,6 +60,13 @@ test("dashboard creates a sandbox, streams a command, transfers a file and loads
       await page.getByLabel("Command").fill("printf dashboard-stream-ok");
       await page.getByRole("button", { name: `Run in ${createdID}` }).click();
       await expect(page.getByLabel("Output")).toContainText("dashboard-stream-ok", { timeout: 90_000 });
+      await page.getByRole("button", { name: `Details ${createdID}` }).click();
+      await page.getByRole("button", { name: "Timeline", exact: true }).click();
+      const timeline = page.getByLabel("Command timeline");
+      await expect(timeline.getByText("printf dashboard-stream-ok")).toBeVisible();
+      await timeline.getByRole("button", { name: "Output" }).first().click();
+      await expect(page.getByLabel("Command output")).toContainText("dashboard-stream-ok");
+      await page.getByRole("button", { name: "Sessions", exact: true }).click();
     });
     await test.step("upload and download file", async () => {
       await page.getByLabel("File path").fill("/tmp/dashboard-e2e.txt");

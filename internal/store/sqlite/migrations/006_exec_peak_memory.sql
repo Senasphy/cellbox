@@ -1,0 +1,1 @@
+ALTER TABLE execs ADD COLUMN peak_memory_bytes INTEGER NOT NULL DEFAULT 0;

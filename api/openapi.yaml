@@ -454,6 +454,9 @@ components:
       properties:
         id: { type: string }
         session_id: { type: string }
+        argv: { type: array, items: { type: string } }
+        shell: { type: string }
+        cwd: { type: string }
         state: { type: string }
         exit_code: { type: integer }
         signal: { type: integer }
@@ -461,6 +464,7 @@ components:
         ended_at: { type: string, format: date-time }
         output_bytes: { type: integer }
         truncated: { type: boolean }
+        peak_memory_bytes: { type: integer, format: int64 }
         stream_url: { type: string }
     ExecList:
       type: object

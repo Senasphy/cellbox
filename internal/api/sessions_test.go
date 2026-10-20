@@ -670,7 +670,7 @@ func TestExecCollectorPersistsOutputAndDrains(t *testing.T) {
 	}
 	s := &server{store: db, activeExecs: map[string]runtime.ExecHandle{exec.ID: handle}}
 	done := make(chan struct{})
-	go s.collectExecOutput(db, handle, exec, done)
+	go s.collectExecOutput(db, &fakeSandbox{id: "container", stats: runtime.Stats{MemoryBytes: 4096}}, handle, exec, done)
 	select {
 	case <-done:
 	case <-time.After(2 * time.Second):
@@ -680,7 +680,7 @@ func TestExecCollectorPersistsOutputAndDrains(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if finished.State != "exited" || finished.OutputBytes != 5 {
+	if finished.State != "exited" || finished.OutputBytes != 5 || finished.PeakMemoryBytes != 4096 {
 		t.Fatalf("exec after collector=%+v", finished)
 	}
 	output, err := db.ListExecOutput(context.Background(), exec.ID, 0)

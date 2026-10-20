@@ -60,20 +60,21 @@ type SessionStore interface {
 
 // ExecRecord contains the persisted command request and final status.
 type ExecRecord struct {
-	ID          string
-	SessionID   string
-	ArgvJSON    []byte
-	Shell       string
-	Cwd         string
-	EnvJSON     []byte
-	TTY         bool
-	State       string
-	ExitCode    *int
-	Signal      *int
-	StartedAt   time.Time
-	EndedAt     *time.Time
-	OutputBytes int64
-	Truncated   bool
+	ID              string
+	SessionID       string
+	ArgvJSON        []byte
+	Shell           string
+	Cwd             string
+	EnvJSON         []byte
+	TTY             bool
+	State           string
+	ExitCode        *int
+	Signal          *int
+	StartedAt       time.Time
+	EndedAt         *time.Time
+	OutputBytes     int64
+	Truncated       bool
+	PeakMemoryBytes int64
 }
 
 // ExecOutputRecord is an ordered, resumable output chunk.
