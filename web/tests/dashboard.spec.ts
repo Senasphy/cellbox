@@ -41,8 +41,9 @@ test("dashboard creates a sandbox, streams a command, transfers a file and loads
       await expect(row.getByText(/%/)).toBeVisible({ timeout: 20_000 });
       await expect(row.getByRole("img", { name: `${createdID} Memory sparkline` })).toBeVisible();
       await row.getByRole("button", { name: `Details ${createdID}` }).click();
-      await expect(page.getByRole("status").filter({hasText:"Connected"})).toBeVisible({timeout:20_000});
       const terminal = page.getByLabel("Interactive session terminal");
+      await expect(terminal).toBeVisible();
+      await expect(page.getByText("Connected", {exact:true})).toBeVisible({timeout:20_000});
       const terminalInput = terminal.locator(".xterm-helper-textarea");
       await terminalInput.focus();
       await terminalInput.pressSequentially("printf terminal-stream-ok", {delay:50});
