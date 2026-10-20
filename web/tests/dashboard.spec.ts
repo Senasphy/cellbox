@@ -51,7 +51,7 @@ test("dashboard creates a sandbox, streams a command, transfers a file and loads
       await page.getByLabel("New key name").fill("playwright temporary key");
       await page.getByRole("button", { name: "Create session key" }).click();
       await expect(page.getByRole("status")).toContainText("cbx_");
-      await page.getByRole("button", { name: "Revoke" }).click();
+      await page.getByRole("button", { name: "Revoke playwright temporary key" }).click();
     });
     expect(failures, "browser console errors").toEqual([]);
   } finally {
