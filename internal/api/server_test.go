@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/senasphy/cellbox/internal/auth"
+	"github.com/senasphy/cellbox/internal/config"
 	"github.com/senasphy/cellbox/internal/store"
 )
 
@@ -47,7 +48,11 @@ func TestSystemRequiresValidAdminKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	db := fakeStore{key: store.KeyRecord{ID: key.ID, Prefix: key.Prefix, Hash: key.Hash, Scope: "admin"}}
-	h := NewHandler(db, nil, "native")
+	cfg := config.Defaults()
+	cfg.Listen = "127.0.0.1:9090"
+	cfg.TLS.Cert = "/etc/cellbox/server.crt"
+	cfg.TLS.Key = "/etc/cellbox/private.key"
+	h := NewHandlerWithConfig(db, nil, "native", cfg)
 	unauthorized := httptest.NewRecorder()
 	h.ServeHTTP(unauthorized, httptest.NewRequest(http.MethodGet, "/v1/system", nil))
 	if unauthorized.Code != http.StatusUnauthorized {
@@ -60,9 +65,12 @@ func TestSystemRequiresValidAdminKey(t *testing.T) {
 	if authorized.Code != http.StatusOK || !strings.Contains(authorized.Body.String(), `"backend":"native"`) || !strings.Contains(authorized.Body.String(), `"doctor_status":`) {
 		t.Fatalf("status=%d body=%s", authorized.Code, authorized.Body.String())
 	}
+	if !strings.Contains(authorized.Body.String(), `"listen":"127.0.0.1:9090"`) || !strings.Contains(authorized.Body.String(), `"key_configured":true`) || strings.Contains(authorized.Body.String(), cfg.TLS.Key) {
+		t.Fatalf("effective config missing or exposed TLS key path: %s", authorized.Body.String())
+	}
 	db.key.Scope = "session"
 	scoped := httptest.NewRecorder()
-	h = NewHandler(db, nil, "native")
+	h = NewHandlerWithConfig(db, nil, "native", cfg)
 	h.ServeHTTP(scoped, req)
 	if scoped.Code != http.StatusForbidden {
 		t.Fatalf("session key status=%d body=%s", scoped.Code, scoped.Body.String())

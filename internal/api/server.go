@@ -25,10 +25,11 @@ type KeyStore interface {
 
 // System reports non-secret service capabilities.
 type System struct {
-	Backend      string               `json:"backend"`
-	Capabilities runtime.Capabilities `json:"capabilities"`
-	DoctorStatus string               `json:"doctor_status"`
-	DoctorChecks []string             `json:"doctor_checks"`
+	Backend         string               `json:"backend"`
+	Capabilities    runtime.Capabilities `json:"capabilities"`
+	DoctorStatus    string               `json:"doctor_status"`
+	DoctorChecks    []string             `json:"doctor_checks"`
+	EffectiveConfig map[string]any       `json:"effective_config"`
 }
 
 type server struct {
@@ -135,7 +136,23 @@ func (s *server) system(w http.ResponseWriter, r *http.Request) {
 	doctorChecks := append([]string{}, s.doctorInfo...)
 	s.doctorMu.RUnlock()
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(System{Backend: s.backendName, Capabilities: caps, DoctorStatus: doctorStatus, DoctorChecks: doctorChecks})
+	_ = json.NewEncoder(w).Encode(System{Backend: s.backendName, Capabilities: caps, DoctorStatus: doctorStatus, DoctorChecks: doctorChecks, EffectiveConfig: effectiveConfig(s.cfg)})
+}
+
+func effectiveConfig(cfg config.Config) map[string]any {
+	return map[string]any{
+		"listen": cfg.Listen, "data_dir": cfg.DataDir, "backend": cfg.Backend, "docker_socket": cfg.DockerSocket,
+		"limits": map[string]any{
+			"default": map[string]int{"cpu_millicores": cfg.Limits.Default.CPUMillicores, "memory_mb": cfg.Limits.Default.MemoryMB, "pids": cfg.Limits.Default.PIDs, "disk_mb": cfg.Limits.Default.DiskMB, "idle_ttl_s": cfg.Limits.Default.IdleTTLS, "ttl_s": cfg.Limits.Default.TTLS},
+			"max":     map[string]int{"cpu_millicores": cfg.Limits.Max.CPUMillicores, "memory_mb": cfg.Limits.Max.MemoryMB, "pids": cfg.Limits.Max.PIDs, "disk_mb": cfg.Limits.Max.DiskMB, "idle_ttl_s": cfg.Limits.Max.IdleTTLS, "ttl_s": cfg.Limits.Max.TTLS},
+		},
+		"capacity":  map[string]any{"memory_overcommit": cfg.Capacity.MemoryOvercommit, "cpu_overcommit": cfg.Capacity.CPUOvercommit, "queue_wait_s": cfg.Capacity.QueueWaitS},
+		"pool":      map[string]any{"enabled": cfg.Pool.Enabled, "per_image": cfg.Pool.PerImage, "memory_budget_mb": cfg.Pool.MemoryBudgetMB},
+		"egress":    map[string]any{"allow_internet_mode": cfg.Egress.AllowInternetMode, "extra_blocked_cidrs": cfg.Egress.ExtraBlockedCIDRs},
+		"retention": map[string]int{"output_days": cfg.Retention.OutputDays, "audit_days": cfg.Retention.AuditDays},
+		"log":       map[string]string{"level": cfg.Log.Level, "format": cfg.Log.Format},
+		"tls":       map[string]any{"cert": cfg.TLS.Cert, "key_configured": cfg.TLS.Key != ""},
+	}
 }
 
 func (s *server) loadDoctorChecks() {

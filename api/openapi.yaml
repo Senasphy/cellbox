@@ -360,10 +360,14 @@ components:
         code: { type: string }
     System:
       type: object
-      required: [backend, capabilities, doctor_status, doctor_checks]
+      required: [backend, capabilities, doctor_status, doctor_checks, effective_config]
       properties:
         backend: { type: string }
         capabilities: { type: object }
+        effective_config:
+          type: object
+          description: Effective service settings. TLS private key path is intentionally omitted; tls.key_configured reports only whether one is set.
+          additionalProperties: true
         doctor_status: { type: string, enum: [checking, ready, degraded] }
         doctor_checks: { type: array, items: { type: string } }
     CreateKey:
