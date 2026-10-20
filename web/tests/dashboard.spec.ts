@@ -22,6 +22,7 @@ test("dashboard creates a sandbox, streams a command, transfers a file and loads
       await expect(page.locator("main")).toHaveAttribute("data-hydrated", "true");
       await page.getByRole("button", { name: "Switch to light theme" }).click();
       await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+      await auditWCAG(page);
       await page.getByRole("button", { name: "Switch to dark theme" }).click();
       await page.getByPlaceholder("cbx_…").fill("cbx_invalid-test-key");
       expectedInvalidLogin = true;
