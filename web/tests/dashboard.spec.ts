@@ -45,7 +45,7 @@ test("dashboard creates a sandbox, streams a command, transfers a file and loads
       const terminal = page.getByLabel("Interactive session terminal");
       const terminalInput = terminal.locator(".xterm-helper-textarea");
       await terminalInput.focus();
-      await terminalInput.pressSequentially("printf terminal-stream-ok");
+      await terminalInput.pressSequentially("printf terminal-stream-ok", {delay:50});
       await terminalInput.press("Enter");
       await expect(terminal).toContainText("terminal-stream-ok", {timeout:20_000});
       await page.getByRole("button", { name: "Metrics", exact: true }).click();
