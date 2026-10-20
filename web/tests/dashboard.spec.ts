@@ -51,6 +51,18 @@ test("dashboard creates a sandbox, streams a command, transfers a file and loads
       await page.getByRole("button", { name: `Upload to ${createdID}` }).click();
       await page.getByRole("button", { name: `Download from ${createdID}` }).click();
       await expect(page.getByLabel("Output")).toContainText("dashboard-file-ok");
+      await page.getByRole("button", { name: `Details ${createdID}` }).click();
+      await page.getByRole("button", { name: "Files", exact: true }).click();
+      await page.getByRole("button", { name: "tmp", exact: true }).click();
+      await page.getByRole("button", { name: "dashboard-e2e.txt", exact: true }).click();
+      await expect(page.getByLabel("Code viewer for /tmp/dashboard-e2e.txt")).toContainText("dashboard-file-ok");
+      await page.getByLabel("Choose files to upload").setInputFiles({ name: "dashboard-upload.txt", mimeType: "text/plain", buffer: Buffer.from("file-browser-upload-ok") });
+      await page.getByRole("button", { name: "dashboard-upload.txt", exact: true }).click();
+      await expect(page.getByLabel("Code viewer for /tmp/dashboard-upload.txt")).toContainText("file-browser-upload-ok");
+      const tarDownload = page.waitForEvent("download");
+      await page.getByRole("button", { name: "Download directory as tar" }).click();
+      expect((await tarDownload).suggestedFilename()).toMatch(/-tmp\.tar$/);
+      await page.getByRole("button", { name: "Sessions", exact: true }).click();
     });
     await test.step("load metrics and destroy session", async () => {
       await page.getByRole("button", { name: "Refresh metrics" }).click();
