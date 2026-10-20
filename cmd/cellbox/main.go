@@ -65,6 +65,7 @@ func newRoot() *cobra.Command {
 	root.AddCommand(newKeysCommand())
 	root.AddCommand(newImagesCommand())
 	root.AddCommand(newSessionsCommand())
+	root.AddCommand(newShellCommand())
 	root.AddCommand(newRunCommand())
 	root.AddCommand(newMCPCommand())
 	var cfgPath string

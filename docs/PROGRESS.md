@@ -8,7 +8,7 @@ The Phase 3 CLI also now provides `cellbox images ls|pull|rm`, uses `CELLBOX_URL
 
 Added the specified `cellbox sessions ls|rm` commands with bounded cursor-page listing, JSON output, bearer auth, and matching tests. This uses the existing owner-scoped API, so session keys see only their own sessions. Local `go test ./cmd/cellbox` passes.
 
-Phase 3 CLI audit still finds the specified interactive `cellbox shell <session>` command absent; snapshot/fork CLI operations depend on Phase 6 APIs and should be completed with that phase. Current CI for the new dashboard image flow is still running; the initial image-management implementation run [39431711062](https://github.com/Senasphy/cellbox/actions/runs/39431711062) passed.
+Added `cellbox shell <session>` using the authenticated terminal WebSocket, raw mode for TTY stdin, input/output streaming, and SIGWINCH resize updates. WebSocket tests cover authentication, stdin forwarding, output forwarding, and malformed session IDs. Local `go test ./cmd/cellbox` passes. Snapshot/fork CLI operations depend on Phase 6 APIs and should be completed with that phase. Hosted CI for the image browser flow and CLI additions remains pending; the initial image-management implementation run [39431711062](https://github.com/Senasphy/cellbox/actions/runs/39431711062) passed.
 
 ## Phase 0: Foundations — complete (local acceptance passed)
 
