@@ -14,6 +14,12 @@ test("dashboard creates a sandbox, streams a command, transfers a file and loads
       await expect(page.locator("main")).toHaveAttribute("data-hydrated", "true");
       await page.getByPlaceholder("cbx_…").fill(key!);
       await page.getByRole("button", { name: "Connect" }).click();
+      await page.keyboard.press("Control+k");
+      const palette = page.getByRole("dialog", { name: "Command palette" });
+      await expect(palette).toBeVisible();
+      await palette.getByLabel("Filter commands").fill("Open Sessions");
+      await palette.getByLabel("Filter commands").press("Enter");
+      await expect(palette).toBeHidden();
       const createdResponse = page.waitForResponse(response =>
         response.request().method() === "POST" && new URL(response.url()).pathname === "/v1/sessions",
       );
