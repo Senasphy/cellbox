@@ -23,6 +23,10 @@ test("dashboard creates a sandbox, streams a command, transfers a file and loads
       const row = page.locator("tbody tr").filter({ hasText: createdID });
       await expect(row).toBeVisible({ timeout: 90_000 });
       await expect(row.getByRole("button", { name: `Run in ${createdID}` })).toBeVisible();
+      await row.getByRole("button", { name: `Details ${createdID}` }).click();
+      await page.getByRole("button", { name: "Timeline" }).click();
+      await page.getByRole("button", { name: "Events" }).click();
+      await page.getByRole("button", { name: "Sessions" }).click();
     });
     await test.step("stream command output", async () => {
       await page.getByLabel("Command").fill("printf dashboard-stream-ok");
@@ -41,6 +45,13 @@ test("dashboard creates a sandbox, streams a command, transfers a file and loads
       await expect(page.getByLabel("Metrics")).toContainText("cellbox_sessions");
       await page.getByRole("button", { name: `Destroy ${createdID}` }).click();
       createdID = "";
+    });
+    await test.step("create and revoke a session key", async () => {
+      await page.getByRole("button", { name: "Keys" }).click();
+      await page.getByLabel("New key name").fill("playwright temporary key");
+      await page.getByRole("button", { name: "Create session key" }).click();
+      await expect(page.getByRole("status")).toContainText("cbx_");
+      await page.getByRole("button", { name: "Revoke" }).click();
     });
     expect(failures, "browser console errors").toEqual([]);
   } finally {
