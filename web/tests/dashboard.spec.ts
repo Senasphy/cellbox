@@ -57,6 +57,8 @@ test("dashboard creates a sandbox, streams a command, transfers a file and loads
       const terminal = page.getByLabel("Interactive session terminal");
       await expect(terminal).toBeVisible();
       await expect(page.getByText("Connected", {exact:true})).toBeVisible({timeout:20_000});
+      await expect(page.getByRole("button", {name:"Copy selection"})).toBeVisible();
+      await expect(page.getByRole("button", {name:"Paste", exact:true})).toBeVisible();
       const terminalInput = terminal.locator(".xterm-helper-textarea");
       await terminalInput.focus();
       await terminalInput.pressSequentially("printf terminal-stream-ok", {delay:50});
