@@ -77,6 +77,10 @@ if [[ "${CELLBOX_PYTHON_SDK:-0}" == "1" ]]; then
 		python3 -m pytest -q "$repo_root/sdk/python/tests" -m integration
 	CELLBOX_URL="$base" CELLBOX_KEY="$api_key" PYTHONPATH="$repo_root/sdk/python/src" \
 		python3 "$repo_root/examples/fix-loop.py" --fake-model
+	for example in hosted-model.py ollama.py eval-runner.py; do
+		CELLBOX_URL="$base" CELLBOX_KEY="$api_key" PYTHONPATH="$repo_root/sdk/python/src" \
+			python3 "$repo_root/examples/$example" --fake-model
+	done
 fi
 if [[ "${CELLBOX_PLAYWRIGHT:-0}" == "1" ]]; then
 	CELLBOX_URL="$base" CELLBOX_KEY="$api_key" npm run test:e2e --prefix "$repo_root/web"

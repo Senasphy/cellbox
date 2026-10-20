@@ -1,9 +1,12 @@
 """Small deterministic eval runner. Each task is isolated in its own session."""
-import json, os
+import argparse, json, os
 from concurrent.futures import ThreadPoolExecutor
 from cellbox import Client
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--fake-model", action="store_true", help="run the deterministic offline task set")
+    parser.parse_args()
     tasks=["print(1 + 1)","print('cellbox')","print(sum(range(5)))"]
     def run(task):
         with Client(os.getenv("CELLBOX_URL","http://127.0.0.1:8080"),os.environ["CELLBOX_KEY"]) as c:

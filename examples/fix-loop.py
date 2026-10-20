@@ -46,6 +46,7 @@ def main() -> int:
     test = "from app import add; assert add(2, 3) == 5, f'expected 5, got {add(2, 3)}'"
     with Client(os.getenv("CELLBOX_URL", "http://127.0.0.1:8080"), os.environ["CELLBOX_KEY"]) as client:
         with client.sessions.create("python:3.12-slim", memory_mb=512, network_policy={"mode": "none"}) as box:
+            box.exec(["mkdir", "-p", "/work"])
             box.write_file("/work/app.py", source)
             for attempt in range(1, args.max_attempts + 1):
                 result = box.exec(["python", "-c", test], cwd="/work", timeout_s=30)
