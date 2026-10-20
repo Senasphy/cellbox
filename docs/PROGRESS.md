@@ -10,6 +10,8 @@ Added the specified `cellbox sessions ls|rm` commands with bounded cursor-page l
 
 Added `cellbox shell <session>` using the authenticated terminal WebSocket, raw mode for TTY stdin, input/output streaming, and SIGWINCH resize updates. WebSocket tests cover authentication, stdin forwarding, output forwarding, and malformed session IDs. Local `go test ./cmd/cellbox` passes. Snapshot/fork CLI operations depend on Phase 6 APIs and should be completed with that phase. Hosted CI for the image browser flow and CLI additions remains pending; the initial image-management implementation run [39431711062](https://github.com/Senasphy/cellbox/actions/runs/39431711062) passed.
 
+The Docker walkthrough now pipes commands through `cellbox shell` and checks terminal output against a live Docker session. Shell syntax validation passes locally; this live check is pending hosted CI because Docker is unavailable in the workspace.
+
 ## Phase 0: Foundations — complete (local acceptance passed)
 
 Implemented: Go module, CLI skeleton (`version`, `doctor`, `serve`), strict config loading with environment overrides, slog redaction, SQLite WAL store and forward-only migration runner, problem+json type, prefixed sortable IDs, OpenAPI skeleton, Makefile, CI workflow, Apache-2.0 license.
