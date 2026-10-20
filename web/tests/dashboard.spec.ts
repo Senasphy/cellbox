@@ -1,4 +1,11 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
+import AxeBuilder from "@axe-core/playwright";
+
+async function auditWCAG(page:Page){
+  const results=await new AxeBuilder({page}).withTags(["wcag2a","wcag2aa","wcag21a","wcag21aa"]).analyze();
+  const failures=results.violations.map(({id,impact,description,nodes})=>({id,impact,description,nodes:nodes.map(node=>({target:node.target,summary:node.failureSummary}))}));
+  expect(failures,JSON.stringify(failures,null,2)).toEqual([]);
+}
 
 test("dashboard creates a sandbox, streams a command, transfers a file and loads metrics", async ({ page }) => {
   const key = process.env.CELLBOX_KEY;
@@ -21,6 +28,10 @@ test("dashboard creates a sandbox, streams a command, transfers a file and loads
       await expect(page.getByRole("img", { name: "Session create rate sparkline" })).toBeVisible();
       await expect(page.getByRole("img", { name: "Error rate sparkline" })).toBeVisible();
       await expect(page.getByLabel("Recent limit breaches")).toBeVisible();
+      await page.getByRole("button", { name: "Switch to light theme" }).click();
+      await auditWCAG(page);
+      await page.getByRole("button", { name: "Switch to dark theme" }).click();
+      await auditWCAG(page);
       await expect(page.getByLabel("Doctor status").getByRole("status")).toContainText(/checking|ready|degraded/);
       await expect(page.getByLabel("Doctor status")).toContainText("kernel version:", { timeout: 30_000 });
       await page.keyboard.press("Control+k");
@@ -66,6 +77,7 @@ test("dashboard creates a sandbox, streams a command, transfers a file and loads
       await expect(timeline.getByText("printf dashboard-stream-ok")).toBeVisible();
       await timeline.getByRole("button", { name: "Output" }).first().click();
       await expect(page.getByLabel("Command output")).toContainText("dashboard-stream-ok");
+      await auditWCAG(page);
       await page.getByRole("button", { name: "Sessions", exact: true }).click();
     });
     await test.step("upload and download file", async () => {
