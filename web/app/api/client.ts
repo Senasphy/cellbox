@@ -2,6 +2,7 @@ import createClient from "openapi-fetch";
 import type { components, operations, paths } from "./schema";
 
 export type SessionList = components["schemas"]["SessionList"];
+export type ExecList = components["schemas"]["ExecList"];
 export type KeyList = components["schemas"]["KeyList"];
 export type SystemInfo = components["schemas"]["System"];
 export type LimitBreachList = operations["listRecentLimitBreaches"]["responses"][200]["content"]["application/json"];
@@ -41,4 +42,19 @@ export async function fetchLimitBreaches(signal: AbortSignal): Promise<LimitBrea
   const result = await apiClient.GET("/v1/limit-breaches", { signal });
   if (!result.response.ok || !result.data) throw problemError(result.response.status, result.error);
   return result.data;
+}
+
+export async function fetchExecHistory(sessionID: string, signal: AbortSignal): Promise<ExecList["items"]> {
+  const all: ExecList["items"] = [];
+  let cursor: string | undefined;
+  do {
+    const result = await apiClient.GET("/v1/sessions/{id}/execs", {
+      params: { path: { id: sessionID }, query: { limit: 200, ...(cursor ? { cursor } : {}) } },
+      signal,
+    });
+    if (!result.response.ok || !result.data) throw problemError(result.response.status, result.error);
+    all.push(...result.data.items);
+    cursor = result.data.next_cursor;
+  } while (cursor && all.length < 100_000);
+  return all;
 }
