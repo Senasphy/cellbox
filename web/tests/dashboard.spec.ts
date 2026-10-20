@@ -17,6 +17,7 @@ test("dashboard creates a sandbox, streams a command, transfers a file and loads
       await page.getByRole("button", { name: "Switch to dark theme" }).click();
       await page.getByPlaceholder("cbx_…").fill(key!);
       await page.getByRole("button", { name: "Connect" }).click();
+      await expect(page.getByRole("meter", { name: "CPU capacity" })).toBeVisible();
       await page.keyboard.press("Control+k");
       const palette = page.getByRole("dialog", { name: "Command palette" });
       await expect(palette).toBeVisible();
@@ -61,7 +62,7 @@ test("dashboard creates a sandbox, streams a command, transfers a file and loads
       await page.getByRole("button", { name: "Keys" }).click();
       await page.getByLabel("New key name").fill("playwright temporary key");
       await page.getByRole("button", { name: "Create session key" }).click();
-      await expect(page.getByRole("status")).toContainText("cbx_");
+      await expect(page.getByRole("status").filter({ hasText: "Copy this key now" })).toContainText("cbx_");
       await page.getByRole("button", { name: "Revoke playwright temporary key" }).click();
     });
     expect(failures, "browser console errors").toEqual([]);
