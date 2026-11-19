@@ -1,0 +1,63 @@
+//go:build linux
+
+package native
+
+import (
+	"encoding/json"
+	"strings"
+	"syscall"
+	"testing"
+)
+
+func TestRunWorkloadCapturesBoundedOutputAndExitStatus(t *testing.T) {
+	request, err := json.Marshal(workloadRequest{Argv: []string{"/bin/sh", "-c", "printf '0123456789'; printf 'bad' >&2; exit 7"}, OutputLimit: 8})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := runWorkload(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result workloadResponse
+	if err := json.Unmarshal(payload, &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.ExitCode != 7 || !result.Truncated || result.OutputBytes != 13 {
+		t.Fatalf("result = %+v", result)
+	}
+	var output strings.Builder
+	for _, chunk := range result.Chunks {
+		output.Write(chunk.Data)
+	}
+	if output.String() != "01234567" {
+		t.Fatalf("captured output = %q", output.String())
+	}
+}
+
+func TestRunWorkloadRejectsUnsafeWorkingDirectory(t *testing.T) {
+	request, err := json.Marshal(workloadRequest{Argv: []string{"true"}, Cwd: "/work/../etc"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runWorkload(request); err == nil || !strings.Contains(err.Error(), "clean absolute sandbox path") {
+		t.Fatalf("runWorkload error = %v", err)
+	}
+}
+
+func TestRunWorkloadKillsTimedOutProcessGroup(t *testing.T) {
+	request, err := json.Marshal(workloadRequest{Argv: []string{"/bin/sh", "-c", "sleep 2"}, TimeoutMS: 30})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := runWorkload(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result workloadResponse
+	if err := json.Unmarshal(payload, &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.ExitCode != 124 || result.Signal != int(syscall.SIGKILL) {
+		t.Fatalf("result = %+v", result)
+	}
+}

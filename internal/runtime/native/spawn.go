@@ -10,9 +10,11 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"sync"
 	"syscall"
 	"time"
 
+	"github.com/senasphy/cellbox/internal/runtime"
 	"golang.org/x/sys/unix"
 )
 
@@ -23,6 +25,74 @@ type InitProcess struct {
 	cmd     *exec.Cmd
 	control *os.File
 	stderr  *bytes.Buffer
+	mu      sync.Mutex
+	closed  bool
+	request uint64
+}
+
+// Exec launches one workload command inside the namespace and returns bounded output.
+func (p *InitProcess) Exec(ctx context.Context, request runtime.ExecRequest) ([]runtime.OutputChunk, runtime.ExecResult, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	var empty runtime.ExecResult
+	if p.closed || p.control == nil {
+		return nil, empty, errors.New("native init process is closed")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, empty, err
+	}
+	args := append([]string(nil), request.Argv...)
+	if len(args) == 0 && request.Shell != "" {
+		args = []string{"/bin/sh", "-lc", request.Shell}
+	}
+	payload, err := json.Marshal(workloadRequest{Argv: args, Cwd: request.Cwd, Env: request.Env, TimeoutMS: request.TimeoutMS, OutputLimit: request.OutputLimit})
+	if err != nil {
+		return nil, empty, fmt.Errorf("encode native workload request: %w", err)
+	}
+	p.request++
+	id := fmt.Sprintf("exec-%d", p.request)
+	if err := SendControlMessage(int(p.control.Fd()), ControlMessage{Type: "exec", ID: id, Payload: payload}); err != nil {
+		return nil, empty, fmt.Errorf("send native workload request: %w", err)
+	}
+	for {
+		if err := ctx.Err(); err != nil {
+			_ = p.cmd.Process.Kill()
+			_ = p.cmd.Wait()
+			p.closed = true
+			_ = p.control.Close()
+			return nil, empty, err
+		}
+		fds := []unix.PollFd{{Fd: int32(p.control.Fd()), Events: unix.POLLIN | unix.POLLHUP | unix.POLLERR}}
+		ready, pollErr := unix.Poll(fds, 100)
+		if pollErr == unix.EINTR {
+			continue
+		}
+		if pollErr != nil {
+			return nil, empty, fmt.Errorf("wait for native workload: %w", pollErr)
+		}
+		if ready == 0 {
+			continue
+		}
+		message, files, recvErr := ReceiveControlMessage(int(p.control.Fd()))
+		closeFiles(files)
+		if recvErr != nil {
+			return nil, empty, fmt.Errorf("read native workload result: %w", recvErr)
+		}
+		if message.ID != id {
+			return nil, empty, fmt.Errorf("native workload response id mismatch: got %q, want %q", message.ID, id)
+		}
+		if message.Type == "error" {
+			return nil, empty, errors.New(message.Error)
+		}
+		if message.Type != "exec_done" {
+			return nil, empty, fmt.Errorf("unexpected native workload response %q", message.Type)
+		}
+		var result workloadResponse
+		if err := json.Unmarshal(message.Payload, &result); err != nil {
+			return nil, empty, fmt.Errorf("decode native workload result: %w", err)
+		}
+		return result.Chunks, runtime.ExecResult{ExitCode: result.ExitCode, Signal: result.Signal, DurationMS: result.DurationMS, OutputBytes: result.OutputBytes, Truncated: result.Truncated}, nil
+	}
 }
 
 // SpawnInit re-execs this binary into the requested namespaces and waits for
@@ -130,7 +200,12 @@ func failStartedInit(command *exec.Cmd, control *os.File, cause error, stderr *b
 
 // Shutdown asks init to exit and reaps the child.
 func (p *InitProcess) Shutdown(ctx context.Context) error {
-	if p == nil || p.cmd == nil || p.control == nil {
+	if p == nil {
+		return nil
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.cmd == nil || p.control == nil || p.closed {
 		return nil
 	}
 	defer p.control.Close()
@@ -143,6 +218,7 @@ func (p *InitProcess) Shutdown(ctx context.Context) error {
 	go func() { waitResult <- p.cmd.Wait() }()
 	select {
 	case err := <-waitResult:
+		p.closed = true
 		if err != nil {
 			return fmt.Errorf("native init exited: %w (stderr: %s)", err, p.stderr.String())
 		}
@@ -150,6 +226,7 @@ func (p *InitProcess) Shutdown(ctx context.Context) error {
 	case <-ctx.Done():
 		_ = p.cmd.Process.Kill()
 		<-waitResult
+		p.closed = true
 		return ctx.Err()
 	}
 }

@@ -308,6 +308,17 @@ func controlLoop(fd int) error {
 		switch message.Type {
 		case "shutdown":
 			return SendControlMessage(fd, ControlMessage{Type: "stopped", ID: message.ID})
+		case "exec":
+			result, err := runWorkload(message.Payload)
+			if err != nil {
+				if sendErr := SendControlMessage(fd, ControlMessage{Type: "error", ID: message.ID, Error: err.Error()}); sendErr != nil {
+					return sendErr
+				}
+				continue
+			}
+			if err := SendControlMessage(fd, ControlMessage{Type: "exec_done", ID: message.ID, Payload: result}); err != nil {
+				return err
+			}
 		default:
 			if err := SendControlMessage(fd, ControlMessage{Type: "error", ID: message.ID, Error: "unsupported init request: " + message.Type}); err != nil {
 				return err
