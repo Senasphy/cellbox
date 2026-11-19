@@ -185,10 +185,10 @@ func (s *sandbox) Exec(ctx context.Context, request cellruntime.ExecRequest) (ce
 	request.Env = mergeEnv(s.env, request.Env)
 	handle := &execHandle{output: make(chan cellruntime.OutputChunk, 32), done: make(chan struct{})}
 	go func() {
-		chunks, result, err := s.init.Exec(context.Background(), request)
-		for _, chunk := range chunks {
+		result, err := s.init.Exec(context.Background(), request, func(chunk cellruntime.OutputChunk) error {
 			handle.output <- chunk
-		}
+			return nil
+		})
 		close(handle.output)
 		handle.result, handle.err = result, err
 		close(handle.done)

@@ -45,6 +45,10 @@ type workloadResponse struct {
 // runWorkload executes one validated command inside the already-pivoted root.
 // Output is capped before it enters the control channel.
 func runWorkload(payload json.RawMessage) (json.RawMessage, error) {
+	return runWorkloadStreaming(payload, nil)
+}
+
+func runWorkloadStreaming(payload json.RawMessage, emit func(runtime.OutputChunk) error) (json.RawMessage, error) {
 	var request workloadRequest
 	decoder := json.NewDecoder(strings.NewReader(string(payload)))
 	decoder.DisallowUnknownFields()
@@ -100,11 +104,14 @@ func runWorkload(payload json.RawMessage) (json.RawMessage, error) {
 		return syscall.Kill(-command.Process.Pid, syscall.SIGKILL)
 	}
 	collector := &workloadOutput{limit: outputLimit}
-	command.Stdout = outputStream{collector: collector, stream: "stdout"}
-	command.Stderr = outputStream{collector: collector, stream: "stderr"}
+	command.Stdout = outputStream{collector: collector, stream: "stdout", emit: emit}
+	command.Stderr = outputStream{collector: collector, stream: "stderr", emit: emit}
 	started := time.Now()
 	err := command.Run()
-	response := workloadResponse{DurationMS: time.Since(started).Milliseconds(), OutputBytes: collector.total, Truncated: collector.truncated, Chunks: collector.chunks}
+	response := workloadResponse{DurationMS: time.Since(started).Milliseconds(), OutputBytes: collector.total, Truncated: collector.truncated}
+	if emit == nil {
+		response.Chunks = collector.chunks
+	}
 	if err == nil {
 		response.ExitCode = 0
 	} else if ctx.Err() != nil {
@@ -140,6 +147,7 @@ type workloadOutput struct {
 type outputStream struct {
 	collector *workloadOutput
 	stream    string
+	emit      func(runtime.OutputChunk) error
 }
 
 func (w outputStream) Write(data []byte) (int, error) {
@@ -162,7 +170,15 @@ func (w outputStream) Write(data []byte) (int, error) {
 		if n > workloadChunkSize {
 			n = workloadChunkSize
 		}
-		w.collector.chunks = append(w.collector.chunks, runtime.OutputChunk{Stream: w.stream, Data: append([]byte(nil), data[:n]...)})
+		chunk := runtime.OutputChunk{Stream: w.stream, Data: data[:n]}
+		if w.emit != nil {
+			if err := w.emit(chunk); err != nil {
+				return 0, err
+			}
+		} else {
+			chunk.Data = append([]byte(nil), chunk.Data...)
+			w.collector.chunks = append(w.collector.chunks, chunk)
+		}
 		data = data[n:]
 	}
 	return originalLength, nil

@@ -7,6 +7,8 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+
+	"github.com/senasphy/cellbox/internal/runtime"
 )
 
 func TestRunWorkloadCapturesBoundedOutputAndExitStatus(t *testing.T) {
@@ -59,5 +61,30 @@ func TestRunWorkloadKillsTimedOutProcessGroup(t *testing.T) {
 	}
 	if result.ExitCode != 124 || result.Signal != int(syscall.SIGKILL) {
 		t.Fatalf("result = %+v", result)
+	}
+}
+
+func TestRunWorkloadStreamsOutputWithoutBufferingResponseChunks(t *testing.T) {
+	request, err := json.Marshal(workloadRequest{Argv: []string{"/bin/sh", "-c", "printf out; printf err >&2"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	streams := map[string]*strings.Builder{"stdout": {}, "stderr": {}}
+	payload, err := runWorkloadStreaming(request, func(chunk runtime.OutputChunk) error {
+		streams[chunk.Stream].Write(chunk.Data)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result workloadResponse
+	if err := json.Unmarshal(payload, &result); err != nil {
+		t.Fatal(err)
+	}
+	if streams["stdout"].String() != "out" || streams["stderr"].String() != "err" {
+		t.Fatalf("streamed stdout = %q, stderr = %q", streams["stdout"].String(), streams["stderr"].String())
+	}
+	if len(result.Chunks) != 0 || result.OutputBytes != int64(len("outerr")) {
+		t.Fatalf("streaming response retained chunks: %+v", result)
 	}
 }

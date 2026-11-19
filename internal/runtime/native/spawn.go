@@ -30,16 +30,17 @@ type InitProcess struct {
 	request uint64
 }
 
-// Exec launches one workload command inside the namespace and returns bounded output.
-func (p *InitProcess) Exec(ctx context.Context, request runtime.ExecRequest) ([]runtime.OutputChunk, runtime.ExecResult, error) {
+// Exec launches one workload command inside the namespace, streams bounded output
+// chunks through emit, and returns the final status.
+func (p *InitProcess) Exec(ctx context.Context, request runtime.ExecRequest, emit func(runtime.OutputChunk) error) (runtime.ExecResult, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	var empty runtime.ExecResult
 	if p.closed || p.control == nil {
-		return nil, empty, errors.New("native init process is closed")
+		return empty, errors.New("native init process is closed")
 	}
 	if err := ctx.Err(); err != nil {
-		return nil, empty, err
+		return empty, err
 	}
 	args := append([]string(nil), request.Argv...)
 	if len(args) == 0 && request.Shell != "" {
@@ -47,12 +48,12 @@ func (p *InitProcess) Exec(ctx context.Context, request runtime.ExecRequest) ([]
 	}
 	payload, err := json.Marshal(workloadRequest{Argv: args, Cwd: request.Cwd, Env: request.Env, TimeoutMS: request.TimeoutMS, OutputLimit: request.OutputLimit})
 	if err != nil {
-		return nil, empty, fmt.Errorf("encode native workload request: %w", err)
+		return empty, fmt.Errorf("encode native workload request: %w", err)
 	}
 	p.request++
 	id := fmt.Sprintf("exec-%d", p.request)
 	if err := SendControlMessage(int(p.control.Fd()), ControlMessage{Type: "exec", ID: id, Payload: payload}); err != nil {
-		return nil, empty, fmt.Errorf("send native workload request: %w", err)
+		return empty, fmt.Errorf("send native workload request: %w", err)
 	}
 	for {
 		if err := ctx.Err(); err != nil {
@@ -60,7 +61,7 @@ func (p *InitProcess) Exec(ctx context.Context, request runtime.ExecRequest) ([]
 			_ = p.cmd.Wait()
 			p.closed = true
 			_ = p.control.Close()
-			return nil, empty, err
+			return empty, err
 		}
 		fds := []unix.PollFd{{Fd: int32(p.control.Fd()), Events: unix.POLLIN | unix.POLLHUP | unix.POLLERR}}
 		ready, pollErr := unix.Poll(fds, 100)
@@ -68,7 +69,7 @@ func (p *InitProcess) Exec(ctx context.Context, request runtime.ExecRequest) ([]
 			continue
 		}
 		if pollErr != nil {
-			return nil, empty, fmt.Errorf("wait for native workload: %w", pollErr)
+			return empty, fmt.Errorf("wait for native workload: %w", pollErr)
 		}
 		if ready == 0 {
 			continue
@@ -76,22 +77,35 @@ func (p *InitProcess) Exec(ctx context.Context, request runtime.ExecRequest) ([]
 		message, files, recvErr := ReceiveControlMessage(int(p.control.Fd()))
 		closeFiles(files)
 		if recvErr != nil {
-			return nil, empty, fmt.Errorf("read native workload result: %w", recvErr)
+			return empty, fmt.Errorf("read native workload result: %w", recvErr)
 		}
 		if message.ID != id {
-			return nil, empty, fmt.Errorf("native workload response id mismatch: got %q, want %q", message.ID, id)
+			return empty, fmt.Errorf("native workload response id mismatch: got %q, want %q", message.ID, id)
 		}
 		if message.Type == "error" {
-			return nil, empty, errors.New(message.Error)
+			return empty, errors.New(message.Error)
+		}
+		if message.Type == "exec_output" {
+			if emit == nil {
+				return empty, errors.New("native workload produced output without a receiver")
+			}
+			var chunk runtime.OutputChunk
+			if err := json.Unmarshal(message.Payload, &chunk); err != nil {
+				return empty, fmt.Errorf("decode native output chunk: %w", err)
+			}
+			if err := emit(chunk); err != nil {
+				return empty, fmt.Errorf("deliver native output chunk: %w", err)
+			}
+			continue
 		}
 		if message.Type != "exec_done" {
-			return nil, empty, fmt.Errorf("unexpected native workload response %q", message.Type)
+			return empty, fmt.Errorf("unexpected native workload response %q", message.Type)
 		}
 		var result workloadResponse
 		if err := json.Unmarshal(message.Payload, &result); err != nil {
-			return nil, empty, fmt.Errorf("decode native workload result: %w", err)
+			return empty, fmt.Errorf("decode native workload result: %w", err)
 		}
-		return result.Chunks, runtime.ExecResult{ExitCode: result.ExitCode, Signal: result.Signal, DurationMS: result.DurationMS, OutputBytes: result.OutputBytes, Truncated: result.Truncated}, nil
+		return runtime.ExecResult{ExitCode: result.ExitCode, Signal: result.Signal, DurationMS: result.DurationMS, OutputBytes: result.OutputBytes, Truncated: result.Truncated}, nil
 	}
 }
 

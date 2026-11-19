@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/senasphy/cellbox/internal/runtime"
 	"golang.org/x/sys/unix"
 )
 
@@ -309,7 +310,13 @@ func controlLoop(fd int) error {
 		case "shutdown":
 			return SendControlMessage(fd, ControlMessage{Type: "stopped", ID: message.ID})
 		case "exec":
-			result, err := runWorkload(message.Payload)
+			result, err := runWorkloadStreaming(message.Payload, func(chunk runtime.OutputChunk) error {
+				payload, marshalErr := json.Marshal(chunk)
+				if marshalErr != nil {
+					return marshalErr
+				}
+				return SendControlMessage(fd, ControlMessage{Type: "exec_output", ID: message.ID, Payload: payload})
+			})
 			if err != nil {
 				if sendErr := SendControlMessage(fd, ControlMessage{Type: "error", ID: message.ID, Error: err.Error()}); sendErr != nil {
 					return sendErr
