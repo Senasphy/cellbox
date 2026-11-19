@@ -4,6 +4,7 @@ package native
 
 import (
 	"encoding/json"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"testing"
@@ -87,6 +88,43 @@ func TestRunWorkloadStreamsOutputWithoutBufferingResponseChunks(t *testing.T) {
 	}
 	if len(result.Chunks) != 0 || result.OutputBytes != int64(len("outerr")) {
 		t.Fatalf("streaming response retained chunks: %+v", result)
+	}
+}
+
+func TestRunWorkloadHelperAppliesCwdAndEnvironment(t *testing.T) {
+	dir := t.TempDir()
+	request, err := json.Marshal(workloadRequest{
+		Argv: []string{"/bin/sh", "-c", "printf '%s:' \"$CELLBOX_HELPER_VALUE\"; /bin/pwd"},
+		Cwd:  dir,
+		Env:  map[string]string{"CELLBOX_HELPER_VALUE": "ready"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := runWorkload(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result workloadResponse
+	if err := json.Unmarshal(payload, &result); err != nil {
+		t.Fatal(err)
+	}
+	var output strings.Builder
+	for _, chunk := range result.Chunks {
+		output.Write(chunk.Data)
+	}
+	if got, want := strings.TrimSpace(output.String()), "ready:"+filepath.Clean(dir); result.ExitCode != 0 || got != want {
+		t.Fatalf("helper output = %q, exit = %d; want %q", got, result.ExitCode, want)
+	}
+}
+
+func TestRunWorkloadHelperReportsExecFailure(t *testing.T) {
+	request, err := json.Marshal(workloadRequest{Argv: []string{"cellbox-command-that-does-not-exist"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runWorkload(request); err == nil {
+		t.Fatal("missing command unexpectedly executed")
 	}
 }
 

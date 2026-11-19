@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path"
@@ -87,12 +88,29 @@ func runWorkloadWithSignals(payload json.RawMessage, emit func(runtime.OutputChu
 		return nil, fmt.Errorf("workload output limit must be between 0 and %d bytes", maxWorkloadOutput)
 	}
 
-	command := exec.Command(request.Argv[0], request.Argv[1:]...)
-	command.Dir = request.Cwd
-	command.Env = os.Environ()
-	for key, value := range request.Env {
-		command.Env = append(command.Env, key+"="+value)
+	configRead, configWrite, err := os.Pipe()
+	if err != nil {
+		return nil, fmt.Errorf("create exec helper request pipe: %w", err)
 	}
+	execErrorRead, execErrorWrite, err := os.Pipe()
+	if err != nil {
+		configRead.Close()
+		configWrite.Close()
+		return nil, fmt.Errorf("create exec helper error pipe: %w", err)
+	}
+	helperRequest, err := json.Marshal(execHelperRequest{Argv: request.Argv, Cwd: request.Cwd, Env: request.Env})
+	if err != nil {
+		configRead.Close()
+		configWrite.Close()
+		execErrorRead.Close()
+		execErrorWrite.Close()
+		return nil, fmt.Errorf("encode exec helper request: %w", err)
+	}
+	command := exec.Command("/proc/self/exe")
+	command.Args = []string{"cellbox-exec"}
+	command.Dir = "/"
+	command.Env = os.Environ()
+	command.ExtraFiles = []*os.File{configRead, execErrorWrite}
 	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	command.WaitDelay = 2 * time.Second
 	collector := &workloadOutput{limit: outputLimit}
@@ -100,8 +118,22 @@ func runWorkloadWithSignals(payload json.RawMessage, emit func(runtime.OutputChu
 	command.Stderr = outputStream{collector: collector, stream: "stderr", emit: emit}
 	started := time.Now()
 	if err := command.Start(); err != nil {
+		configRead.Close()
+		configWrite.Close()
+		execErrorRead.Close()
+		execErrorWrite.Close()
 		return nil, fmt.Errorf("start workload: %w", err)
 	}
+	_ = configRead.Close()
+	_ = execErrorWrite.Close()
+	if _, err := configWrite.Write(helperRequest); err != nil {
+		_ = configWrite.Close()
+		_ = command.Process.Kill()
+		_ = command.Wait()
+		_ = execErrorRead.Close()
+		return nil, fmt.Errorf("send exec helper request: %w", err)
+	}
+	_ = configWrite.Close()
 	signalDone := make(chan struct{})
 	signalStopped := make(chan struct{})
 	var processMu sync.Mutex
@@ -124,7 +156,6 @@ func runWorkloadWithSignals(payload json.RawMessage, emit func(runtime.OutputChu
 	}
 	waitResult := make(chan error, 1)
 	go func() { waitResult <- command.Wait() }()
-	var err error
 	timedOut := false
 	if request.TimeoutMS > 0 {
 		timer := time.NewTimer(time.Duration(request.TimeoutMS) * time.Millisecond)
@@ -145,6 +176,14 @@ func runWorkloadWithSignals(payload json.RawMessage, emit func(runtime.OutputChu
 		}
 	} else {
 		err = <-waitResult
+	}
+	execError, readErr := io.ReadAll(execErrorRead)
+	_ = execErrorRead.Close()
+	if readErr != nil {
+		return nil, fmt.Errorf("read exec helper error: %w", readErr)
+	}
+	if len(execError) > 0 {
+		return nil, fmt.Errorf("exec workload: %s", strings.TrimSpace(string(execError)))
 	}
 	processMu.Lock()
 	processRunning = false
