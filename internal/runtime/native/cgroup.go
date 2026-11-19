@@ -45,6 +45,9 @@ func CurrentCgroupPath() (string, error) {
 
 // InitializeCgroupRoot moves the service process into a leaf and enables delegated controllers.
 func InitializeCgroupRoot(path string, servicePID int) (*CgroupRoot, error) {
+	if err := validateServiceCgroupProcesses(path, servicePID); err != nil {
+		return nil, err
+	}
 	available, err := cgroupControllers(path)
 	if err != nil {
 		return nil, fmt.Errorf("read delegated cgroup controllers: %w", err)
@@ -75,6 +78,28 @@ func InitializeCgroupRoot(path string, servicePID int) (*CgroupRoot, error) {
 		return nil, fmt.Errorf("enable session cgroup controllers: %w", err)
 	}
 	return &CgroupRoot{path: sessions, controllers: controllers}, nil
+}
+
+func validateServiceCgroupProcesses(path string, servicePID int) error {
+	contents, err := os.ReadFile(filepath.Join(path, "cgroup.procs"))
+	if err != nil {
+		return fmt.Errorf("read delegated cgroup processes: %w", err)
+	}
+	foundService := false
+	for _, field := range strings.Fields(string(contents)) {
+		pid, parseErr := strconv.Atoi(field)
+		if parseErr != nil {
+			return fmt.Errorf("invalid PID %q in delegated cgroup.procs", field)
+		}
+		if pid != servicePID {
+			return fmt.Errorf("delegated cgroup must contain only service PID %d before controller setup (found PID %d)", servicePID, pid)
+		}
+		foundService = true
+	}
+	if !foundService {
+		return fmt.Errorf("service PID %d is not in the delegated cgroup", servicePID)
+	}
+	return nil
 }
 
 // Create creates a limited cgroup below the delegated sessions hierarchy.

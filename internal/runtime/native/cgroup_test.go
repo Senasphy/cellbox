@@ -5,6 +5,7 @@ package native
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/senasphy/cellbox/internal/runtime"
@@ -74,7 +75,7 @@ func TestInitializeCgroupRootRequiresControllersAndCreatesHierarchy(t *testing.T
 	root := t.TempDir()
 	for file, value := range map[string]string{
 		"cgroup.controllers":     "cpu memory pids io",
-		"cgroup.procs":           "",
+		"cgroup.procs":           "123",
 		"cgroup.subtree_control": "",
 	} {
 		if err := os.WriteFile(filepath.Join(root, file), []byte(value), 0600); err != nil {
@@ -96,6 +97,25 @@ func TestInitializeCgroupRootRequiresControllersAndCreatesHierarchy(t *testing.T
 	}
 	if _, err := service.Create("ses_test", runtime.Limits{CPUMillicores: 1000, MemoryMB: 256, PIDs: 64}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestInitializeCgroupRootRejectsSharedProcessCgroupBeforeMutation(t *testing.T) {
+	root := t.TempDir()
+	for file, value := range map[string]string{
+		"cgroup.controllers":     "cpu memory pids",
+		"cgroup.procs":           "123\n456\n",
+		"cgroup.subtree_control": "",
+	} {
+		if err := os.WriteFile(filepath.Join(root, file), []byte(value), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := InitializeCgroupRoot(root, 123); err == nil || !strings.Contains(err.Error(), "only service PID") {
+		t.Fatalf("InitializeCgroupRoot error = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "main")); !os.IsNotExist(err) {
+		t.Fatalf("failed setup left a main cgroup: %v", err)
 	}
 }
 

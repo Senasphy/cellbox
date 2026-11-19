@@ -49,10 +49,14 @@ func Check() []string {
 		} else {
 			out = append(out, "cgroup v2 controllers: missing "+strings.Join(missing, ", ")+" in the service cgroup (fix: delegate and enable these controllers in the service's parent cgroup)")
 		}
-		if currentErr == nil && writableCgroupDelegation(current) {
-			out = append(out, "cgroup delegation: writable")
+		if currentErr == nil {
+			if issue := cgroupDelegationIssue(current); issue == "" {
+				out = append(out, "cgroup delegation: usable")
+			} else {
+				out = append(out, "cgroup delegation: unusable (fix: "+issue+")")
+			}
 		} else {
-			out = append(out, "cgroup delegation: not writable (fix: run cellbox in a systemd unit with Delegate=yes or a delegated user scope)")
+			out = append(out, "cgroup delegation: unavailable (fix: run cellbox in a dedicated systemd service with Delegate=yes)")
 		}
 	}
 
@@ -184,15 +188,31 @@ func cgroupControllers(path string) (map[string]bool, error) {
 	return fieldsSet(string(contents)), nil
 }
 
-func writableCgroupDelegation(path string) bool {
+func cgroupDelegationIssue(path string) string {
+	procs, err := os.ReadFile(filepath.Join(path, "cgroup.procs"))
+	if err != nil {
+		return "grant access to the delegated cgroup.procs file"
+	}
+	for _, line := range strings.Fields(string(procs)) {
+		pid, parseErr := strconv.Atoi(line)
+		if parseErr != nil || pid != os.Getpid() {
+			return "place cellbox in a dedicated cgroup containing only the cellbox process before enabling CPU, memory, and PID controllers"
+		}
+	}
+	if !strings.Contains("\n"+strings.TrimSpace(string(procs))+"\n", "\n"+strconv.Itoa(os.Getpid())+"\n") {
+		return "place cellbox in a dedicated cgroup containing only the cellbox process before enabling CPU, memory, and PID controllers"
+	}
 	f, err := os.OpenFile(filepath.Join(path, "cgroup.subtree_control"), os.O_WRONLY, 0)
 	if err != nil {
-		return false
+		return "run cellbox in a systemd service with Delegate=yes so cgroup.subtree_control is writable"
 	}
 	_ = f.Close()
 	child, err := os.MkdirTemp(path, "cellbox-doctor-")
 	if err != nil {
-		return false
+		return "grant permission to create child cgroups in the delegated subtree"
 	}
-	return os.Remove(child) == nil
+	if err := os.Remove(child); err != nil {
+		return "grant permission to remove child cgroups in the delegated subtree"
+	}
+	return ""
 }
