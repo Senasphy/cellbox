@@ -5,7 +5,7 @@ This report records what is still missing from the requested build. The goal rem
 ## Core blockers
 
 - Phase 3 is not accepted: the real-model fix-loop has not been run with a live model, and the Playwright walkthrough has had recent failures. The last known all-green image-page browser run is [39432855214](https://github.com/Senasphy/cellbox/actions/runs/39432855214).
-- Phase 4 is not accepted: the native backend now has an initial `Runtime` with OCI image pull/flatten, namespace/cgroup session creation, bounded command execution, basic stats, and cleanup. It has not passed the shared runtime contract. PTY, file/archive operations, per-process signals and live output streaming, OOM/breach monitoring, disk enforcement, and full cleanup/chaos coverage remain missing or incomplete.
+- Phase 4 is not accepted: the native backend now has an initial `Runtime` with OCI image pull/flatten, namespace/cgroup session creation, bounded command execution, basic stats, cleanup, and root-confined file read/write/list/delete. It has not passed the shared runtime contract. Archive/extract, PTY, per-process signals and live output streaming, OOM/breach monitoring, disk enforcement, and full cleanup/chaos coverage remain missing or incomplete.
 - The Docker backend has no enforced per-session writable-layer disk limit and is not suitable for hostile workloads.
 - Phase 5 egress proxy/policy and the dashboard Network view are not implemented.
 - Phase 6 warm pool, snapshots/fork, and replay are not implemented end to end.

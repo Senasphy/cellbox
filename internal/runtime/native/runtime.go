@@ -243,16 +243,6 @@ func (*execHandle) Signal(context.Context, int) error { return cellruntime.ErrUn
 func (*sandbox) OpenTerminal(context.Context, cellruntime.TerminalRequest) (cellruntime.Terminal, error) {
 	return nil, cellruntime.ErrUnsupported
 }
-func (*sandbox) ReadFile(context.Context, string) (io.ReadCloser, cellruntime.FileInfo, error) {
-	return nil, cellruntime.FileInfo{}, cellruntime.ErrUnsupported
-}
-func (*sandbox) WriteFile(context.Context, string, io.Reader, os.FileMode) error {
-	return cellruntime.ErrUnsupported
-}
-func (*sandbox) DeleteFile(context.Context, string) error { return cellruntime.ErrUnsupported }
-func (*sandbox) ListDir(context.Context, string) ([]cellruntime.FileInfo, error) {
-	return nil, cellruntime.ErrUnsupported
-}
 func (*sandbox) Archive(context.Context, string) (io.ReadCloser, error) {
 	return nil, cellruntime.ErrUnsupported
 }
