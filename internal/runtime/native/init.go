@@ -51,6 +51,12 @@ func RunInit(controlFD, configFD int) error {
 		_ = SendControlMessage(controlFD, ControlMessage{Type: "error", Error: err.Error()})
 		return err
 	}
+	// Install the filter only after namespace and mount setup, then keep the
+	// filtered init alive so any future workload children inherit the policy.
+	if err := InstallDefaultSeccomp(); err != nil {
+		_ = SendControlMessage(controlFD, ControlMessage{Type: "error", Error: err.Error()})
+		return fmt.Errorf("install native seccomp filter: %w", err)
+	}
 	if err := SendControlMessage(controlFD, ControlMessage{Type: "ready", ID: config.SessionID}); err != nil {
 		return err
 	}

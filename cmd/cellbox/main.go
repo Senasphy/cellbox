@@ -510,3 +510,13 @@ func newKeysCommand() *cobra.Command {
 	keys.AddCommand(create, list, revoke)
 	return keys
 }
+	"github.com/senasphy/cellbox/internal/runtime/native"
+	// SpawnInit re-executes this binary under a private argv[0] so namespace init
+	// enters its own control loop instead of the public CLI.
+	if filepath.Base(os.Args[0]) == "cellbox-init" {
+		if err := native.RunInit(3, 4); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
