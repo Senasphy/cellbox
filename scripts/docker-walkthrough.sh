@@ -30,6 +30,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
+echo "walkthrough: starting service"
 "$cellbox_bin" serve --backend docker --data-dir "$work_dir/data" --listen "127.0.0.1:$port" >"$work_dir/server.log" 2>&1 &
 server_pid=$!
 for _ in $(seq 1 100); do
@@ -43,6 +44,7 @@ if ! curl -fsS "$base/healthz" >/dev/null; then
 	exit 1
 fi
 
+echo "walkthrough: creating session"
 api_key=$("$cellbox_bin" keys create docker-walkthrough --data-dir "$work_dir/data")
 session_json=$(curl -fsS "$base/v1/sessions" \
 	-H "Authorization: Bearer $api_key" \
@@ -50,6 +52,7 @@ session_json=$(curl -fsS "$base/v1/sessions" \
 	-d '{"image":"alpine:latest","network_policy":{"mode":"none"}}')
 session_id=$(jq -er '.id' <<<"$session_json")
 
+echo "walkthrough: checking exec stream"
 exec_json=$(curl -fsS -X POST "$base/v1/sessions/$session_id/execs" \
 	-H "Authorization: Bearer $api_key" \
 	-H 'Content-Type: application/json' \
@@ -61,6 +64,7 @@ grep -q 'event: exit' "$work_dir/events"
 grep -q 'Y2VsbGJveC1zdHJlYW0tb2s=' "$work_dir/events"
 grep -q '"exit_code":0' "$work_dir/events"
 
+echo "walkthrough: checking file round trip"
 printf 'cellbox-file-roundtrip\n' >"$work_dir/upload.txt"
 curl -fsS -X PUT "$base/v1/sessions/$session_id/files?path=%2Ftmp%2Fcellbox-upload.txt" \
 	-H "Authorization: Bearer $api_key" \
@@ -72,9 +76,11 @@ curl -fsS "$base/v1/sessions/$session_id/files/list?path=%2Ftmp" \
 curl -fsS "$base/v1/sessions/$session_id/files?path=%2Ftmp%2Fcellbox-upload.txt" \
 	-H "Authorization: Bearer $api_key" -o "$work_dir/download.txt"
 cmp "$work_dir/upload.txt" "$work_dir/download.txt"
+echo "walkthrough: checking terminal"
 shell_output=$(printf 'printf cellbox-shell-ok\nexit\n' | CELLBOX_URL="$base" CELLBOX_KEY="$api_key" "$cellbox_bin" shell "$session_id")
 grep -q 'cellbox-shell-ok' <<<"$shell_output"
 if [[ "${CELLBOX_PYTHON_SDK:-0}" == "1" ]]; then
+	echo "walkthrough: checking Python SDK and examples"
 	CELLBOX_URL="$base" CELLBOX_KEY="$api_key" PYTHONPATH="$repo_root/sdk/python/src" \
 		python3 -m pytest -q "$repo_root/sdk/python/tests" -m integration
 	CELLBOX_URL="$base" CELLBOX_KEY="$api_key" PYTHONPATH="$repo_root/sdk/python/src" \
@@ -85,9 +91,11 @@ if [[ "${CELLBOX_PYTHON_SDK:-0}" == "1" ]]; then
 	done
 fi
 if [[ "${CELLBOX_PLAYWRIGHT:-0}" == "1" ]]; then
+	echo "walkthrough: checking dashboard browser flow"
 	CELLBOX_URL="$base" CELLBOX_KEY="$api_key" npm run test:e2e --prefix "$repo_root/web"
 fi
 curl -fsS -X DELETE "$base/v1/sessions/$session_id" \
 	-H "Authorization: Bearer $api_key" >/dev/null
 session_id=
+echo "walkthrough: all checks passed"
 echo "Docker API walkthrough passed"
