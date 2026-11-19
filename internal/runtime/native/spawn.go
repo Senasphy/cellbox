@@ -159,7 +159,11 @@ func (p *InitProcess) Exec(ctx context.Context, request runtime.ExecRequest, emi
 		if err := json.Unmarshal(message.Payload, &result); err != nil {
 			return empty, fmt.Errorf("decode native workload result: %w", err)
 		}
-		return runtime.ExecResult{ExitCode: result.ExitCode, Signal: result.Signal, DurationMS: result.DurationMS, OutputBytes: result.OutputBytes, Truncated: result.Truncated}, nil
+		execResult := runtime.ExecResult{ExitCode: result.ExitCode, Signal: result.Signal, DurationMS: result.DurationMS, OutputBytes: result.OutputBytes, Truncated: result.Truncated}
+		if result.TimedOut {
+			return execResult, context.DeadlineExceeded
+		}
+		return execResult, nil
 	}
 }
 
@@ -184,6 +188,113 @@ func (p *InitProcess) sendExecSignal(id string, number int) error {
 		return err
 	}
 	return SendControlMessage(int(p.control.Fd()), ControlMessage{Type: "signal", ID: id, Payload: payload})
+}
+
+func (p *InitProcess) OpenTerminal(ctx context.Context, request runtime.TerminalRequest) (runtime.Terminal, error) {
+	p.sendMu.Lock()
+	p.mu.Lock()
+	if p.closed || p.control == nil {
+		p.mu.Unlock()
+		p.sendMu.Unlock()
+		return nil, errors.New("native init process is closed")
+	}
+	if p.active != "" {
+		p.mu.Unlock()
+		p.sendMu.Unlock()
+		return nil, errors.New("native init process already has an active exec")
+	}
+	if err := ctx.Err(); err != nil {
+		p.mu.Unlock()
+		p.sendMu.Unlock()
+		return nil, err
+	}
+	readerFD, err := unix.Dup(int(p.control.Fd()))
+	if err != nil {
+		p.mu.Unlock()
+		p.sendMu.Unlock()
+		return nil, fmt.Errorf("duplicate native control socket: %w", err)
+	}
+	unix.CloseOnExec(readerFD)
+	reader := os.NewFile(uintptr(readerFD), "cellbox-terminal-reader")
+	p.request++
+	id := fmt.Sprintf("terminal-%d", p.request)
+	p.active = id
+	payload, err := json.Marshal(workloadRequest{Argv: []string{"/bin/sh"}, Cwd: request.Cwd, Env: request.Env, TTY: true, Rows: request.Rows, Columns: request.Columns})
+	if err != nil {
+		p.active = ""
+		p.mu.Unlock()
+		p.sendMu.Unlock()
+		_ = reader.Close()
+		return nil, err
+	}
+	control := p.control
+	p.mu.Unlock()
+	if err := SendControlMessage(int(control.Fd()), ControlMessage{Type: "terminal", ID: id, Payload: payload}); err != nil {
+		p.sendMu.Unlock()
+		p.mu.Lock()
+		p.active = ""
+		p.mu.Unlock()
+		_ = reader.Close()
+		return nil, fmt.Errorf("send native terminal request: %w", err)
+	}
+	p.sendMu.Unlock()
+	defer reader.Close()
+	cancelled := false
+	for {
+		if err := ctx.Err(); err != nil && !cancelled {
+			cancelled = true
+			_ = p.sendExecSignal(id, int(syscall.SIGTERM))
+		}
+		fds := []unix.PollFd{{Fd: int32(reader.Fd()), Events: unix.POLLIN | unix.POLLHUP | unix.POLLERR}}
+		ready, pollErr := unix.Poll(fds, 100)
+		if pollErr == unix.EINTR {
+			continue
+		}
+		if pollErr != nil {
+			p.releaseTerminal(id)
+			return nil, fmt.Errorf("wait for native terminal: %w", pollErr)
+		}
+		if ready == 0 {
+			continue
+		}
+		message, files, recvErr := ReceiveControlMessage(int(reader.Fd()))
+		if recvErr != nil {
+			p.releaseTerminal(id)
+			return nil, fmt.Errorf("read native terminal response: %w", recvErr)
+		}
+		if message.ID != id {
+			closeFiles(files)
+			p.releaseTerminal(id)
+			return nil, fmt.Errorf("native terminal response id mismatch: got %q, want %q", message.ID, id)
+		}
+		if message.Type == "error" {
+			closeFiles(files)
+			p.releaseTerminal(id)
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			return nil, errors.New(message.Error)
+		}
+		if message.Type != "terminal_started" || len(files) != 1 {
+			closeFiles(files)
+			p.releaseTerminal(id)
+			return nil, fmt.Errorf("unexpected native terminal response %q with %d descriptors", message.Type, len(files))
+		}
+		if err := ctx.Err(); err != nil {
+			closeFiles(files)
+			p.releaseTerminal(id)
+			return nil, err
+		}
+		return newNativeTerminal(files[0], p, id), nil
+	}
+}
+
+func (p *InitProcess) releaseTerminal(id string) {
+	p.mu.Lock()
+	if p.active == id {
+		p.active = ""
+	}
+	p.mu.Unlock()
 }
 
 // SpawnInit re-execs this binary into the requested namespaces and waits for

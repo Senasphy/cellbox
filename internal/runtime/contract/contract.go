@@ -9,6 +9,7 @@ import (
 	"io"
 	"path"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -272,7 +273,7 @@ func RunBasic(t testing.TB, backend runtime.Runtime, image string) {
 	for range timed.Output() {
 	}
 	timeoutResult, timeoutErr := timed.Wait(ctx)
-	if !errors.Is(timeoutErr, context.DeadlineExceeded) || timeoutResult.Signal != 9 {
+	if !errors.Is(timeoutErr, context.DeadlineExceeded) || (timeoutResult.Signal != int(syscall.SIGTERM) && timeoutResult.Signal != int(syscall.SIGKILL)) {
 		t.Fatalf("timeout result=%+v error=%v", timeoutResult, timeoutErr)
 	}
 	if err := box.Kill(ctx); err != nil {

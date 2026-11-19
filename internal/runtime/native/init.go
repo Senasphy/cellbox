@@ -307,6 +307,11 @@ func controlLoop(fd int) error {
 		defer sendMu.Unlock()
 		return SendControlMessage(fd, message)
 	}
+	sendFiles := func(message ControlMessage, files ...*os.File) error {
+		sendMu.Lock()
+		defer sendMu.Unlock()
+		return SendControlMessage(fd, message, files...)
+	}
 	var activeMu sync.Mutex
 	active := make(map[string]chan int)
 	for {
@@ -349,6 +354,34 @@ func controlLoop(fd int) error {
 				if err != nil {
 					// The worker has gone away; the session cgroup owner will clean up.
 					return
+				}
+			}(message, signals)
+		case "terminal":
+			signals := make(chan int, 1)
+			activeMu.Lock()
+			if _, exists := active[message.ID]; exists {
+				activeMu.Unlock()
+				if err := send(ControlMessage{Type: "error", ID: message.ID, Error: "duplicate active exec id"}); err != nil {
+					return err
+				}
+				continue
+			}
+			active[message.ID] = signals
+			activeMu.Unlock()
+			go func(message ControlMessage, signals <-chan int) {
+				terminalStarted := false
+				_, err := runWorkloadWithCallbacks(message.Payload, nil, signals, func(master *os.File) error {
+					if sendErr := sendFiles(ControlMessage{Type: "terminal_started", ID: message.ID}, master); sendErr != nil {
+						return sendErr
+					}
+					terminalStarted = true
+					return nil
+				})
+				activeMu.Lock()
+				delete(active, message.ID)
+				activeMu.Unlock()
+				if err != nil && !terminalStarted {
+					_ = send(ControlMessage{Type: "error", ID: message.ID, Error: err.Error()})
 				}
 			}(message, signals)
 		case "signal":

@@ -29,6 +29,9 @@ type workloadRequest struct {
 	Argv        []string          `json:"argv"`
 	Cwd         string            `json:"cwd,omitempty"`
 	Env         map[string]string `json:"env,omitempty"`
+	TTY         bool              `json:"tty,omitempty"`
+	Rows        uint16            `json:"rows,omitempty"`
+	Columns     uint16            `json:"columns,omitempty"`
 	TimeoutMS   int               `json:"timeout_ms,omitempty"`
 	OutputLimit int64             `json:"output_limit,omitempty"`
 }
@@ -36,6 +39,7 @@ type workloadRequest struct {
 type workloadResponse struct {
 	ExitCode    int                   `json:"exit_code"`
 	Signal      int                   `json:"signal,omitempty"`
+	TimedOut    bool                  `json:"timed_out,omitempty"`
 	DurationMS  int64                 `json:"duration_ms"`
 	OutputBytes int64                 `json:"output_bytes"`
 	Truncated   bool                  `json:"truncated,omitempty"`
@@ -53,6 +57,10 @@ func runWorkloadStreaming(payload json.RawMessage, emit func(runtime.OutputChunk
 }
 
 func runWorkloadWithSignals(payload json.RawMessage, emit func(runtime.OutputChunk) error, signals <-chan int) (json.RawMessage, error) {
+	return runWorkloadWithCallbacks(payload, emit, signals, nil)
+}
+
+func runWorkloadWithCallbacks(payload json.RawMessage, emit func(runtime.OutputChunk) error, signals <-chan int, onTerminal func(*os.File) error) (json.RawMessage, error) {
 	var request workloadRequest
 	decoder := json.NewDecoder(strings.NewReader(string(payload)))
 	decoder.DisallowUnknownFields()
@@ -106,34 +114,95 @@ func runWorkloadWithSignals(payload json.RawMessage, emit func(runtime.OutputChu
 		execErrorWrite.Close()
 		return nil, fmt.Errorf("encode exec helper request: %w", err)
 	}
+	var master, slave *os.File
+	if request.TTY {
+		if onTerminal == nil {
+			configRead.Close()
+			configWrite.Close()
+			execErrorRead.Close()
+			execErrorWrite.Close()
+			return nil, errors.New("terminal workload has no master descriptor receiver")
+		}
+		master, slave, err = openNativePTY(request.Rows, request.Columns)
+		if err != nil {
+			configRead.Close()
+			configWrite.Close()
+			execErrorRead.Close()
+			execErrorWrite.Close()
+			return nil, err
+		}
+	}
 	command := exec.Command("/proc/self/exe")
 	command.Args = []string{"cellbox-exec"}
 	command.Dir = "/"
 	command.Env = os.Environ()
 	command.ExtraFiles = []*os.File{configRead, execErrorWrite}
-	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if request.TTY {
+		command.Stdin, command.Stdout, command.Stderr = slave, slave, slave
+		command.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true, Ctty: 0}
+	} else {
+		command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	}
 	command.WaitDelay = 2 * time.Second
 	collector := &workloadOutput{limit: outputLimit}
-	command.Stdout = outputStream{collector: collector, stream: "stdout", emit: emit}
-	command.Stderr = outputStream{collector: collector, stream: "stderr", emit: emit}
+	if !request.TTY {
+		command.Stdout = outputStream{collector: collector, stream: "stdout", emit: emit}
+		command.Stderr = outputStream{collector: collector, stream: "stderr", emit: emit}
+	}
 	started := time.Now()
 	if err := command.Start(); err != nil {
 		configRead.Close()
 		configWrite.Close()
 		execErrorRead.Close()
 		execErrorWrite.Close()
+		if master != nil {
+			master.Close()
+			slave.Close()
+		}
 		return nil, fmt.Errorf("start workload: %w", err)
 	}
 	_ = configRead.Close()
 	_ = execErrorWrite.Close()
+	if slave != nil {
+		_ = slave.Close()
+	}
 	if _, err := configWrite.Write(helperRequest); err != nil {
 		_ = configWrite.Close()
 		_ = command.Process.Kill()
 		_ = command.Wait()
 		_ = execErrorRead.Close()
+		if master != nil {
+			_ = master.Close()
+		}
 		return nil, fmt.Errorf("send exec helper request: %w", err)
 	}
 	_ = configWrite.Close()
+	execError, readErr := io.ReadAll(execErrorRead)
+	_ = execErrorRead.Close()
+	if readErr != nil {
+		_ = command.Process.Kill()
+		_ = command.Wait()
+		if master != nil {
+			_ = master.Close()
+		}
+		return nil, fmt.Errorf("read exec helper error: %w", readErr)
+	}
+	if len(execError) > 0 {
+		_ = command.Wait()
+		if master != nil {
+			_ = master.Close()
+		}
+		return nil, fmt.Errorf("exec workload: %s", strings.TrimSpace(string(execError)))
+	}
+	if master != nil {
+		if err := onTerminal(master); err != nil {
+			_ = syscall.Kill(-command.Process.Pid, syscall.SIGKILL)
+			_ = command.Wait()
+			_ = master.Close()
+			return nil, fmt.Errorf("send PTY master descriptor: %w", err)
+		}
+		_ = master.Close()
+	}
 	signalDone := make(chan struct{})
 	signalStopped := make(chan struct{})
 	var processMu sync.Mutex
@@ -177,14 +246,6 @@ func runWorkloadWithSignals(payload json.RawMessage, emit func(runtime.OutputChu
 	} else {
 		err = <-waitResult
 	}
-	execError, readErr := io.ReadAll(execErrorRead)
-	_ = execErrorRead.Close()
-	if readErr != nil {
-		return nil, fmt.Errorf("read exec helper error: %w", readErr)
-	}
-	if len(execError) > 0 {
-		return nil, fmt.Errorf("exec workload: %s", strings.TrimSpace(string(execError)))
-	}
 	processMu.Lock()
 	processRunning = false
 	processMu.Unlock()
@@ -198,6 +259,7 @@ func runWorkloadWithSignals(payload json.RawMessage, emit func(runtime.OutputChu
 	}
 	if timedOut {
 		response.ExitCode = 124
+		response.TimedOut = true
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
 			if status, ok := exitErr.Sys().(syscall.WaitStatus); ok && status.Signaled() {

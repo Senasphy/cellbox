@@ -44,7 +44,7 @@ func NewRuntime(dataDir string, cgroups *CgroupRoot) (*Runtime, error) {
 func (*Runtime) Name() string { return "native" }
 
 func (*Runtime) Capabilities() cellruntime.Capabilities {
-	return cellruntime.Capabilities{CPULimits: true}
+	return cellruntime.Capabilities{CPULimits: true, TTY: true}
 }
 
 func (r *Runtime) EnsureImage(ctx context.Context, reference string) (cellruntime.ImageInfo, error) {
@@ -262,8 +262,15 @@ func (h *execHandle) Signal(ctx context.Context, signal int) error {
 	return h.signal(ctx, signal)
 }
 
-func (*sandbox) OpenTerminal(context.Context, cellruntime.TerminalRequest) (cellruntime.Terminal, error) {
-	return nil, cellruntime.ErrUnsupported
+func (s *sandbox) OpenTerminal(ctx context.Context, request cellruntime.TerminalRequest) (cellruntime.Terminal, error) {
+	s.mu.Lock()
+	if s.done {
+		s.mu.Unlock()
+		return nil, errors.New("native sandbox has been destroyed")
+	}
+	s.mu.Unlock()
+	request.Env = mergeEnv(s.env, request.Env)
+	return s.init.OpenTerminal(ctx, request)
 }
 func (*sandbox) Snapshot(context.Context) (cellruntime.SnapshotInfo, error) {
 	return cellruntime.SnapshotInfo{}, cellruntime.ErrUnsupported

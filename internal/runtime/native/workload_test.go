@@ -4,6 +4,9 @@ package native
 
 import (
 	"encoding/json"
+	"errors"
+	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -11,6 +14,7 @@ import (
 	"time"
 
 	"github.com/senasphy/cellbox/internal/runtime"
+	"golang.org/x/sys/unix"
 )
 
 func TestRunWorkloadCapturesBoundedOutputAndExitStatus(t *testing.T) {
@@ -61,7 +65,7 @@ func TestRunWorkloadKillsTimedOutProcessGroup(t *testing.T) {
 	if err := json.Unmarshal(payload, &result); err != nil {
 		t.Fatal(err)
 	}
-	if result.ExitCode != 124 || result.Signal != int(syscall.SIGTERM) {
+	if result.ExitCode != 124 || result.Signal != int(syscall.SIGTERM) || !result.TimedOut {
 		t.Fatalf("result = %+v", result)
 	}
 }
@@ -125,6 +129,51 @@ func TestRunWorkloadHelperReportsExecFailure(t *testing.T) {
 	}
 	if _, err := runWorkload(request); err == nil {
 		t.Fatal("missing command unexpectedly executed")
+	}
+}
+
+func TestRunWorkloadPTYAttachesControllingTerminal(t *testing.T) {
+	request, err := json.Marshal(workloadRequest{Argv: []string{"/bin/sh", "-c", "printf tty-output"}, TTY: true, Rows: 28, Columns: 96})
+	if err != nil {
+		t.Fatal(err)
+	}
+	output := make(chan string, 1)
+	payload, err := runWorkloadWithCallbacks(request, nil, nil, func(master *os.File) error {
+		fd, err := unix.Dup(int(master.Fd()))
+		if err != nil {
+			return err
+		}
+		reader := os.NewFile(uintptr(fd), "pty-test-reader")
+		go func() {
+			defer reader.Close()
+			var result strings.Builder
+			buffer := make([]byte, 1024)
+			for {
+				n, readErr := reader.Read(buffer)
+				result.Write(buffer[:n])
+				if errors.Is(readErr, unix.EIO) || errors.Is(readErr, io.EOF) {
+					break
+				}
+				if readErr != nil {
+					break
+				}
+			}
+			output <- result.String()
+		}()
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result workloadResponse
+	if err := json.Unmarshal(payload, &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.ExitCode != 0 {
+		t.Fatalf("PTY workload result = %+v", result)
+	}
+	if got := <-output; got != "tty-output" {
+		t.Fatalf("PTY output = %q", got)
 	}
 }
 
