@@ -60,7 +60,7 @@ func TestRunWorkloadKillsTimedOutProcessGroup(t *testing.T) {
 	if err := json.Unmarshal(payload, &result); err != nil {
 		t.Fatal(err)
 	}
-	if result.ExitCode != 124 || result.Signal != int(syscall.SIGKILL) {
+	if result.ExitCode != 124 || result.Signal != int(syscall.SIGTERM) {
 		t.Fatalf("result = %+v", result)
 	}
 }

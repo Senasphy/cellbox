@@ -3,7 +3,6 @@
 package native
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -88,25 +87,13 @@ func runWorkloadWithSignals(payload json.RawMessage, emit func(runtime.OutputChu
 		return nil, fmt.Errorf("workload output limit must be between 0 and %d bytes", maxWorkloadOutput)
 	}
 
-	ctx := context.Background()
-	cancel := func() {}
-	if request.TimeoutMS > 0 {
-		ctx, cancel = context.WithTimeout(ctx, time.Duration(request.TimeoutMS)*time.Millisecond)
-	}
-	defer cancel()
-	command := exec.CommandContext(ctx, request.Argv[0], request.Argv[1:]...)
+	command := exec.Command(request.Argv[0], request.Argv[1:]...)
 	command.Dir = request.Cwd
 	command.Env = os.Environ()
 	for key, value := range request.Env {
 		command.Env = append(command.Env, key+"="+value)
 	}
 	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	command.Cancel = func() error {
-		if command.Process == nil {
-			return os.ErrProcessDone
-		}
-		return syscall.Kill(-command.Process.Pid, syscall.SIGKILL)
-	}
 	command.WaitDelay = 2 * time.Second
 	collector := &workloadOutput{limit: outputLimit}
 	command.Stdout = outputStream{collector: collector, stream: "stdout", emit: emit}
@@ -135,7 +122,30 @@ func runWorkloadWithSignals(payload json.RawMessage, emit func(runtime.OutputChu
 			}
 		}(command.Process.Pid)
 	}
-	err := command.Wait()
+	waitResult := make(chan error, 1)
+	go func() { waitResult <- command.Wait() }()
+	var err error
+	timedOut := false
+	if request.TimeoutMS > 0 {
+		timer := time.NewTimer(time.Duration(request.TimeoutMS) * time.Millisecond)
+		select {
+		case err = <-waitResult:
+			timer.Stop()
+		case <-timer.C:
+			timedOut = true
+			_ = syscall.Kill(-command.Process.Pid, syscall.SIGTERM)
+			grace := time.NewTimer(2 * time.Second)
+			select {
+			case err = <-waitResult:
+				grace.Stop()
+			case <-grace.C:
+				_ = syscall.Kill(-command.Process.Pid, syscall.SIGKILL)
+				err = <-waitResult
+			}
+		}
+	} else {
+		err = <-waitResult
+	}
 	processMu.Lock()
 	processRunning = false
 	processMu.Unlock()
@@ -147,11 +157,16 @@ func runWorkloadWithSignals(payload json.RawMessage, emit func(runtime.OutputChu
 	if emit == nil {
 		response.Chunks = collector.chunks
 	}
-	if err == nil {
-		response.ExitCode = 0
-	} else if ctx.Err() != nil {
+	if timedOut {
 		response.ExitCode = 124
-		response.Signal = int(syscall.SIGKILL)
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			if status, ok := exitErr.Sys().(syscall.WaitStatus); ok && status.Signaled() {
+				response.Signal = int(status.Signal())
+			}
+		}
+	} else if err == nil {
+		response.ExitCode = 0
 	} else {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
