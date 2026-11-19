@@ -152,6 +152,7 @@ func (c *SessionCgroup) Stats() (runtime.Stats, error) {
 	}
 	defer file.Close()
 	scanner := bufio.NewScanner(file)
+	foundCPU := false
 	for scanner.Scan() {
 		fields := strings.Fields(scanner.Text())
 		if len(fields) == 2 && fields[0] == "usage_usec" {
@@ -160,13 +161,43 @@ func (c *SessionCgroup) Stats() (runtime.Stats, error) {
 				return stats, fmt.Errorf("parse cgroup CPU usage: %w", parseErr)
 			}
 			stats.CPUUsageNS = usage * 1000
-			return stats, nil
+			foundCPU = true
 		}
 	}
 	if err := scanner.Err(); err != nil {
 		return stats, fmt.Errorf("read cgroup cpu.stat: %w", err)
 	}
-	return stats, errors.New("cgroup cpu.stat has no usage_usec counter")
+	if !foundCPU {
+		return stats, errors.New("cgroup cpu.stat has no usage_usec counter")
+	}
+	ioStats, err := os.ReadFile(filepath.Join(c.path, "io.stat"))
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return stats, fmt.Errorf("read cgroup io.stat: %w", err)
+	}
+	if err == nil {
+		for _, line := range strings.Split(string(ioStats), "\n") {
+			fields := strings.Fields(line)
+			if len(fields) < 2 {
+				continue
+			}
+			for _, field := range fields[1:] {
+				key, value, ok := strings.Cut(field, "=")
+				if !ok || (key != "rbytes" && key != "wbytes") {
+					continue
+				}
+				count, parseErr := strconv.ParseUint(value, 10, 64)
+				if parseErr != nil {
+					return stats, fmt.Errorf("parse cgroup io.stat %s: %w", key, parseErr)
+				}
+				if key == "rbytes" {
+					stats.IOReadBytes += count
+				} else {
+					stats.IOWriteBytes += count
+				}
+			}
+		}
+	}
+	return stats, nil
 }
 
 // Kill terminates every process in the session cgroup.

@@ -31,7 +31,12 @@ func TestCreateSessionCgroupWritesLimitsAndStats(t *testing.T) {
 			t.Fatalf("%s = %q, err=%v; want %q", file, got, err, want)
 		}
 	}
-	for file, value := range map[string]string{"memory.current": "1234", "pids.current": "7", "cpu.stat": "usage_usec 99\nuser_usec 10\n"} {
+	for file, value := range map[string]string{
+		"memory.current": "1234",
+		"pids.current":   "7",
+		"cpu.stat":       "usage_usec 99\nuser_usec 10\n",
+		"io.stat":        "8:0 rbytes=100 wbytes=200 rios=3 wios=4\n8:16 rbytes=50 wbytes=70\n",
+	} {
 		if err := os.WriteFile(filepath.Join(parent, "ses_test", file), []byte(value), 0600); err != nil {
 			t.Fatal(err)
 		}
@@ -40,7 +45,7 @@ func TestCreateSessionCgroupWritesLimitsAndStats(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stats.MemoryBytes != 1234 || stats.PIDs != 7 || stats.CPUUsageNS != 99_000 {
+	if stats.MemoryBytes != 1234 || stats.PIDs != 7 || stats.CPUUsageNS != 99_000 || stats.IOReadBytes != 150 || stats.IOWriteBytes != 270 {
 		t.Fatalf("stats = %+v", stats)
 	}
 	if err := cgroup.UpdateLimits(runtime.Limits{CPUMillicores: 1200, MemoryMB: 512, PIDs: 64}); err != nil {
