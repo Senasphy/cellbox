@@ -198,6 +198,35 @@ func failStartedInit(command *exec.Cmd, control *os.File, cause error, stderr *b
 	return cause
 }
 
+// Kill terminates init; Linux tears down the remaining PID namespace tasks with it.
+func (p *InitProcess) Kill() error {
+	if p == nil {
+		return nil
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.closed || p.cmd == nil || p.cmd.Process == nil {
+		return nil
+	}
+	err := p.cmd.Process.Kill()
+	if err != nil && !errors.Is(err, os.ErrProcessDone) {
+		return fmt.Errorf("kill native init: %w", err)
+	}
+	waitErr := p.cmd.Wait()
+	p.closed = true
+	if p.control != nil {
+		_ = p.control.Close()
+		p.control = nil
+	}
+	if waitErr != nil {
+		var exitErr *exec.ExitError
+		if !errors.As(waitErr, &exitErr) {
+			return fmt.Errorf("reap native init: %w", waitErr)
+		}
+	}
+	return nil
+}
+
 // Shutdown asks init to exit and reaps the child.
 func (p *InitProcess) Shutdown(ctx context.Context) error {
 	if p == nil {

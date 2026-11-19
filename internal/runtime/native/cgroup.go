@@ -4,12 +4,14 @@ package native
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/senasphy/cellbox/internal/runtime"
 )
@@ -20,6 +22,25 @@ const cgroupPeriod = 100_000
 type CgroupRoot struct {
 	path        string
 	controllers []string
+}
+
+// CurrentCgroupPath returns this process's unified cgroup-v2 directory.
+func CurrentCgroupPath() (string, error) {
+	contents, err := os.ReadFile("/proc/self/cgroup")
+	if err != nil {
+		return "", fmt.Errorf("read process cgroup membership: %w", err)
+	}
+	for _, line := range strings.Split(string(contents), "\n") {
+		if !strings.HasPrefix(line, "0::") {
+			continue
+		}
+		relative := strings.TrimPrefix(line, "0::")
+		if !filepath.IsAbs(relative) || filepath.Clean(relative) != relative {
+			return "", fmt.Errorf("invalid unified cgroup path %q", relative)
+		}
+		return filepath.Join("/sys/fs/cgroup", strings.TrimPrefix(relative, string(filepath.Separator))), nil
+	}
+	return "", errors.New("unified cgroup-v2 membership not found")
 }
 
 // InitializeCgroupRoot moves the service process into a leaf and enables delegated controllers.
@@ -162,6 +183,36 @@ func (c *SessionCgroup) Destroy() error {
 		return fmt.Errorf("remove session cgroup: %w", err)
 	}
 	return nil
+}
+
+// WaitEmpty waits until cgroup v2 reports that no task remains in the session.
+func (c *SessionCgroup) WaitEmpty(ctx context.Context) error {
+	ticker := time.NewTicker(20 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		contents, err := os.ReadFile(filepath.Join(c.path, "cgroup.events"))
+		if err != nil {
+			return fmt.Errorf("read session cgroup events: %w", err)
+		}
+		found := false
+		for _, line := range strings.Split(string(contents), "\n") {
+			fields := strings.Fields(line)
+			if len(fields) == 2 && fields[0] == "populated" {
+				found = true
+				if fields[1] == "0" {
+					return nil
+				}
+			}
+		}
+		if !found {
+			return errors.New("session cgroup events has no populated field")
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
 }
 
 func writeCgroupValue(dir, file, value string) error {

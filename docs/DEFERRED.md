@@ -5,7 +5,7 @@ This report records what is still missing from the requested build. The goal rem
 ## Core blockers
 
 - Phase 3 is not accepted: the real-model fix-loop has not been run with a live model, and the Playwright walkthrough has had recent failures. The last known all-green image-page browser run is [39432855214](https://github.com/Senasphy/cellbox/actions/runs/39432855214).
-- Phase 4 is not accepted: the native backend still has no `Runtime` implementation or workload supervisor. The namespace init entry point installs seccomp and can run a bounded command over its control channel, but that primitive is not integrated with the session API. Image pull/flatten, PTY, sandbox file operations, OOM/breach monitoring, and cleanup orchestration remain missing or incomplete.
+- Phase 4 is not accepted: the native backend now has an initial `Runtime` with OCI image pull/flatten, namespace/cgroup session creation, bounded command execution, basic stats, and cleanup. It has not passed the shared runtime contract. PTY, file/archive operations, per-process signals and live output streaming, OOM/breach monitoring, disk enforcement, and full cleanup/chaos coverage remain missing or incomplete.
 - The Docker backend has no enforced per-session writable-layer disk limit and is not suitable for hostile workloads.
 - Phase 5 egress proxy/policy and the dashboard Network view are not implemented.
 - Phase 6 warm pool, snapshots/fork, and replay are not implemented end to end.
@@ -21,4 +21,4 @@ This report records what is still missing from the requested build. The goal rem
 
 ## Recently repaired core wiring
 
-`SpawnInit` re-executes the service binary as `cellbox-init`. The existing `cmd/cellbox/native_init.go` hook dispatches that argv[0] to `RunInit`; init installs the default seccomp filter after its mount setup and before reporting ready. A bounded exec request now runs inside init and returns capped stdout/stderr chunks and process status. Focused package checks and a static Linux amd64 build passed locally. This does not provide a native Runtime adapter or constitute native-runtime acceptance.
+`SpawnInit` re-executes the service binary as `cellbox-init`. The existing `cmd/cellbox/native_init.go` hook dispatches that argv[0] to `RunInit`; init installs the default seccomp filter after its mount setup and before reporting ready. The init now serves bounded exec requests. A native Runtime creates overlay-backed sessions under per-session cgroups, pulls and flattens host-architecture OCI images, and supports command execution, stats, limit updates, kill, and destroy. Focused image/runtime package checks, vet, and a static Linux amd64 build pass locally. Native acceptance remains unproven because the shared contract and security/resource suites cannot run without a fully delegated host cgroup and the other features listed above.

@@ -27,6 +27,7 @@ import (
 	"github.com/senasphy/cellbox/internal/reconcile"
 	"github.com/senasphy/cellbox/internal/runtime"
 	dockerruntime "github.com/senasphy/cellbox/internal/runtime/docker"
+	nativeruntime "github.com/senasphy/cellbox/internal/runtime/native"
 	sqlitestore "github.com/senasphy/cellbox/internal/store/sqlite"
 	"github.com/spf13/cobra"
 )
@@ -130,8 +131,22 @@ func newRoot() *cobra.Command {
 			logger.Warn("service is bound to a non-loopback address without TLS")
 		}
 		var runtimeBackend runtime.Runtime
-		if cfg.Backend == "docker" {
+		switch cfg.Backend {
+		case "docker":
 			runtimeBackend = dockerruntime.New(cfg.DockerSocket)
+		case "native":
+			cgroupPath, cgroupErr := nativeruntime.CurrentCgroupPath()
+			if cgroupErr != nil {
+				return fmt.Errorf("locate delegated cgroup: %w", cgroupErr)
+			}
+			cgroups, cgroupErr := nativeruntime.InitializeCgroupRoot(cgroupPath, os.Getpid())
+			if cgroupErr != nil {
+				return fmt.Errorf("initialize native cgroups: %w", cgroupErr)
+			}
+			runtimeBackend, cgroupErr = nativeruntime.NewRuntime(cfg.DataDir, cgroups)
+			if cgroupErr != nil {
+				return fmt.Errorf("initialize native runtime: %w", cgroupErr)
+			}
 		}
 		reconcileCtx, reconcileCancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		if err = reconcile.Startup(reconcileCtx, runtimeBackend, db); err != nil {
