@@ -26,20 +26,41 @@ type InitProcess struct {
 	control *os.File
 	stderr  *bytes.Buffer
 	mu      sync.Mutex
+	sendMu  sync.Mutex
 	closed  bool
 	request uint64
+	active  string
 }
 
 // Exec launches one workload command inside the namespace, streams bounded output
 // chunks through emit, and returns the final status.
-func (p *InitProcess) Exec(ctx context.Context, request runtime.ExecRequest, emit func(runtime.OutputChunk) error) (runtime.ExecResult, error) {
+func (p *InitProcess) Exec(ctx context.Context, request runtime.ExecRequest, emit func(runtime.OutputChunk) error, signals <-chan int) (runtime.ExecResult, error) {
+	p.sendMu.Lock()
 	p.mu.Lock()
-	defer p.mu.Unlock()
 	var empty runtime.ExecResult
 	if p.closed || p.control == nil {
+		p.mu.Unlock()
+		p.sendMu.Unlock()
 		return empty, errors.New("native init process is closed")
 	}
+	readerFD, err := unix.Dup(int(p.control.Fd()))
+	if err != nil {
+		p.mu.Unlock()
+		p.sendMu.Unlock()
+		return empty, fmt.Errorf("duplicate native control socket: %w", err)
+	}
+	unix.CloseOnExec(readerFD)
+	reader := os.NewFile(uintptr(readerFD), "cellbox-init-reader")
+	if p.active != "" {
+		_ = reader.Close()
+		p.mu.Unlock()
+		p.sendMu.Unlock()
+		return empty, errors.New("native init process already has an active exec")
+	}
 	if err := ctx.Err(); err != nil {
+		_ = reader.Close()
+		p.mu.Unlock()
+		p.sendMu.Unlock()
 		return empty, err
 	}
 	args := append([]string(nil), request.Argv...)
@@ -48,22 +69,55 @@ func (p *InitProcess) Exec(ctx context.Context, request runtime.ExecRequest, emi
 	}
 	payload, err := json.Marshal(workloadRequest{Argv: args, Cwd: request.Cwd, Env: request.Env, TimeoutMS: request.TimeoutMS, OutputLimit: request.OutputLimit})
 	if err != nil {
+		_ = reader.Close()
+		p.mu.Unlock()
+		p.sendMu.Unlock()
 		return empty, fmt.Errorf("encode native workload request: %w", err)
 	}
 	p.request++
 	id := fmt.Sprintf("exec-%d", p.request)
+	p.active = id
+	p.mu.Unlock()
 	if err := SendControlMessage(int(p.control.Fd()), ControlMessage{Type: "exec", ID: id, Payload: payload}); err != nil {
+		p.sendMu.Unlock()
+		p.mu.Lock()
+		p.active = ""
+		p.mu.Unlock()
 		return empty, fmt.Errorf("send native workload request: %w", err)
 	}
+	p.sendMu.Unlock()
+	defer reader.Close()
+	defer func() {
+		p.mu.Lock()
+		if p.active == id {
+			p.active = ""
+		}
+		p.mu.Unlock()
+	}()
 	for {
+		select {
+		case number := <-signals:
+			if err := p.sendExecSignal(id, number); err != nil {
+				return empty, err
+			}
+		default:
+		}
 		if err := ctx.Err(); err != nil {
+			p.sendMu.Lock()
+			p.mu.Lock()
+			p.closed = true
+			control := p.control
+			p.control = nil
+			p.mu.Unlock()
+			if control != nil {
+				_ = control.Close()
+			}
+			p.sendMu.Unlock()
 			_ = p.cmd.Process.Kill()
 			_ = p.cmd.Wait()
-			p.closed = true
-			_ = p.control.Close()
 			return empty, err
 		}
-		fds := []unix.PollFd{{Fd: int32(p.control.Fd()), Events: unix.POLLIN | unix.POLLHUP | unix.POLLERR}}
+		fds := []unix.PollFd{{Fd: int32(reader.Fd()), Events: unix.POLLIN | unix.POLLHUP | unix.POLLERR}}
 		ready, pollErr := unix.Poll(fds, 100)
 		if pollErr == unix.EINTR {
 			continue
@@ -74,7 +128,7 @@ func (p *InitProcess) Exec(ctx context.Context, request runtime.ExecRequest, emi
 		if ready == 0 {
 			continue
 		}
-		message, files, recvErr := ReceiveControlMessage(int(p.control.Fd()))
+		message, files, recvErr := ReceiveControlMessage(int(reader.Fd()))
 		closeFiles(files)
 		if recvErr != nil {
 			return empty, fmt.Errorf("read native workload result: %w", recvErr)
@@ -107,6 +161,29 @@ func (p *InitProcess) Exec(ctx context.Context, request runtime.ExecRequest, emi
 		}
 		return runtime.ExecResult{ExitCode: result.ExitCode, Signal: result.Signal, DurationMS: result.DurationMS, OutputBytes: result.OutputBytes, Truncated: result.Truncated}, nil
 	}
+}
+
+func (p *InitProcess) sendExecSignal(id string, number int) error {
+	if number < 1 || number > 64 {
+		return fmt.Errorf("signal number %d is outside 1..64", number)
+	}
+	p.sendMu.Lock()
+	defer p.sendMu.Unlock()
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.closed || p.control == nil {
+		return errors.New("native init process is closed")
+	}
+	if id == "" || p.active != id {
+		return errors.New("native init process has no active exec")
+	}
+	payload, err := json.Marshal(struct {
+		Signal int `json:"signal"`
+	}{Signal: number})
+	if err != nil {
+		return err
+	}
+	return SendControlMessage(int(p.control.Fd()), ControlMessage{Type: "signal", ID: id, Payload: payload})
 }
 
 // SpawnInit re-execs this binary into the requested namespaces and waits for
@@ -217,6 +294,8 @@ func (p *InitProcess) Kill() error {
 	if p == nil {
 		return nil
 	}
+	p.sendMu.Lock()
+	defer p.sendMu.Unlock()
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.closed || p.cmd == nil || p.cmd.Process == nil {
@@ -246,6 +325,8 @@ func (p *InitProcess) Shutdown(ctx context.Context) error {
 	if p == nil {
 		return nil
 	}
+	p.sendMu.Lock()
+	defer p.sendMu.Unlock()
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.cmd == nil || p.control == nil || p.closed {

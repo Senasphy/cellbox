@@ -45,10 +45,14 @@ type workloadResponse struct {
 // runWorkload executes one validated command inside the already-pivoted root.
 // Output is capped before it enters the control channel.
 func runWorkload(payload json.RawMessage) (json.RawMessage, error) {
-	return runWorkloadStreaming(payload, nil)
+	return runWorkloadWithSignals(payload, nil, nil)
 }
 
 func runWorkloadStreaming(payload json.RawMessage, emit func(runtime.OutputChunk) error) (json.RawMessage, error) {
+	return runWorkloadWithSignals(payload, emit, nil)
+}
+
+func runWorkloadWithSignals(payload json.RawMessage, emit func(runtime.OutputChunk) error, signals <-chan int) (json.RawMessage, error) {
 	var request workloadRequest
 	decoder := json.NewDecoder(strings.NewReader(string(payload)))
 	decoder.DisallowUnknownFields()
@@ -103,11 +107,42 @@ func runWorkloadStreaming(payload json.RawMessage, emit func(runtime.OutputChunk
 		}
 		return syscall.Kill(-command.Process.Pid, syscall.SIGKILL)
 	}
+	command.WaitDelay = 2 * time.Second
 	collector := &workloadOutput{limit: outputLimit}
 	command.Stdout = outputStream{collector: collector, stream: "stdout", emit: emit}
 	command.Stderr = outputStream{collector: collector, stream: "stderr", emit: emit}
 	started := time.Now()
-	err := command.Run()
+	if err := command.Start(); err != nil {
+		return nil, fmt.Errorf("start workload: %w", err)
+	}
+	signalDone := make(chan struct{})
+	signalStopped := make(chan struct{})
+	var processMu sync.Mutex
+	processRunning := true
+	if signals != nil {
+		go func(pid int) {
+			defer close(signalStopped)
+			select {
+			case number := <-signals:
+				if number > 0 && number < 65 {
+					processMu.Lock()
+					if processRunning {
+						_ = syscall.Kill(-pid, syscall.Signal(number))
+					}
+					processMu.Unlock()
+				}
+			case <-signalDone:
+			}
+		}(command.Process.Pid)
+	}
+	err := command.Wait()
+	processMu.Lock()
+	processRunning = false
+	processMu.Unlock()
+	close(signalDone)
+	if signals != nil {
+		<-signalStopped
+	}
 	response := workloadResponse{DurationMS: time.Since(started).Milliseconds(), OutputBytes: collector.total, Truncated: collector.truncated}
 	if emit == nil {
 		response.Chunks = collector.chunks

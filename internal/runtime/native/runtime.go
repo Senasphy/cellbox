@@ -183,12 +183,29 @@ func (s *sandbox) Exec(ctx context.Context, request cellruntime.ExecRequest) (ce
 		return nil, err
 	}
 	request.Env = mergeEnv(s.env, request.Env)
+	signals := make(chan int, 8)
 	handle := &execHandle{output: make(chan cellruntime.OutputChunk, 32), done: make(chan struct{})}
+	handle.signal = func(ctx context.Context, number int) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if number < 1 || number > 64 {
+			return fmt.Errorf("signal number %d is outside 1..64", number)
+		}
+		select {
+		case <-handle.done:
+			return errors.New("exec is no longer running")
+		case signals <- number:
+			return nil
+		default:
+			return errors.New("too many pending signals for exec")
+		}
+	}
 	go func() {
 		result, err := s.init.Exec(context.Background(), request, func(chunk cellruntime.OutputChunk) error {
 			handle.output <- chunk
 			return nil
-		})
+		}, signals)
 		close(handle.output)
 		handle.result, handle.err = result, err
 		close(handle.done)
@@ -224,6 +241,7 @@ func mergeEnv(base, override map[string]string) map[string]string {
 type execHandle struct {
 	output chan cellruntime.OutputChunk
 	done   chan struct{}
+	signal func(context.Context, int) error
 	result cellruntime.ExecResult
 	err    error
 }
@@ -237,7 +255,12 @@ func (h *execHandle) Wait(ctx context.Context) (cellruntime.ExecResult, error) {
 		return cellruntime.ExecResult{}, ctx.Err()
 	}
 }
-func (*execHandle) Signal(context.Context, int) error { return cellruntime.ErrUnsupported }
+func (h *execHandle) Signal(ctx context.Context, signal int) error {
+	if h.signal == nil {
+		return cellruntime.ErrUnsupported
+	}
+	return h.signal(ctx, signal)
+}
 
 func (*sandbox) OpenTerminal(context.Context, cellruntime.TerminalRequest) (cellruntime.Terminal, error) {
 	return nil, cellruntime.ErrUnsupported

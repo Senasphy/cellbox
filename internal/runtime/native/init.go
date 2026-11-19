@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/senasphy/cellbox/internal/runtime"
 	"golang.org/x/sys/unix"
@@ -300,6 +301,14 @@ func dropCapabilities() error {
 }
 
 func controlLoop(fd int) error {
+	var sendMu sync.Mutex
+	send := func(message ControlMessage) error {
+		sendMu.Lock()
+		defer sendMu.Unlock()
+		return SendControlMessage(fd, message)
+	}
+	var activeMu sync.Mutex
+	active := make(map[string]chan int)
 	for {
 		message, files, err := ReceiveControlMessage(fd)
 		closeFiles(files)
@@ -308,26 +317,59 @@ func controlLoop(fd int) error {
 		}
 		switch message.Type {
 		case "shutdown":
-			return SendControlMessage(fd, ControlMessage{Type: "stopped", ID: message.ID})
+			return send(ControlMessage{Type: "stopped", ID: message.ID})
 		case "exec":
-			result, err := runWorkloadStreaming(message.Payload, func(chunk runtime.OutputChunk) error {
-				payload, marshalErr := json.Marshal(chunk)
-				if marshalErr != nil {
-					return marshalErr
-				}
-				return SendControlMessage(fd, ControlMessage{Type: "exec_output", ID: message.ID, Payload: payload})
-			})
-			if err != nil {
-				if sendErr := SendControlMessage(fd, ControlMessage{Type: "error", ID: message.ID, Error: err.Error()}); sendErr != nil {
-					return sendErr
+			signals := make(chan int, 1)
+			activeMu.Lock()
+			if _, exists := active[message.ID]; exists {
+				activeMu.Unlock()
+				if err := send(ControlMessage{Type: "error", ID: message.ID, Error: "duplicate active exec id"}); err != nil {
+					return err
 				}
 				continue
 			}
-			if err := SendControlMessage(fd, ControlMessage{Type: "exec_done", ID: message.ID, Payload: result}); err != nil {
-				return err
+			active[message.ID] = signals
+			activeMu.Unlock()
+			go func(message ControlMessage, signals <-chan int) {
+				result, err := runWorkloadWithSignals(message.Payload, func(chunk runtime.OutputChunk) error {
+					payload, marshalErr := json.Marshal(chunk)
+					if marshalErr != nil {
+						return marshalErr
+					}
+					return send(ControlMessage{Type: "exec_output", ID: message.ID, Payload: payload})
+				}, signals)
+				activeMu.Lock()
+				delete(active, message.ID)
+				activeMu.Unlock()
+				if err != nil {
+					err = send(ControlMessage{Type: "error", ID: message.ID, Error: err.Error()})
+				} else {
+					err = send(ControlMessage{Type: "exec_done", ID: message.ID, Payload: result})
+				}
+				if err != nil {
+					// The worker has gone away; the session cgroup owner will clean up.
+					return
+				}
+			}(message, signals)
+		case "signal":
+			var request struct {
+				Signal int `json:"signal"`
+			}
+			if err := json.Unmarshal(message.Payload, &request); err != nil || request.Signal < 1 || request.Signal > 64 {
+				continue
+			}
+			activeMu.Lock()
+			signals := active[message.ID]
+			activeMu.Unlock()
+			if signals == nil {
+				continue
+			}
+			select {
+			case signals <- request.Signal:
+			default:
 			}
 		default:
-			if err := SendControlMessage(fd, ControlMessage{Type: "error", ID: message.ID, Error: "unsupported init request: " + message.Type}); err != nil {
+			if err := send(ControlMessage{Type: "error", ID: message.ID, Error: "unsupported init request: " + message.Type}); err != nil {
 				return err
 			}
 		}

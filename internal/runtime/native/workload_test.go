@@ -7,6 +7,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/senasphy/cellbox/internal/runtime"
 )
@@ -86,5 +87,26 @@ func TestRunWorkloadStreamsOutputWithoutBufferingResponseChunks(t *testing.T) {
 	}
 	if len(result.Chunks) != 0 || result.OutputBytes != int64(len("outerr")) {
 		t.Fatalf("streaming response retained chunks: %+v", result)
+	}
+}
+
+func TestRunWorkloadSignalsProcessGroup(t *testing.T) {
+	request, err := json.Marshal(workloadRequest{Argv: []string{"/bin/sleep", "5"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	signals := make(chan int, 1)
+	timer := time.AfterFunc(50*time.Millisecond, func() { signals <- int(syscall.SIGTERM) })
+	defer timer.Stop()
+	payload, err := runWorkloadWithSignals(request, nil, signals)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result workloadResponse
+	if err := json.Unmarshal(payload, &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Signal != int(syscall.SIGTERM) {
+		t.Fatalf("signal result = %+v", result)
 	}
 }
