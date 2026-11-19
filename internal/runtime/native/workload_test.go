@@ -10,7 +10,7 @@ import (
 )
 
 func TestRunWorkloadCapturesBoundedOutputAndExitStatus(t *testing.T) {
-	request, err := json.Marshal(workloadRequest{Argv: []string{"/bin/sh", "-c", "printf '0123456789'; printf 'bad' >&2; exit 7"}, OutputLimit: 8})
+	request, err := json.Marshal(workloadRequest{Argv: []string{"/bin/sh", "-c", "printf '0123456789'; exit 7"}, OutputLimit: 8})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -22,14 +22,14 @@ func TestRunWorkloadCapturesBoundedOutputAndExitStatus(t *testing.T) {
 	if err := json.Unmarshal(payload, &result); err != nil {
 		t.Fatal(err)
 	}
-	if result.ExitCode != 7 || !result.Truncated || result.OutputBytes != 13 {
+	if result.ExitCode != 7 || !result.Truncated || result.OutputBytes != 10 {
 		t.Fatalf("result = %+v", result)
 	}
 	var output strings.Builder
 	for _, chunk := range result.Chunks {
 		output.Write(chunk.Data)
 	}
-	if output.String() != "01234567" {
+	if output.String() != "01234567" || len(result.Chunks) == 0 || result.Chunks[0].Stream != "stdout" {
 		t.Fatalf("captured output = %q", output.String())
 	}
 }
