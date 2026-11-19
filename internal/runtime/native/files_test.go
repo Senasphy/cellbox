@@ -6,6 +6,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -43,6 +44,50 @@ func TestSandboxFilePathStaysInsideRoot(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(outside, "pwn")); !os.IsNotExist(err) {
 		t.Fatalf("wrote outside the sandbox: %v", err)
 	}
+}
+
+func TestNativeFileReadsRejectSpecialFilesAndWritesAreAtomic(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "value"), []byte("original"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := unix.Mkfifo(filepath.Join(root, "pipe"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	rootFD, err := unix.Open(root, unix.O_PATH|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unix.Close(rootFD)
+
+	if fd, _, err := openSandboxRegularRead(rootFD, "pipe"); err == nil {
+		unix.Close(fd)
+		t.Fatal("accepted a FIFO as a regular file")
+	}
+	reader := errorAfterBytes{}
+	if err := writeSandboxFileAtomic(rootFD, "value", reader, 0644); !errors.Is(err, errTestRead) {
+		t.Fatalf("write error = %v", err)
+	}
+	got, err := os.ReadFile(filepath.Join(root, "value"))
+	if err != nil || string(got) != "original" {
+		t.Fatalf("existing file after failed write = %q, err = %v", got, err)
+	}
+	if err := writeSandboxFileAtomic(rootFD, "value", bytes.NewBufferString("updated"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	got, err = os.ReadFile(filepath.Join(root, "value"))
+	if err != nil || string(got) != "updated" {
+		t.Fatalf("existing file after successful write = %q, err = %v", got, err)
+	}
+}
+
+var errTestRead = errors.New("test reader failure")
+
+type errorAfterBytes struct{}
+
+func (errorAfterBytes) Read(buffer []byte) (int, error) {
+	copy(buffer, "partial")
+	return len("partial"), errTestRead
 }
 
 func TestNativeArchiveExtractAndValidateBeforeWriting(t *testing.T) {

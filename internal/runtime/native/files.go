@@ -5,6 +5,8 @@ package native
 import (
 	"archive/tar"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -20,6 +22,7 @@ import (
 )
 
 const maxNativeDirectoryEntries = 100_000
+const maxNativeFileBytes = int64(256 << 20)
 const maxNativeArchiveBytes = int64(512 << 20)
 const maxNativeExpandedArchiveBytes = int64(20 << 30)
 
@@ -72,18 +75,34 @@ func (s *sandbox) ReadFile(ctx context.Context, value string) (io.ReadCloser, ce
 		return nil, cellruntime.FileInfo{}, err
 	}
 	defer unix.Close(rootFD)
-	fd, err := openSandboxPath(rootFD, relative, unix.O_RDONLY, 0)
+	fd, stat, err := openSandboxRegularRead(rootFD, relative)
 	if err != nil {
 		return nil, cellruntime.FileInfo{}, fmt.Errorf("open sandbox file %s: %w", clean, err)
-	}
-	var stat unix.Stat_t
-	if err := unix.Fstat(fd, &stat); err != nil {
-		unix.Close(fd)
-		return nil, cellruntime.FileInfo{}, err
 	}
 	file := os.NewFile(uintptr(fd), clean)
 	mode := nativeFileMode(stat.Mode)
 	return file, cellruntime.FileInfo{Path: clean, Size: stat.Size, Mode: mode, IsDir: mode.IsDir()}, nil
+}
+
+func openSandboxRegularRead(rootFD int, relative string) (int, unix.Stat_t, error) {
+	fd, err := openSandboxPath(rootFD, relative, unix.O_RDONLY|unix.O_NONBLOCK, 0)
+	if err != nil {
+		return -1, unix.Stat_t{}, err
+	}
+	var stat unix.Stat_t
+	if err := unix.Fstat(fd, &stat); err != nil {
+		unix.Close(fd)
+		return -1, unix.Stat_t{}, err
+	}
+	if stat.Mode&unix.S_IFMT != unix.S_IFREG {
+		unix.Close(fd)
+		return -1, unix.Stat_t{}, errors.New("sandbox path is not a regular file")
+	}
+	if stat.Size < 0 || stat.Size > maxNativeFileBytes {
+		unix.Close(fd)
+		return -1, unix.Stat_t{}, fmt.Errorf("file exceeds %d byte transfer limit", maxNativeFileBytes)
+	}
+	return fd, stat, nil
 }
 
 func nativeFileMode(mode uint32) os.FileMode {
@@ -130,18 +149,73 @@ func (s *sandbox) WriteFile(ctx context.Context, value string, source io.Reader,
 		return fmt.Errorf("open parent directory for %s: %w", clean, err)
 	}
 	defer unix.Close(parentFD)
-	fd, err := openSandboxPath(parentFD, path.Base(relative), unix.O_WRONLY|unix.O_CREAT|unix.O_TRUNC|unix.O_NOFOLLOW, uint32(mode.Perm()))
-	if err != nil {
-		return fmt.Errorf("create sandbox file %s: %w", clean, err)
-	}
-	file := os.NewFile(uintptr(fd), clean)
-	if _, err := io.Copy(file, source); err != nil {
-		_ = file.Close()
+	if err := writeSandboxFileAtomic(parentFD, path.Base(relative), source, mode); err != nil {
 		return fmt.Errorf("write sandbox file %s: %w", clean, err)
 	}
-	if err := file.Close(); err != nil {
-		return fmt.Errorf("close sandbox file %s: %w", clean, err)
+	return nil
+}
+
+func writeSandboxFileAtomic(parentFD int, name string, source io.Reader, mode os.FileMode) error {
+	var tempName string
+	var fd int
+	var err error
+	for attempts := 0; attempts < 8; attempts++ {
+		var random [16]byte
+		if _, err := rand.Read(random[:]); err != nil {
+			return err
+		}
+		tempName = ".cellbox-upload-" + hex.EncodeToString(random[:])
+		fd, err = unix.Openat(parentFD, tempName, unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0600)
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, unix.EEXIST) {
+			return err
+		}
 	}
+	if fd < 0 {
+		return errors.New("could not allocate a temporary upload file")
+	}
+	keep := false
+	defer func() {
+		if !keep {
+			_ = unix.Unlinkat(parentFD, tempName, 0)
+		}
+	}()
+	file := os.NewFile(uintptr(fd), tempName)
+	written, copyErr := io.Copy(file, io.LimitReader(source, maxNativeFileBytes+1))
+	if copyErr != nil {
+		_ = file.Close()
+		return copyErr
+	}
+	if written > maxNativeFileBytes {
+		_ = file.Close()
+		return fmt.Errorf("file exceeds %d byte transfer limit", maxNativeFileBytes)
+	}
+	if err := file.Chmod(mode.Perm() & 0777); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if err := file.Sync(); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if err := file.Close(); err != nil {
+		return err
+	}
+	if err := unix.Renameat(parentFD, tempName, parentFD, name); err != nil {
+		return err
+	}
+	dirFD, err := unix.Openat(parentFD, ".", unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return err
+	}
+	syncErr := unix.Fsync(dirFD)
+	unix.Close(dirFD)
+	if syncErr != nil {
+		return syncErr
+	}
+	keep = true
 	return nil
 }
 
