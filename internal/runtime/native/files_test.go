@@ -3,6 +3,9 @@
 package native
 
 import (
+	"archive/tar"
+	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -39,5 +42,61 @@ func TestSandboxFilePathStaysInsideRoot(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(outside, "pwn")); !os.IsNotExist(err) {
 		t.Fatalf("wrote outside the sandbox: %v", err)
+	}
+}
+
+func TestNativeArchiveExtractAndValidateBeforeWriting(t *testing.T) {
+	root := t.TempDir()
+	rootFD, err := unix.Open(root, unix.O_PATH|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unix.Close(rootFD)
+
+	var archive bytes.Buffer
+	writer := tar.NewWriter(&archive)
+	for _, entry := range []struct {
+		name string
+		data string
+	}{{"nested/value.txt", "restored"}} {
+		if err := writer.WriteHeader(&tar.Header{Name: entry.name, Mode: 0640, Size: int64(len(entry.data)), Typeflag: tar.TypeReg}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := writer.Write([]byte(entry.data)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateNativeArchive(bytes.NewReader(archive.Bytes())); err != nil {
+		t.Fatalf("validate archive: %v", err)
+	}
+	if err := extractNativeArchive(context.Background(), rootFD, bytes.NewReader(archive.Bytes())); err != nil {
+		t.Fatalf("extract archive: %v", err)
+	}
+	got, err := os.ReadFile(filepath.Join(root, "nested", "value.txt"))
+	if err != nil || string(got) != "restored" {
+		t.Fatalf("extracted file = %q, err = %v", got, err)
+	}
+
+	var malicious bytes.Buffer
+	writer = tar.NewWriter(&malicious)
+	if err := writer.WriteHeader(&tar.Header{Name: "partial.txt", Mode: 0600, Size: 3, Typeflag: tar.TypeReg}); err != nil {
+		t.Fatal(err)
+	}
+	_, _ = writer.Write([]byte("bad"))
+	if err := writer.WriteHeader(&tar.Header{Name: "../../escape", Mode: 0600, Size: 3, Typeflag: tar.TypeReg}); err != nil {
+		t.Fatal(err)
+	}
+	_, _ = writer.Write([]byte("bad"))
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateNativeArchive(bytes.NewReader(malicious.Bytes())); err == nil {
+		t.Fatal("accepted archive traversal")
+	}
+	if _, err := os.Stat(filepath.Join(root, "partial.txt")); !os.IsNotExist(err) {
+		t.Fatalf("validation wrote a partial entry: %v", err)
 	}
 }

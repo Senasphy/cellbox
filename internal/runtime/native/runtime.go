@@ -6,7 +6,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -243,10 +242,6 @@ func (*execHandle) Signal(context.Context, int) error { return cellruntime.ErrUn
 func (*sandbox) OpenTerminal(context.Context, cellruntime.TerminalRequest) (cellruntime.Terminal, error) {
 	return nil, cellruntime.ErrUnsupported
 }
-func (*sandbox) Archive(context.Context, string) (io.ReadCloser, error) {
-	return nil, cellruntime.ErrUnsupported
-}
-func (*sandbox) Extract(context.Context, string, io.Reader) error { return cellruntime.ErrUnsupported }
 func (*sandbox) Snapshot(context.Context) (cellruntime.SnapshotInfo, error) {
 	return cellruntime.SnapshotInfo{}, cellruntime.ErrUnsupported
 }
