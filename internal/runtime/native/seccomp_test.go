@@ -5,9 +5,11 @@ package native
 import (
 	"os"
 	"os/exec"
+	"runtime"
 	"testing"
 
 	seccomp "github.com/elastic/go-seccomp-bpf"
+	"github.com/elastic/go-seccomp-bpf/arch"
 	"golang.org/x/sys/unix"
 )
 
@@ -45,9 +47,23 @@ func TestSeccompFilterEnforcesEPERM(t *testing.T) {
 		if err := InstallDefaultSeccomp(); err != nil {
 			t.Fatalf("install TSYNC seccomp filter: %v", err)
 		}
-		_, _, errno := unix.Syscall(unix.SYS_PTRACE, uintptr(unix.PTRACE_TRACEME), 0, 0)
-		if errno != unix.EPERM {
-			t.Fatalf("ptrace returned %v, want EPERM", errno)
+		architecture, err := arch.GetInfo(runtime.GOARCH)
+		if err != nil {
+			t.Fatalf("resolve syscall numbers: %v", err)
+		}
+		for _, name := range SeccompDenylist {
+			number, supported := architecture.SyscallNames[name]
+			if !supported {
+				continue // This syscall does not exist on the current Linux architecture.
+			}
+			var args [6]uintptr
+			if name == "clone" {
+				args[0] = unix.CLONE_NEWUSER
+			}
+			_, _, errno := unix.RawSyscall6(uintptr(number), args[0], args[1], args[2], args[3], args[4], args[5])
+			if errno != unix.EPERM {
+				t.Errorf("%s returned %v, want EPERM", name, errno)
+			}
 		}
 		return
 	}
