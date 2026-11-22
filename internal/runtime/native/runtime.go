@@ -85,6 +85,13 @@ func (r *Runtime) Create(ctx context.Context, spec cellruntime.SandboxSpec) (cel
 	if limits.DiskMB < 0 || int64(limits.DiskMB) > (1<<63-1)/(1<<20) {
 		return nil, errors.New("native session disk limit is invalid")
 	}
+	policy := egress.Policy{Mode: spec.NetworkPolicy.Mode, Allow: make([]egress.Rule, 0, len(spec.NetworkPolicy.Allow)), ExtraBlockedCIDRs: spec.NetworkPolicy.ExtraBlockedCIDRs}
+	for _, rule := range spec.NetworkPolicy.Allow {
+		policy.Allow = append(policy.Allow, egress.Rule{Host: rule.Host, Ports: rule.Ports})
+	}
+	if err := egress.ValidatePolicy(policy); err != nil {
+		return nil, fmt.Errorf("invalid native egress policy: %w", err)
+	}
 	cgroup, err := r.cgroups.Create(spec.ID, limits)
 	if err != nil {
 		return nil, err
@@ -142,10 +149,6 @@ func (r *Runtime) Create(ctx context.Context, spec cellruntime.SandboxSpec) (cel
 		env[key] = value
 	}
 	if spec.NetworkPolicy.Mode != "" && spec.NetworkPolicy.Mode != "none" {
-		policy := egress.Policy{Mode: spec.NetworkPolicy.Mode, Allow: make([]egress.Rule, 0, len(spec.NetworkPolicy.Allow)), ExtraBlockedCIDRs: spec.NetworkPolicy.ExtraBlockedCIDRs}
-		for _, rule := range spec.NetworkPolicy.Allow {
-			policy.Allow = append(policy.Allow, egress.Rule{Host: rule.Host, Ports: rule.Ports})
-		}
 		egressQueue = newEgressEventQueue()
 		egressProxy, err = egress.New(filepath.Join(base, "run", "egress.sock"), policy, func(event egress.Decision) {
 			egressQueue.Publish(cellruntime.EgressEvent{Host: event.Host, Port: event.Port, Resolved: event.Resolved, Verdict: event.Verdict, Reason: event.Reason, BytesUp: event.BytesUp, BytesDown: event.BytesDown, Duration: event.Duration.Milliseconds(), Timestamp: event.Timestamp})
