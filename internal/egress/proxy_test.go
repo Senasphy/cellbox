@@ -212,7 +212,9 @@ func TestBlockedAddressesIncludeMappedAndConfiguredCIDRs(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, address := range []string{
-		"127.0.0.1", "::1", "::ffff:10.1.2.3", "169.254.169.254", "203.0.113.8", "255.255.255.255",
+		"0.0.0.0", "10.1.2.3", "100.64.0.1", "127.0.0.1", "169.254.169.254", "172.16.0.1", "192.168.0.1",
+		"203.0.113.8", "224.0.0.1", "255.255.255.255", "::", "::1", "fc00::1", "fe80::1", "ff02::1",
+		"::ffff:10.1.2.3", "::ffff:172.16.0.1", "::ffff:192.168.0.1", "::ffff:169.254.0.1",
 		"2001:db8::1", "3fff::1", "2001:2::1", "2002:c000:0201::1", "64:ff9b::a00:1", "64:ff9b:1::a00:1",
 	} {
 		ip := netip.MustParseAddr(address)
@@ -220,8 +222,10 @@ func TestBlockedAddressesIncludeMappedAndConfiguredCIDRs(t *testing.T) {
 			t.Errorf("address %s was not blocked", ip)
 		}
 	}
-	if server.blockedIP(netip.MustParseAddr("8.8.8.8")) {
-		t.Fatal("public address was blocked")
+	for _, address := range []string{"8.8.8.8", "1.1.1.1", "2606:4700::1111"} {
+		if server.blockedIP(netip.MustParseAddr(address)) {
+			t.Errorf("public address %s was blocked", address)
+		}
 	}
 }
 
