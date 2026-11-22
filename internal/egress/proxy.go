@@ -58,6 +58,8 @@ type Server struct {
 	dial     func(context.Context, string, string) (net.Conn, error)
 }
 
+const proxyExchangeTimeout = 2 * time.Minute
+
 func New(path string, policy Policy, logDecision func(Decision)) (*Server, error) {
 	if err := ValidatePolicy(policy); err != nil {
 		return nil, err
@@ -175,6 +177,10 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	started := time.Now()
+	deadline := started.Add(proxyExchangeTimeout)
+	controller := http.NewResponseController(w)
+	_ = controller.SetReadDeadline(deadline)
+	_ = controller.SetWriteDeadline(deadline)
 	host, port, err := target(r)
 	if err != nil {
 		s.deny(w, r, started, "", 0, "", "invalid_target", http.StatusBadRequest)
@@ -435,8 +441,8 @@ func (s *Server) tunnel(w http.ResponseWriter, r *http.Request, upstream net.Con
 	defer s.untrack(client)
 	defer s.untrack(upstream)
 	defer client.Close()
-	_ = client.SetDeadline(time.Now().Add(2 * time.Minute))
-	_ = upstream.SetDeadline(time.Now().Add(2 * time.Minute))
+	_ = client.SetDeadline(time.Now().Add(proxyExchangeTimeout))
+	_ = upstream.SetDeadline(time.Now().Add(proxyExchangeTimeout))
 	var up, down int64
 	_, _ = rw.WriteString("HTTP/1.1 200 Connection Established\r\n\r\n")
 	if err := rw.Flush(); err != nil {
