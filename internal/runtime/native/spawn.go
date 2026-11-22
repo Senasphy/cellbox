@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -131,7 +132,7 @@ func (p *InitProcess) Exec(ctx context.Context, request runtime.ExecRequest, emi
 		message, files, recvErr := ReceiveControlMessage(int(reader.Fd()))
 		closeFiles(files)
 		if recvErr != nil {
-			return empty, fmt.Errorf("read native workload result: %w", recvErr)
+			return empty, p.initExitError(fmt.Errorf("read native workload result: %w", recvErr))
 		}
 		if message.ID != id {
 			return empty, fmt.Errorf("native workload response id mismatch: got %q, want %q", message.ID, id)
@@ -165,6 +166,31 @@ func (p *InitProcess) Exec(ctx context.Context, request runtime.ExecRequest, emi
 		}
 		return execResult, nil
 	}
+}
+
+func (p *InitProcess) initExitError(cause error) error {
+	// A closed control socket means init has exited. Wait while holding sendMu
+	// so Kill and Shutdown cannot race a second Wait against this one.
+	p.sendMu.Lock()
+	defer p.sendMu.Unlock()
+	p.mu.Lock()
+	p.closed = true
+	control := p.control
+	p.control = nil
+	command := p.cmd
+	p.mu.Unlock()
+	if control != nil {
+		_ = control.Close()
+	}
+	var waitErr error
+	if command != nil {
+		waitErr = command.Wait()
+	}
+	stderr := strings.TrimSpace(p.stderr.String())
+	if waitErr != nil || stderr != "" {
+		return fmt.Errorf("%w (native init exit: %v; stderr: %s)", cause, waitErr, stderr)
+	}
+	return cause
 }
 
 func (p *InitProcess) sendExecSignal(id string, number int) error {
