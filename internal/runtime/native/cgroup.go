@@ -64,7 +64,7 @@ func InitializeCgroupRoot(path string, servicePID int) (*CgroupRoot, error) {
 	if err := mkdirCgroup(main); err != nil {
 		return nil, fmt.Errorf("create service cgroup leaf: %w", err)
 	}
-	if err := writeCgroupValue(path, "cgroup.procs", strconv.Itoa(servicePID)); err != nil {
+	if err := writeCgroupValue(main, "cgroup.procs", strconv.Itoa(servicePID)); err != nil {
 		return nil, fmt.Errorf("move service into its cgroup leaf: %w", err)
 	}
 	if err := enableCgroupControllers(path, controllers); err != nil {
@@ -158,6 +158,14 @@ func (c *SessionCgroup) UpdateLimits(limits runtime.Limits) error {
 	return nil
 }
 
+// Freeze pauses every task in the session cgroup before destructive quota cleanup.
+func (c *SessionCgroup) Freeze() error {
+	if err := writeCgroupValue(c.path, "cgroup.freeze", "1"); err != nil {
+		return fmt.Errorf("freeze session cgroup: %w", err)
+	}
+	return nil
+}
+
 // Stats returns the current CPU, memory, and process counts from cgroup v2.
 func (c *SessionCgroup) Stats() (runtime.Stats, error) {
 	var stats runtime.Stats
@@ -220,6 +228,41 @@ func (c *SessionCgroup) Stats() (runtime.Stats, error) {
 					stats.IOWriteBytes += count
 				}
 			}
+		}
+	}
+	// memory.events is available on cgroup v2 and reports cumulative events.
+	events, err := os.ReadFile(filepath.Join(c.path, "memory.events"))
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return stats, fmt.Errorf("read cgroup memory.events: %w", err)
+	}
+	if err == nil {
+		for _, line := range strings.Split(string(events), "\n") {
+			fields := strings.Fields(line)
+			if len(fields) != 2 || fields[0] != "oom_kill" {
+				continue
+			}
+			stats.OOMKills, err = strconv.ParseUint(fields[1], 10, 64)
+			if err != nil {
+				return stats, fmt.Errorf("parse cgroup memory.events oom_kill: %w", err)
+			}
+			break
+		}
+	}
+	pidsEvents, err := os.ReadFile(filepath.Join(c.path, "pids.events"))
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return stats, fmt.Errorf("read cgroup pids.events: %w", err)
+	}
+	if err == nil {
+		for _, line := range strings.Split(string(pidsEvents), "\n") {
+			fields := strings.Fields(line)
+			if len(fields) != 2 || fields[0] != "max" {
+				continue
+			}
+			stats.PIDsMaxEvents, err = strconv.ParseUint(fields[1], 10, 64)
+			if err != nil {
+				return stats, fmt.Errorf("parse cgroup pids.events max: %w", err)
+			}
+			break
 		}
 	}
 	return stats, nil

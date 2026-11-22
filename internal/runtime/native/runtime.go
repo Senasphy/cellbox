@@ -6,11 +6,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"syscall"
+	"time"
 
+	"github.com/senasphy/cellbox/internal/egress"
 	cellruntime "github.com/senasphy/cellbox/internal/runtime"
 )
 
@@ -33,7 +38,7 @@ func NewRuntime(dataDir string, cgroups *CgroupRoot) (*Runtime, error) {
 	if cgroups == nil {
 		return nil, errors.New("native runtime requires delegated cgroup v2 controllers")
 	}
-	for _, dir := range []string{"images", "sessions"} {
+	for _, dir := range []string{"images", "sessions", "snapshots"} {
 		if err := os.MkdirAll(filepath.Join(dataDir, dir), 0700); err != nil {
 			return nil, fmt.Errorf("create native %s directory: %w", dir, err)
 		}
@@ -44,11 +49,11 @@ func NewRuntime(dataDir string, cgroups *CgroupRoot) (*Runtime, error) {
 func (*Runtime) Name() string { return "native" }
 
 func (*Runtime) Capabilities() cellruntime.Capabilities {
-	return cellruntime.Capabilities{CPULimits: true, TTY: true}
+	return cellruntime.Capabilities{Snapshots: true, CPULimits: true, DiskLimits: true, TTY: true, EgressPolicy: true}
 }
 
 func (r *Runtime) EnsureImage(ctx context.Context, reference string) (cellruntime.ImageInfo, error) {
-	info, _, err := r.images.Ensure(ctx, reference)
+	info, _, _, err := r.images.Ensure(ctx, reference)
 	return info, err
 }
 
@@ -63,7 +68,10 @@ func (r *Runtime) Create(ctx context.Context, spec cellruntime.SandboxSpec) (cel
 	if image.Reference == "" {
 		return nil, errors.New("native session requires an image reference")
 	}
-	resolved, rootfs, err := r.images.Ensure(ctx, image.Reference)
+	if len(spec.SnapshotLayers) > 7 {
+		return nil, fmt.Errorf("native snapshot chain has %d layers; flattening is required above seven", len(spec.SnapshotLayers))
+	}
+	resolved, rootfs, imageEnv, err := r.images.Ensure(ctx, image.Reference)
 	if err != nil {
 		return nil, err
 	}
@@ -74,13 +82,28 @@ func (r *Runtime) Create(ctx context.Context, spec cellruntime.SandboxSpec) (cel
 	if limits.CPUMillicores == 0 || limits.MemoryMB == 0 || limits.PIDs == 0 {
 		return nil, errors.New("native session requires positive CPU, memory, and PID limits")
 	}
+	if limits.DiskMB < 0 || int64(limits.DiskMB) > (1<<63-1)/(1<<20) {
+		return nil, errors.New("native session disk limit is invalid")
+	}
 	cgroup, err := r.cgroups.Create(spec.ID, limits)
 	if err != nil {
 		return nil, err
 	}
 	base := filepath.Join(r.root, "sessions", spec.ID)
 	created := false
+	var egressProxy *egress.Server
+	var egressCancel context.CancelFunc
+	var egressQueue *egressEventQueue
 	cleanup := func() {
+		if egressCancel != nil {
+			egressCancel()
+		}
+		if egressProxy != nil {
+			_ = egressProxy.Close()
+		}
+		if egressQueue != nil {
+			egressQueue.Close()
+		}
 		if created {
 			_ = os.RemoveAll(base)
 		}
@@ -97,19 +120,75 @@ func (r *Runtime) Create(ctx context.Context, spec cellruntime.SandboxSpec) (cel
 			return nil, fmt.Errorf("create native session %s directory: %w", dir, err)
 		}
 	}
+	helperMountpoint, err := os.OpenFile(filepath.Join(base, "run", "cellbox-exec"), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0700)
+	if err != nil {
+		cleanup()
+		return nil, fmt.Errorf("create native exec helper mountpoint: %w", err)
+	}
+	if err := helperMountpoint.Close(); err != nil {
+		cleanup()
+		return nil, fmt.Errorf("close native exec helper mountpoint: %w", err)
+	}
 	cgroupDir, err := os.Open(cgroup.path)
 	if err != nil {
 		cleanup()
 		return nil, fmt.Errorf("open native session cgroup: %w", err)
 	}
-	initConfig := InitConfig{SessionID: spec.ID, LowerDirs: []string{rootfs}, UpperDir: filepath.Join(base, "upper"), WorkDir: filepath.Join(base, "work"), RootDir: filepath.Join(base, "root"), RunDir: filepath.Join(base, "run"), Hostname: spec.ID, Env: spec.Env}
+	env := cloneEnv(imageEnv)
+	if env == nil {
+		env = make(map[string]string, len(spec.Env))
+	}
+	for key, value := range spec.Env {
+		env[key] = value
+	}
+	if spec.NetworkPolicy.Mode != "" && spec.NetworkPolicy.Mode != "none" {
+		policy := egress.Policy{Mode: spec.NetworkPolicy.Mode, Allow: make([]egress.Rule, 0, len(spec.NetworkPolicy.Allow)), ExtraBlockedCIDRs: spec.NetworkPolicy.ExtraBlockedCIDRs}
+		for _, rule := range spec.NetworkPolicy.Allow {
+			policy.Allow = append(policy.Allow, egress.Rule{Host: rule.Host, Ports: rule.Ports})
+		}
+		egressQueue = newEgressEventQueue()
+		egressProxy, err = egress.New(filepath.Join(base, "run", "egress.sock"), policy, func(event egress.Decision) {
+			egressQueue.Publish(cellruntime.EgressEvent{Host: event.Host, Port: event.Port, Resolved: event.Resolved, Verdict: event.Verdict, Reason: event.Reason, BytesUp: event.BytesUp, BytesDown: event.BytesDown, Duration: event.Duration.Milliseconds(), Timestamp: event.Timestamp})
+		})
+		if err != nil {
+			cleanup()
+			return nil, err
+		}
+		proxyCtx, cancel := context.WithCancel(context.Background())
+		egressCancel = cancel
+		if err := egressProxy.Start(proxyCtx); err != nil {
+			cleanup()
+			return nil, err
+		}
+		for _, key := range []string{"HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"} {
+			env[key] = "http://127.0.0.1:3128"
+		}
+		env["NO_PROXY"], env["no_proxy"] = "localhost,127.0.0.1", "localhost,127.0.0.1"
+	}
+	lowerDirs := make([]string, 0, len(spec.SnapshotLayers)+1)
+	for _, snapshotID := range spec.SnapshotLayers {
+		if snapshotID == "" || snapshotID == "." || snapshotID == ".." || strings.ContainsAny(snapshotID, `/\\`) || !strings.HasPrefix(snapshotID, "snp_") {
+			cleanup()
+			return nil, fmt.Errorf("invalid native snapshot layer id %q", snapshotID)
+		}
+		layer := filepath.Join(r.root, "snapshots", snapshotID, "upper")
+		info, statErr := os.Stat(layer)
+		if statErr != nil || !info.IsDir() {
+			cleanup()
+			return nil, fmt.Errorf("native snapshot layer %q is unavailable", snapshotID)
+		}
+		lowerDirs = append(lowerDirs, layer)
+	}
+	lowerDirs = append(lowerDirs, rootfs)
+	initConfig := InitConfig{SessionID: spec.ID, LowerDirs: lowerDirs, UpperDir: filepath.Join(base, "upper"), WorkDir: filepath.Join(base, "work"), RootDir: filepath.Join(base, "root"), RunDir: filepath.Join(base, "run"), Hostname: spec.ID, Env: env, Egress: egressProxy != nil}
 	process, err := SpawnInit(ctx, initConfig, int(cgroupDir.Fd()))
 	_ = cgroupDir.Close()
 	if err != nil {
 		cleanup()
 		return nil, err
 	}
-	box := &sandbox{runtime: r, id: spec.ID, cgroup: cgroup, init: process, dir: base, env: cloneEnv(spec.Env)}
+	box := &sandbox{runtime: r, id: spec.ID, cgroup: cgroup, init: process, dir: base, env: cloneEnv(env), egressProxy: egressProxy, egressCancel: egressCancel, egressEvents: egressQueue}
+	box.startDiskMonitor(limits.DiskMB)
 	r.mu.Lock()
 	if _, exists := r.boxes[spec.ID]; exists {
 		r.mu.Unlock()
@@ -157,23 +236,193 @@ func (r *Runtime) SandboxByID(id string) cellruntime.Sandbox {
 }
 
 type sandbox struct {
-	runtime *Runtime
-	id      string
-	cgroup  *SessionCgroup
-	init    *InitProcess
-	dir     string
-	env     map[string]string
-	mu      sync.Mutex
-	done    bool
+	runtime        *Runtime
+	id             string
+	cgroup         *SessionCgroup
+	init           *InitProcess
+	dir            string
+	env            map[string]string
+	mu             sync.Mutex
+	done           bool
+	killed         bool
+	diskLimitBytes atomic.Uint64
+	diskHit        atomic.Bool
+	diskEvents     chan cellruntime.LimitBreach
+	diskStop       chan struct{}
+	diskDone       chan struct{}
+	diskStopOnce   sync.Once
+	inFlightExecs  atomic.Int32
+	egressProxy    *egress.Server
+	egressCancel   context.CancelFunc
+	egressEvents   *egressEventQueue
+}
+
+type egressEventQueue struct {
+	mu     sync.Mutex
+	open   bool
+	events chan cellruntime.EgressEvent
+}
+
+func newEgressEventQueue() *egressEventQueue {
+	return &egressEventQueue{open: true, events: make(chan cellruntime.EgressEvent, 256)}
+}
+
+func (q *egressEventQueue) Publish(event cellruntime.EgressEvent) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if !q.open {
+		return
+	}
+	q.events <- event
+}
+
+func (q *egressEventQueue) Close() {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if q.open {
+		q.open = false
+		close(q.events)
+	}
+}
+
+func (s *sandbox) EgressEvents() <-chan cellruntime.EgressEvent {
+	if s.egressEvents == nil {
+		return nil
+	}
+	return s.egressEvents.events
+}
+
+var errUpperUsageLimit = errors.New("native upper directory usage exceeded limit")
+
+// LimitEvents exposes asynchronous breaches found by the native resource monitor.
+func (s *sandbox) LimitEvents() <-chan cellruntime.LimitBreach { return s.diskEvents }
+
+func (s *sandbox) startDiskMonitor(limitMB int) {
+	s.diskEvents = make(chan cellruntime.LimitBreach, 8)
+	s.diskStop = make(chan struct{})
+	s.diskDone = make(chan struct{})
+	if limitMB > 0 {
+		s.diskLimitBytes.Store(uint64(limitMB) * 1024 * 1024)
+	}
+	go s.monitorDiskUsage()
+}
+
+func (s *sandbox) monitorDiskUsage() {
+	defer close(s.diskDone)
+	defer close(s.diskEvents)
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+	lastStats, _ := s.cgroup.Stats()
+	for {
+		select {
+		case <-s.diskStop:
+			return
+		case <-ticker.C:
+		}
+		if stats, err := s.cgroup.Stats(); err == nil {
+			if s.inFlightExecs.Load() == 0 {
+				var event cellruntime.LimitBreach
+				switch {
+				case stats.OOMKills > lastStats.OOMKills:
+					event = cellruntime.LimitBreach{Kind: "memory", Counter: stats.OOMKills, Reason: "oom_kill", Timestamp: time.Now().UTC()}
+				case stats.PIDsMaxEvents > lastStats.PIDsMaxEvents:
+					event = cellruntime.LimitBreach{Kind: "pids", Counter: stats.PIDsMaxEvents, Reason: "pids_limit", Timestamp: time.Now().UTC()}
+				}
+				if event.Kind != "" {
+					s.stopForResourceLimit()
+					s.diskEvents <- event
+					return
+				}
+			}
+			lastStats = stats
+		}
+		limit := s.diskLimitBytes.Load()
+		if limit == 0 {
+			continue
+		}
+		used, err := upperDirectoryUsage(filepath.Join(s.dir, "upper"), s.diskStop, limit)
+		if err != nil {
+			if errors.Is(err, context.Canceled) {
+				return
+			}
+		}
+		overLimit := errors.Is(err, errUpperUsageLimit)
+		measurementFailed := err != nil && !overLimit
+		if (!overLimit && !measurementFailed && used <= limit) || !s.diskHit.CompareAndSwap(false, true) {
+			continue
+		}
+		if measurementFailed {
+			used = 0
+		}
+		s.stopForResourceLimit()
+		reason := "quota_exceeded"
+		if measurementFailed {
+			reason = "measurement_failed"
+		}
+		s.diskEvents <- cellruntime.LimitBreach{Kind: "disk", UsedBytes: used, LimitBytes: limit, Reason: reason, Timestamp: time.Now().UTC()}
+		return
+	}
+}
+
+func (s *sandbox) stopForResourceLimit() {
+	_ = s.cgroup.Freeze()
+	if err := s.Kill(context.Background()); err != nil {
+		// Namespace init may already have exited after a kernel resource kill.
+		_ = s.init.Kill()
+		s.mu.Lock()
+		s.killed = true
+		s.mu.Unlock()
+	}
+}
+
+func upperDirectoryUsage(root string, stop <-chan struct{}, limit uint64) (uint64, error) {
+	var used uint64
+	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		select {
+		case <-stop:
+			return context.Canceled
+		default:
+		}
+		if entry.Type()&os.ModeSymlink != 0 {
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		if info.Size() > 0 {
+			size := uint64(info.Size())
+			if stat, ok := info.Sys().(*syscall.Stat_t); ok && stat.Blocks >= 0 {
+				size = uint64(stat.Blocks) * 512
+			}
+			if ^uint64(0)-used < size {
+				return errors.New("native upper directory usage overflow")
+			}
+			used += size
+			if used > limit {
+				return errUpperUsageLimit
+			}
+		}
+		return nil
+	})
+	return used, err
+}
+
+func (s *sandbox) stopDiskMonitor() {
+	s.diskStopOnce.Do(func() { close(s.diskStop) })
+	<-s.diskDone
 }
 
 func (s *sandbox) ID() string { return s.id }
 
 func (s *sandbox) Exec(ctx context.Context, request cellruntime.ExecRequest) (cellruntime.ExecHandle, error) {
 	s.mu.Lock()
-	if s.done {
+	if s.done || s.killed {
 		s.mu.Unlock()
-		return nil, errors.New("native sandbox has been destroyed")
+		return nil, errors.New("native sandbox is no longer running")
 	}
 	s.mu.Unlock()
 	if request.TTY {
@@ -183,6 +432,8 @@ func (s *sandbox) Exec(ctx context.Context, request cellruntime.ExecRequest) (ce
 		return nil, err
 	}
 	request.Env = mergeEnv(s.env, request.Env)
+	s.inFlightExecs.Add(1)
+	before, beforeErr := s.cgroup.Stats()
 	signals := make(chan int, 8)
 	handle := &execHandle{output: make(chan cellruntime.OutputChunk, 32), done: make(chan struct{})}
 	handle.signal = func(ctx context.Context, number int) error {
@@ -202,10 +453,20 @@ func (s *sandbox) Exec(ctx context.Context, request cellruntime.ExecRequest) (ce
 		}
 	}
 	go func() {
+		defer s.inFlightExecs.Add(-1)
 		result, err := s.init.Exec(context.Background(), request, func(chunk cellruntime.OutputChunk) error {
 			handle.output <- chunk
 			return nil
 		}, signals)
+		if beforeErr == nil {
+			if after, statsErr := s.cgroup.Stats(); statsErr == nil {
+				if after.OOMKills > before.OOMKills {
+					result.OOMKilled = true
+					err = nil
+				}
+				result.PIDsLimitHit = after.PIDsMaxEvents > before.PIDsMaxEvents
+			}
+		}
 		close(handle.output)
 		handle.result, handle.err = result, err
 		close(handle.done)
@@ -264,16 +525,13 @@ func (h *execHandle) Signal(ctx context.Context, signal int) error {
 
 func (s *sandbox) OpenTerminal(ctx context.Context, request cellruntime.TerminalRequest) (cellruntime.Terminal, error) {
 	s.mu.Lock()
-	if s.done {
+	if s.done || s.killed {
 		s.mu.Unlock()
-		return nil, errors.New("native sandbox has been destroyed")
+		return nil, errors.New("native sandbox is no longer running")
 	}
 	s.mu.Unlock()
 	request.Env = mergeEnv(s.env, request.Env)
 	return s.init.OpenTerminal(ctx, request)
-}
-func (*sandbox) Snapshot(context.Context) (cellruntime.SnapshotInfo, error) {
-	return cellruntime.SnapshotInfo{}, cellruntime.ErrUnsupported
 }
 func (s *sandbox) UpdateLimits(_ context.Context, limits cellruntime.Limits) error {
 	s.mu.Lock()
@@ -281,7 +539,18 @@ func (s *sandbox) UpdateLimits(_ context.Context, limits cellruntime.Limits) err
 	if s.done {
 		return errors.New("native sandbox has been destroyed")
 	}
-	return s.cgroup.UpdateLimits(limits)
+	if limits.DiskMB < 0 || int64(limits.DiskMB) > (1<<63-1)/(1<<20) {
+		return errors.New("native disk limit is invalid")
+	}
+	if err := s.cgroup.UpdateLimits(limits); err != nil {
+		return err
+	}
+	if limits.DiskMB == 0 {
+		s.diskLimitBytes.Store(0)
+	} else {
+		s.diskLimitBytes.Store(uint64(limits.DiskMB) * 1024 * 1024)
+	}
+	return nil
 }
 func (s *sandbox) Stats(_ context.Context) (cellruntime.Stats, error) {
 	s.mu.Lock()
@@ -303,7 +572,11 @@ func (s *sandbox) Kill(ctx context.Context) error {
 	if err := s.cgroup.Kill(); err != nil {
 		return err
 	}
-	return s.init.Kill()
+	if err := s.init.Kill(); err != nil {
+		return err
+	}
+	s.killed = true
+	return nil
 }
 func (s *sandbox) Destroy(ctx context.Context) error {
 	s.mu.Lock()
@@ -312,6 +585,7 @@ func (s *sandbox) Destroy(ctx context.Context) error {
 		return nil
 	}
 	s.mu.Unlock()
+	s.stopDiskMonitor()
 	if err := s.Kill(ctx); err != nil {
 		return err
 	}
@@ -320,6 +594,17 @@ func (s *sandbox) Destroy(ctx context.Context) error {
 	}
 	if err := s.cgroup.Destroy(); err != nil {
 		return err
+	}
+	if s.egressCancel != nil {
+		s.egressCancel()
+	}
+	if s.egressProxy != nil {
+		if err := s.egressProxy.Close(); err != nil {
+			return err
+		}
+	}
+	if s.egressEvents != nil {
+		s.egressEvents.Close()
 	}
 	if err := os.RemoveAll(s.dir); err != nil {
 		return err

@@ -29,6 +29,7 @@ type InitConfig struct {
 	RunDir    string            `json:"run_dir"`
 	Hostname  string            `json:"hostname"`
 	Env       map[string]string `json:"env,omitempty"`
+	Egress    bool              `json:"egress,omitempty"`
 }
 
 // RunInit reads the config from fd 4, prepares the sandbox root, then serves the control channel on fd 3.
@@ -53,12 +54,20 @@ func RunInit(controlFD, configFD int) error {
 		_ = SendControlMessage(controlFD, ControlMessage{Type: "error", Error: err.Error()})
 		return err
 	}
+	if config.Egress {
+		if err := startEgressForwarder(); err != nil {
+			_ = SendControlMessage(controlFD, ControlMessage{Type: "error", Error: err.Error()})
+			return fmt.Errorf("start native egress forwarder: %w", err)
+		}
+	}
 	// Install the filter only after namespace and mount setup, then keep the
 	// filtered init alive so any future workload children inherit the policy.
 	if err := InstallDefaultSeccomp(); err != nil {
 		_ = SendControlMessage(controlFD, ControlMessage{Type: "error", Error: err.Error()})
 		return fmt.Errorf("install native seccomp filter: %w", err)
 	}
+	stopReaper := startOrphanReaper()
+	defer stopReaper()
 	if err := SendControlMessage(controlFD, ControlMessage{Type: "ready", ID: config.SessionID}); err != nil {
 		return err
 	}
@@ -127,6 +136,13 @@ func prepareRootMounts(config InitConfig) error {
 	runTarget := filepath.Join(root, "run/cellbox")
 	if err := unix.Mount(config.RunDir, runTarget, "", unix.MS_BIND|unix.MS_REC, ""); err != nil {
 		return fmt.Errorf("bind session run directory: %w", err)
+	}
+	executable, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("resolve native exec helper binary: %w", err)
+	}
+	if err := bindExecutableReadOnly(executable, filepath.Join(runTarget, "cellbox-exec")); err != nil {
+		return fmt.Errorf("mount native exec helper: %w", err)
 	}
 	if err := unix.Mount("proc", filepath.Join(root, "proc"), "proc", unix.MS_NOSUID|unix.MS_NODEV|unix.MS_NOEXEC, ""); err != nil {
 		return fmt.Errorf("mount sandbox procfs: %w", err)
@@ -227,9 +243,29 @@ func mountTmpfsFlags(target string, size int64, mode os.FileMode, extraFlags uin
 
 func bindReadOnly(source, target string) error {
 	if err := unix.Mount(source, target, "", unix.MS_BIND, ""); err != nil {
-		return err
+		return fmt.Errorf("bind mount: %w", err)
 	}
-	return unix.Mount("", target, "", unix.MS_BIND|unix.MS_REMOUNT|unix.MS_RDONLY, "")
+	flags := uintptr(unix.MS_BIND | unix.MS_REMOUNT | unix.MS_RDONLY | unix.MS_NOSUID | unix.MS_NODEV | unix.MS_NOEXEC)
+	if err := unix.Mount("", target, "", flags, ""); err != nil {
+		// User namespaces can forbid changing bind-mount flags on procfs entries.
+		// A /dev/null bind remains an inert mask even when it cannot be remounted read-only.
+		if source == "/dev/null" && errors.Is(err, unix.EPERM) {
+			return nil
+		}
+		return fmt.Errorf("remount read-only: %w", err)
+	}
+	return nil
+}
+
+func bindExecutableReadOnly(source, target string) error {
+	if err := unix.Mount(source, target, "", unix.MS_BIND, ""); err != nil {
+		return fmt.Errorf("bind mount: %w", err)
+	}
+	flags := uintptr(unix.MS_BIND | unix.MS_REMOUNT | unix.MS_RDONLY | unix.MS_NOSUID | unix.MS_NODEV)
+	if err := unix.Mount("", target, "", flags, ""); err != nil {
+		return fmt.Errorf("remount executable read-only: %w", err)
+	}
+	return nil
 }
 
 func pivotSandboxRoot(root string) error {

@@ -283,12 +283,13 @@ func (s *sandbox) ListDir(ctx context.Context, value string) ([]cellruntime.File
 	}
 	result := make([]cellruntime.FileInfo, 0, len(entries))
 	for _, entry := range entries {
-		info, err := entry.Info()
-		if err != nil {
+		var stat unix.Stat_t
+		if err := unix.Fstatat(fd, entry.Name(), &stat, unix.AT_SYMLINK_NOFOLLOW); err != nil {
 			return nil, fmt.Errorf("stat sandbox entry %s/%s: %w", clean, entry.Name(), err)
 		}
 		entryPath := path.Join(clean, entry.Name())
-		result = append(result, cellruntime.FileInfo{Path: entryPath, Size: info.Size(), Mode: info.Mode(), IsDir: info.IsDir()})
+		mode := nativeFileMode(stat.Mode)
+		result = append(result, cellruntime.FileInfo{Path: entryPath, Size: stat.Size, Mode: mode, IsDir: mode.IsDir()})
 	}
 	return result, nil
 }

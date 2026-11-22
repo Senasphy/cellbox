@@ -37,6 +37,8 @@ func TestCreateSessionCgroupWritesLimitsAndStats(t *testing.T) {
 		"pids.current":   "7",
 		"cpu.stat":       "usage_usec 99\nuser_usec 10\n",
 		"io.stat":        "8:0 rbytes=100 wbytes=200 rios=3 wios=4\n8:16 rbytes=50 wbytes=70\n",
+		"memory.events":  "low 0\nhigh 0\nmax 0\noom 1\noom_kill 2\n",
+		"pids.events":    "max 3\n",
 	} {
 		if err := os.WriteFile(filepath.Join(parent, "ses_test", file), []byte(value), 0600); err != nil {
 			t.Fatal(err)
@@ -46,7 +48,7 @@ func TestCreateSessionCgroupWritesLimitsAndStats(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stats.MemoryBytes != 1234 || stats.PIDs != 7 || stats.CPUUsageNS != 99_000 || stats.IOReadBytes != 150 || stats.IOWriteBytes != 270 {
+	if stats.MemoryBytes != 1234 || stats.PIDs != 7 || stats.CPUUsageNS != 99_000 || stats.IOReadBytes != 150 || stats.IOWriteBytes != 270 || stats.OOMKills != 2 || stats.PIDsMaxEvents != 3 {
 		t.Fatalf("stats = %+v", stats)
 	}
 	if err := cgroup.UpdateLimits(runtime.Limits{CPUMillicores: 1200, MemoryMB: 512, PIDs: 64}); err != nil {
@@ -61,6 +63,9 @@ func TestCreateSessionCgroupRejectsUnsafeIDAndLimits(t *testing.T) {
 	}
 	if _, err := CreateSessionCgroup(parent, "ses_bad", runtime.Limits{}); err == nil {
 		t.Fatal("accepted empty limits")
+	}
+	if _, err := CreateSessionCgroup(parent, "ses_disk", runtime.Limits{CPUMillicores: 1000, MemoryMB: 256, PIDs: 64, DiskMB: 10}); err != nil {
+		t.Fatalf("native cgroup rejected limits with a disk quota: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(parent, "ses_bad")); !os.IsNotExist(err) {
 		t.Fatalf("failed create left a cgroup directory: %v", err)
@@ -87,7 +92,10 @@ func TestInitializeCgroupRootRequiresControllersAndCreatesHierarchy(t *testing.T
 		t.Fatal(err)
 	}
 	if got, _ := os.ReadFile(filepath.Join(root, "cgroup.procs")); string(got) != "123" {
-		t.Fatalf("service cgroup.procs = %q", got)
+		t.Fatalf("delegated parent fixture cgroup.procs = %q", got)
+	}
+	if got, _ := os.ReadFile(filepath.Join(root, "main", "cgroup.procs")); string(got) != "123" {
+		t.Fatalf("service leaf cgroup.procs = %q; want service PID moved into main", got)
 	}
 	if got, _ := os.ReadFile(filepath.Join(root, "cgroup.subtree_control")); string(got) != "+cpu +memory +pids +io" {
 		t.Fatalf("root subtree controllers = %q", got)

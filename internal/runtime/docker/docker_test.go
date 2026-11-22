@@ -557,6 +557,9 @@ func TestExecTimeoutKillsDockerContainer(t *testing.T) {
 	}))
 	defer func() { close(release); server.Close() }()
 	box := &sandbox{runtime: testRuntime(server), id: "c1"}
+	if !box.runtime.Capabilities().TimeoutKillsSession {
+		t.Fatal("Docker timeout behavior is not advertised")
+	}
 	handle, err := box.Exec(context.Background(), runtime.ExecRequest{Argv: []string{"sleep", "10"}, TimeoutMS: 10})
 	if err != nil {
 		t.Fatal(err)

@@ -34,9 +34,9 @@ func newImageStore(root string) *imageStore { return &imageStore{root: root} }
 
 // Ensure pulls the host-platform image, verifies and flattens its layers, and
 // publishes the rootfs atomically under its content digest.
-func (s *imageStore) Ensure(ctx context.Context, reference string) (cellruntime.ImageInfo, string, error) {
+func (s *imageStore) Ensure(ctx context.Context, reference string) (cellruntime.ImageInfo, string, map[string]string, error) {
 	if strings.TrimSpace(reference) == "" {
-		return cellruntime.ImageInfo{}, "", errors.New("image reference must not be empty")
+		return cellruntime.ImageInfo{}, "", nil, errors.New("image reference must not be empty")
 	}
 	value, err, _ := s.group.Do(reference, func() (any, error) {
 		ref, err := name.ParseReference(reference)
@@ -55,6 +55,14 @@ func (s *imageStore) Ensure(ctx context.Context, reference string) (cellruntime.
 		if err != nil {
 			return nil, fmt.Errorf("read image size: %w", err)
 		}
+		configFile, err := image.ConfigFile()
+		if err != nil {
+			return nil, fmt.Errorf("read image config: %w", err)
+		}
+		imageEnv, err := parseImageEnvironment(configFile.Config.Env)
+		if err != nil {
+			return nil, fmt.Errorf("parse image environment: %w", err)
+		}
 		imagesDir := filepath.Join(s.root, "images")
 		if err := os.MkdirAll(imagesDir, 0700); err != nil {
 			return nil, fmt.Errorf("create image cache: %w", err)
@@ -62,7 +70,7 @@ func (s *imageStore) Ensure(ctx context.Context, reference string) (cellruntime.
 		destination := filepath.Join(imagesDir, digest.Hex)
 		rootfs := filepath.Join(destination, "rootfs")
 		if info, err := os.Stat(rootfs); err == nil && info.IsDir() {
-			return imageStoreResult{info: cellruntime.ImageInfo{Reference: reference, Digest: digest.String(), Size: size}, rootfs: rootfs}, nil
+			return imageStoreResult{info: cellruntime.ImageInfo{Reference: reference, Digest: digest.String(), Size: size}, rootfs: rootfs, env: imageEnv}, nil
 		}
 		tmp, err := os.MkdirTemp(imagesDir, ".pull-*")
 		if err != nil {
@@ -102,22 +110,35 @@ func (s *imageStore) Ensure(ctx context.Context, reference string) (cellruntime.
 		}
 		if err := os.Rename(tmp, destination); err != nil {
 			if info, statErr := os.Stat(rootfs); statErr == nil && info.IsDir() {
-				return imageStoreResult{info: cellruntime.ImageInfo{Reference: reference, Digest: digest.String(), Size: size}, rootfs: rootfs}, nil
+				return imageStoreResult{info: cellruntime.ImageInfo{Reference: reference, Digest: digest.String(), Size: size}, rootfs: rootfs, env: imageEnv}, nil
 			}
 			return nil, fmt.Errorf("publish image rootfs: %w", err)
 		}
-		return imageStoreResult{info: cellruntime.ImageInfo{Reference: reference, Digest: digest.String(), Size: size}, rootfs: rootfs}, nil
+		return imageStoreResult{info: cellruntime.ImageInfo{Reference: reference, Digest: digest.String(), Size: size}, rootfs: rootfs, env: imageEnv}, nil
 	})
 	if err != nil {
-		return cellruntime.ImageInfo{}, "", err
+		return cellruntime.ImageInfo{}, "", nil, err
 	}
 	result := value.(imageStoreResult)
-	return result.info, result.rootfs, nil
+	return result.info, result.rootfs, cloneEnv(result.env), nil
 }
 
 type imageStoreResult struct {
 	info   cellruntime.ImageInfo
 	rootfs string
+	env    map[string]string
+}
+
+func parseImageEnvironment(values []string) (map[string]string, error) {
+	env := make(map[string]string, len(values))
+	for _, value := range values {
+		key, content, ok := strings.Cut(value, "=")
+		if !ok || key == "" || strings.ContainsAny(key, "=\x00") || strings.IndexByte(content, 0) >= 0 {
+			return nil, fmt.Errorf("invalid OCI environment entry %q", value)
+		}
+		env[key] = content
+	}
+	return env, nil
 }
 
 func applyImageLayer(root string, input io.Reader, alreadyExpanded int64) (int64, error) {

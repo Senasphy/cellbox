@@ -54,7 +54,7 @@ func (*Runtime) Name() string { return "docker" }
 
 // Capabilities reports Docker backend support.
 func (r *Runtime) Capabilities() runtime.Capabilities {
-	return runtime.Capabilities{Snapshots: true, CPULimits: true, TTY: r.socket != ""}
+	return runtime.Capabilities{Snapshots: true, CPULimits: true, TTY: r.socket != "", TTYExec: r.socket != "", TimeoutKillsSession: true}
 }
 
 // Reconcile removes every container previously created for a cellbox session.
@@ -229,6 +229,10 @@ func (r *Runtime) RemoveImage(ctx context.Context, ref string) error {
 		return err
 	}
 	return resp.Body.Close()
+}
+
+func (r *Runtime) DeleteSnapshot(ctx context.Context, id string) error {
+	return r.RemoveImage(ctx, id)
 }
 
 // Create starts an isolated container with the requested resource limits.

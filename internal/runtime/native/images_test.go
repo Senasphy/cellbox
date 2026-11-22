@@ -33,6 +33,22 @@ func tarLayer(t *testing.T, entries ...tar.Header) *bytes.Buffer {
 	return &buffer
 }
 
+func TestParseImageEnvironmentAndSessionOverrides(t *testing.T) {
+	imageEnv, err := parseImageEnvironment([]string{"PATH=/usr/local/bin:/usr/bin", "HOME=/root", "EMPTY="})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := mergeEnv(imageEnv, map[string]string{"PATH": "/custom/bin", "CELLBOX_TEST": "1"})
+	if got["PATH"] != "/custom/bin" || got["HOME"] != "/root" || got["EMPTY"] != "" || got["CELLBOX_TEST"] != "1" {
+		t.Fatalf("merged image and session environment = %#v", got)
+	}
+	for _, invalid := range []string{"", "NO_EQUALS", "=empty-key", "BAD\x00KEY=value", "BAD=value\x00suffix"} {
+		if _, err := parseImageEnvironment([]string{invalid}); err == nil {
+			t.Errorf("accepted invalid OCI environment value %q", invalid)
+		}
+	}
+}
+
 func TestApplyImageLayerWhiteoutsAndSafeExtraction(t *testing.T) {
 	root := t.TempDir()
 	if err := os.Mkdir(filepath.Join(root, "etc"), 0755); err != nil {

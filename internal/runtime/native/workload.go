@@ -19,7 +19,7 @@ import (
 )
 
 const (
-	maxWorkloadOutput = 512 << 10
+	maxWorkloadOutput = runtime.MaxExecOutputBytes
 	maxWorkloadArg    = 32 << 10
 	maxWorkloadArgs   = 256
 	workloadChunkSize = 16 << 10
@@ -132,7 +132,12 @@ func runWorkloadWithCallbacks(payload json.RawMessage, emit func(runtime.OutputC
 			return nil, err
 		}
 	}
-	command := exec.Command("/proc/self/exe")
+	helperPath := "/run/cellbox/cellbox-exec"
+	if _, err := os.Stat(helperPath); err != nil {
+		// Unit tests execute outside the sandbox root where the helper is mounted.
+		helperPath = "/proc/self/exe"
+	}
+	command := exec.Command(helperPath)
 	command.Args = []string{"cellbox-exec"}
 	command.Dir = "/"
 	command.Env = os.Environ()
@@ -150,7 +155,7 @@ func runWorkloadWithCallbacks(payload json.RawMessage, emit func(runtime.OutputC
 		command.Stderr = outputStream{collector: collector, stream: "stderr", emit: emit}
 	}
 	started := time.Now()
-	if err := command.Start(); err != nil {
+	if err := startTrackedHelper(command); err != nil {
 		configRead.Close()
 		configWrite.Close()
 		execErrorRead.Close()
@@ -169,7 +174,7 @@ func runWorkloadWithCallbacks(payload json.RawMessage, emit func(runtime.OutputC
 	if _, err := configWrite.Write(helperRequest); err != nil {
 		_ = configWrite.Close()
 		_ = command.Process.Kill()
-		_ = command.Wait()
+		_ = waitTrackedHelper(command)
 		_ = execErrorRead.Close()
 		if master != nil {
 			_ = master.Close()
@@ -181,14 +186,14 @@ func runWorkloadWithCallbacks(payload json.RawMessage, emit func(runtime.OutputC
 	_ = execErrorRead.Close()
 	if readErr != nil {
 		_ = command.Process.Kill()
-		_ = command.Wait()
+		_ = waitTrackedHelper(command)
 		if master != nil {
 			_ = master.Close()
 		}
 		return nil, fmt.Errorf("read exec helper error: %w", readErr)
 	}
 	if len(execError) > 0 {
-		_ = command.Wait()
+		_ = waitTrackedHelper(command)
 		if master != nil {
 			_ = master.Close()
 		}
@@ -197,7 +202,7 @@ func runWorkloadWithCallbacks(payload json.RawMessage, emit func(runtime.OutputC
 	if master != nil {
 		if err := onTerminal(master); err != nil {
 			_ = syscall.Kill(-command.Process.Pid, syscall.SIGKILL)
-			_ = command.Wait()
+			_ = waitTrackedHelper(command)
 			_ = master.Close()
 			return nil, fmt.Errorf("send PTY master descriptor: %w", err)
 		}
@@ -224,7 +229,7 @@ func runWorkloadWithCallbacks(payload json.RawMessage, emit func(runtime.OutputC
 		}(command.Process.Pid)
 	}
 	waitResult := make(chan error, 1)
-	go func() { waitResult <- command.Wait() }()
+	go func() { waitResult <- waitTrackedHelper(command) }()
 	timedOut := false
 	if request.TimeoutMS > 0 {
 		timer := time.NewTimer(time.Duration(request.TimeoutMS) * time.Millisecond)
