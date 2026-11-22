@@ -1449,6 +1449,7 @@ sandboxd: Build Specification
        memory_overcommit: 1.0
        cpu_overcommit: 4.0
        queue_wait_s: 5
+       min_free_disk_mb: 1024
      pool:
          enabled: true
          per_image: 2

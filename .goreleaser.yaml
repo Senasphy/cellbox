@@ -1,0 +1,55 @@
+version: 2
+project_name: cellbox
+
+builds:
+  - id: cellbox
+    main: ./cmd/cellbox
+    binary: cellbox
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+    mod_timestamp: '{{ .CommitTimestamp }}'
+
+archives:
+  - id: cellbox
+    ids:
+      - cellbox
+    formats:
+      - tar.gz
+    name_template: '{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}'
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: cellbox_checksums.txt
+  algorithm: sha256
+
+sboms:
+  - artifacts: archive
+
+signs:
+  - cmd: cosign
+    signature: '${artifact}.sigstore.json'
+    args:
+      - sign-blob
+      - '--bundle=${signature}'
+      - '${artifact}'
+      - --yes
+    artifacts: checksum
+
+release:
+  github:
+    owner: Senasphy
+    name: cellbox
+  draft: true
+  prerelease: auto
+  name_template: 'Cellbox {{ .Version }}'

@@ -18,10 +18,14 @@ make build
 
 Set `CELLBOX_KEY` to an API key and run a one-off command with `cellbox run --image alpine:latest -- sh -c 'echo hello'`. The command creates an isolated session with networking disabled, streams output, preserves the command's exit status, and destroys the session afterward. Set `CELLBOX_URL` or pass `--url` to use a service at another address.
 
-The currently implemented endpoints and a Docker-backed curl walkthrough are in [docs/API.md](docs/API.md). The walkthrough is documented but has not been verified against a live Docker daemon.
+The currently implemented endpoints and a Docker-backed curl walkthrough are in [docs/API.md](docs/API.md). The Docker runtime contract and API walkthrough passed locally against Docker Engine 29.10.0 on 2026-11-21.
 
 ## Security model
 
 The native backend isolates workloads using Linux user, mount, PID, network, IPC, UTS and cgroup namespaces, cgroup v2 resource limits, a seccomp filter and capability dropping. It shares the host kernel, so a kernel vulnerability can allow escape. For hostile multi-tenant workloads, run cellbox inside a dedicated virtual machine. Never expose the service to untrusted networks without TLS and the quotas and egress policy described in the documentation.
 
-The statement above describes the target native backend, which is not implemented yet. The current Docker bootstrap backend applies daemon-managed container limits and hardening options, but it is not the specified native isolation design and has not passed its live-daemon contract walkthrough. Its effective protections depend on the Docker-compatible daemon and host configuration. Do not use it for hostile workloads.
+The current implementation enforces a soft per-session disk quota by scanning the writable overlay every two seconds; a live over-quota check passed in a delegated cgroup scope. The shared basic runtime contract passes in that scope, but the full security, resource-enforcement, cleanup/chaos, and benchmark acceptance checks have not passed. Continuous cgroup event monitoring remains incomplete. The shared terminal API supports reconnecting to a live PTY with 256 KiB scrollback and a fixed 30-second grace period; the Docker-backed browser reconnect flow passed locally.
+
+The Docker backend applies daemon-managed container limits and hardening options, but it is not the specified native isolation design. The Docker runtime contract and API walkthrough passed locally against Docker Engine 29.10.0; hosted CI has not been rerun for the current work. Its effective protections depend on the Docker-compatible daemon and host configuration. Do not use it for hostile workloads.
+
+For vulnerability reporting, deployment requirements, and the control-by-control risk assessment, see [SECURITY.md](SECURITY.md), [docs/OPERATIONS.md](docs/OPERATIONS.md), and [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md).

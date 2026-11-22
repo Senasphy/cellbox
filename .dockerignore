@@ -1,0 +1,13 @@
+.git
+.github
+.next
+**/node_modules
+**/__pycache__
+dist
+bin
+coverage.out
+*.db
+*.db-shm
+*.db-wal
+sdk/python/.pytest_cache
+sdk/typescript/dist

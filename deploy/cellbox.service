@@ -1,0 +1,22 @@
+[Unit]
+Description=Cellbox disposable sandbox service
+After=network.target
+
+[Service]
+Type=simple
+User=cellbox
+Group=cellbox
+ExecStart=/usr/bin/cellbox serve --backend native --data-dir /var/lib/cellbox
+Restart=on-failure
+RestartSec=3s
+Delegate=yes
+StateDirectory=cellbox
+StateDirectoryMode=0700
+ProtectSystem=strict
+ReadWritePaths=/var/lib/cellbox
+PrivateTmp=yes
+NoNewPrivileges=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,33 @@
+services:
+  cellbox:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      args:
+        VERSION: ${CELLBOX_VERSION:-dev}
+    image: cellbox:demo
+    restart: unless-stopped
+    environment:
+      CELLBOX_BACKEND: docker
+      CELLBOX_DOCKER_SOCKET: /var/run/docker.sock
+      CELLBOX_LISTEN: 0.0.0.0:8080
+      CELLBOX_DATA_DIR: /var/lib/cellbox
+    command:
+      - serve
+      - --backend
+      - docker
+      - --listen
+      - 0.0.0.0:8080
+      - --data-dir
+      - /var/lib/cellbox
+      - --allow-remote
+    ports:
+      - 127.0.0.1:8080:8080
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - cellbox-data:/var/lib/cellbox
+    group_add:
+      - ${DOCKER_GID:-0}
+
+volumes:
+  cellbox-data:

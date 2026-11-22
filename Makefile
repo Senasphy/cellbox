@@ -13,8 +13,15 @@ lint:
 test-integration:
 	CELLBOX_RUN_DOCKER_CONTRACT=1 go test -race ./internal/runtime/docker -run '^TestRuntimeContract$$' -count=1
 
-test-security fuzz bench release-dry-run:
+test-security fuzz:
 	@echo "$@ is added in the corresponding implementation phase"
+
+release-dry-run:
+	goreleaser check
+	goreleaser release --snapshot --clean --skip=sign
+
+bench:
+	python3 scripts/benchmark-create.py
 
 web:
 	npm ci --prefix web
