@@ -91,7 +91,17 @@ func TestDockerAllowlistedHTTPSUsesEgressProxy(t *testing.T) {
 		t.Fatalf("create allowlisted Docker sandbox: %v", err)
 	}
 	defer box.Destroy(context.Background())
-	handle, err := box.Exec(ctx, runtime.ExecRequest{Argv: []string{"curl", "--fail", "--silent", "--show-error", "--max-time", "20", "https://example.com/"}, TimeoutMS: 30000, OutputLimit: 16 << 10})
+	direct, err := box.Exec(ctx, runtime.ExecRequest{Argv: []string{"curl", "--noproxy", "*", "--connect-timeout", "3", "--max-time", "5", "https://1.1.1.1/"}, TimeoutMS: 7000, OutputLimit: 4096})
+	if err != nil {
+		t.Fatalf("start direct-network bypass probe: %v", err)
+	}
+	for range direct.Output() {
+	}
+	directResult, err := direct.Wait(ctx)
+	if err != nil || directResult.ExitCode == 0 {
+		t.Fatalf("direct network bypass unexpectedly succeeded: result=%+v err=%v", directResult, err)
+	}
+	handle, err := box.Exec(ctx, runtime.ExecRequest{Argv: []string{"curl", "--retry", "3", "--retry-connrefused", "--retry-delay", "1", "--fail", "--silent", "--show-error", "--max-time", "20", "https://example.com/"}, TimeoutMS: 30000, OutputLimit: 16 << 10})
 	if err != nil {
 		t.Fatalf("start proxied curl: %v", err)
 	}
