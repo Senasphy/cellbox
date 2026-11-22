@@ -453,6 +453,84 @@ func TestCreateRejectsUnsupportedNetworkMode(t *testing.T) {
 	}
 }
 
+func TestCreateWiresEgressProxyIntoIsolatedContainer(t *testing.T) {
+	helper := filepath.Join(t.TempDir(), "cellbox")
+	if err := os.WriteFile(helper, []byte("test-helper"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	var created map[string]any
+	var hostConfig map[string]any
+	var archiveName string
+	var archiveBody []byte
+	engine := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1.41/containers/create":
+			if err := json.NewDecoder(r.Body).Decode(&created); err != nil {
+				t.Error(err)
+			}
+			hostConfig = created["HostConfig"].(map[string]any)
+			_, _ = w.Write([]byte(`{"Id":"container-1"}`))
+		case r.Method == http.MethodPut && r.URL.Path == "/v1.41/containers/container-1/archive":
+			archiveBody, _ = io.ReadAll(r.Body)
+			tr := tar.NewReader(bytes.NewReader(archiveBody))
+			hdr, err := tr.Next()
+			if err != nil {
+				t.Error(err)
+			} else {
+				archiveName = hdr.Name
+			}
+			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodPost && r.URL.Path == "/v1.41/containers/container-1/start":
+			w.WriteHeader(http.StatusNoContent)
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1.41/containers/container-1":
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.String())
+			http.NotFound(w, r)
+		}
+	}))
+	defer engine.Close()
+	r := &Runtime{client: engine.Client(), host: engine.URL, helperPath: helper}
+	box, err := r.Create(context.Background(), runtime.SandboxSpec{
+		ID: "ses_egress", Image: runtime.ImageInfo{Reference: "image"},
+		Limits:        runtime.Limits{MemoryMB: 256, CPUMillicores: 500, PIDs: 32},
+		NetworkPolicy: runtime.NetworkPolicy{Mode: "allowlist", Allow: []runtime.EgressRule{{Host: "example.com", Ports: []int{443}}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer box.Destroy(context.Background())
+	if hostConfig["NetworkMode"] != "none" {
+		t.Fatalf("network mode=%v, want none", hostConfig["NetworkMode"])
+	}
+	binds, ok := hostConfig["Binds"].([]any)
+	if !ok || len(binds) != 1 || !strings.HasSuffix(binds[0].(string), ":"+dockerEgressSocket) {
+		t.Fatalf("proxy socket bind=%v", hostConfig["Binds"])
+	}
+	entrypoint := created["Entrypoint"].([]any)
+	if len(entrypoint) != 1 || entrypoint[0] != "/.cellbox-forwarder-ses_egress" {
+		t.Fatalf("entrypoint=%v", entrypoint)
+	}
+	proxyEnv := false
+	for _, value := range created["Env"].([]any) {
+		if value == "HTTP_PROXY=http://127.0.0.1:3128" {
+			proxyEnv = true
+		}
+	}
+	if !proxyEnv {
+		t.Fatalf("proxy environment missing: %v", created["Env"])
+	}
+	if archiveName != ".cellbox-forwarder-ses_egress" || len(archiveBody) == 0 {
+		t.Fatalf("helper archive name=%q size=%d", archiveName, len(archiveBody))
+	}
+	events, ok := box.(interface {
+		EgressEvents() <-chan runtime.EgressEvent
+	})
+	if !ok || events.EgressEvents() == nil {
+		t.Fatal("Docker sandbox does not expose egress events")
+	}
+}
+
 func TestDockerDoesNotClaimDiskQuotaSupport(t *testing.T) {
 	if New("").Capabilities().DiskLimits {
 		t.Fatal("Docker runtime must not claim unsupported disk quota enforcement")
