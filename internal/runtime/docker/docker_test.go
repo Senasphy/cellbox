@@ -531,6 +531,38 @@ func TestCreateWiresEgressProxyIntoIsolatedContainer(t *testing.T) {
 	}
 }
 
+func TestDockerExecCannotOverrideEgressProxyEnvironment(t *testing.T) {
+	box := &sandbox{egress: &dockerEgress{}}
+	env := box.egressEnv(map[string]string{
+		"HTTP_PROXY":  "http://attacker.invalid:8080",
+		"HTTPS_PROXY": "http://attacker.invalid:8080",
+		"http_proxy":  "http://attacker.invalid:8080",
+		"https_proxy": "http://attacker.invalid:8080",
+		"NO_PROXY":    "*",
+		"no_proxy":    "*",
+	})
+	got := make(map[string]string, len(env))
+	for _, entry := range env {
+		key, value, ok := strings.Cut(entry, "=")
+		if !ok {
+			t.Fatalf("invalid environment entry %q", entry)
+		}
+		got[key] = value
+	}
+	for key, want := range map[string]string{
+		"HTTP_PROXY":  "http://127.0.0.1:3128",
+		"HTTPS_PROXY": "http://127.0.0.1:3128",
+		"http_proxy":  "http://127.0.0.1:3128",
+		"https_proxy": "http://127.0.0.1:3128",
+		"NO_PROXY":    "localhost,127.0.0.1",
+		"no_proxy":    "localhost,127.0.0.1",
+	} {
+		if got[key] != want {
+			t.Errorf("%s=%q, want %q", key, got[key], want)
+		}
+	}
+}
+
 func TestDockerDoesNotClaimDiskQuotaSupport(t *testing.T) {
 	if New("").Capabilities().DiskLimits {
 		t.Fatal("Docker runtime must not claim unsupported disk quota enforcement")
