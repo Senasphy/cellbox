@@ -257,6 +257,35 @@ func TestProxyRejectsMixedPublicPrivateDNSAnswerBeforeDial(t *testing.T) {
 	}
 }
 
+func TestProxyPinsAddressWhenDNSAnswerChangesBetweenLookups(t *testing.T) {
+	proxy, err := New(filepath.Join(t.TempDir(), "proxy.sock"), Policy{Mode: "internet"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lookups := 0
+	proxy.lookup = func(context.Context, string) ([]netip.Addr, error) {
+		lookups++
+		if lookups == 1 {
+			return []netip.Addr{netip.MustParseAddr("8.8.8.8")}, nil
+		}
+		return []netip.Addr{netip.MustParseAddr("10.0.0.5")}, nil
+	}
+	dialTarget := ""
+	proxy.dial = func(_ context.Context, _, address string) (net.Conn, error) {
+		dialTarget = address
+		return nil, fmt.Errorf("stop after validating dial target")
+	}
+	request := httptest.NewRequest(http.MethodGet, "http://rebinding.example/", nil)
+	response := httptest.NewRecorder()
+	proxy.serveHTTP(response, request)
+	if lookups != 1 || dialTarget != "8.8.8.8:80" {
+		t.Fatalf("DNS lookups=%d dial target=%q, want one lookup pinned to 8.8.8.8:80", lookups, dialTarget)
+	}
+	if response.Code != http.StatusBadGateway || response.Header().Get("X-Cellbox-Deny-Reason") != "connect_failed" {
+		t.Fatalf("status=%d deny reason=%q", response.Code, response.Header().Get("X-Cellbox-Deny-Reason"))
+	}
+}
+
 func TestProxyRejectsConnectedPeerDifferentFromValidatedIP(t *testing.T) {
 	proxy, err := New(filepath.Join(t.TempDir(), "proxy.sock"), Policy{Mode: "internet"}, nil)
 	if err != nil {
