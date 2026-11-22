@@ -263,6 +263,98 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/sessions/{id}/egress-log": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get: operations["listSessionEgressLog"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/sessions/{id}/replay": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        /** @description Paged, timestamp-ordered exec boundaries and base64 output records for a session. */
+        get: operations["replaySession"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/sessions/{id}/snapshots": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get: operations["listSessionSnapshots"];
+        put?: never;
+        post: operations["createSnapshot"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/sessions/{id}/fork": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Create a child session from an existing snapshot, or snapshot the current session and fork it in one call when snapshot_id is omitted. */
+        post: operations["forkSession"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/snapshots/{snapshotID}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                snapshotID: string;
+            };
+            cookie?: never;
+        };
+        get: operations["getSnapshot"];
+        put?: never;
+        post?: never;
+        delete: operations["deleteSnapshot"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/sessions/{id}/metrics": {
         parameters: {
             query?: never;
@@ -329,6 +421,25 @@ export interface paths {
             cookie?: never;
         };
         get: operations["getExec"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/sessions/{id}/execs/{execID}/asciicast": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                execID: string;
+            };
+            cookie?: never;
+        };
+        get: operations["exportAsciicast"];
         put?: never;
         post?: never;
         delete?: never;
@@ -463,6 +574,19 @@ export interface components {
             /** Format: int64 */
             size: number;
         };
+        Snapshot: {
+            id: string;
+            source_session_id: string;
+            parent_snapshot_id?: string;
+            /** Format: int64 */
+            size_bytes: number;
+            flattened?: boolean;
+            /** Format: date-time */
+            created_at: string;
+            labels: {
+                [key: string]: string;
+            };
+        };
         Problem: {
             type?: string;
             title: string;
@@ -472,14 +596,23 @@ export interface components {
         };
         System: {
             backend: string;
-            capabilities: Record<string, never>;
-            /** @description Effective service settings. TLS private key path is intentionally omitted; tls.key_configured reports only whether one is set. */
-            effective_config: {
-                [key: string]: unknown;
+            capabilities: {
+                snapshots?: boolean;
+                tty?: boolean;
+                tty_exec?: boolean;
+                cpu_limits?: boolean;
+                disk_limits?: boolean;
+                timeout_kills_session?: boolean;
+                egress_policy?: boolean;
+                warm_pool?: boolean;
             };
             /** @enum {string} */
             doctor_status: "checking" | "ready" | "degraded";
             doctor_checks: string[];
+            /** @description Effective service settings. TLS private key path is intentionally omitted; tls.key_configured reports only whether one is set. */
+            effective_config: {
+                [key: string]: unknown;
+            };
         };
         CreateKey: {
             name: string;
@@ -510,6 +643,7 @@ export interface components {
             id: string;
             image: string;
             image_digest?: string;
+            parent_snapshot_id?: string;
             state: string;
             limits: Record<string, never>;
             network_policy: Record<string, never>;
@@ -527,6 +661,10 @@ export interface components {
             expires_at: string;
             failure_reason?: string;
         };
+        SessionList: {
+            items: components["schemas"]["Session"][];
+            next_cursor?: string;
+        };
         SessionMetrics: {
             /** Format: date-time */
             sampled_at: string;
@@ -539,6 +677,8 @@ export interface components {
             io_read_bytes: number;
             /** Format: uint64 */
             io_write_bytes: number;
+            /** Format: uint64 */
+            oom_kills: number;
             limits: Record<string, never>;
         };
         SessionSnapshotList: {
@@ -559,10 +699,6 @@ export interface components {
                 /** Format: uint64 */
                 memory_bytes?: number;
             }[];
-        };
-        SessionList: {
-            items: components["schemas"]["Session"][];
-            next_cursor?: string;
         };
         Exec: {
             id: string;
@@ -615,7 +751,11 @@ export interface components {
             limits?: Record<string, never>;
             network_policy?: {
                 /** @enum {string} */
-                mode?: "none";
+                mode?: "none" | "allowlist" | "internet";
+                allow?: {
+                    host: string;
+                    ports: number[];
+                }[];
             };
             env?: {
                 [key: string]: string;
@@ -1117,6 +1257,255 @@ export interface operations {
             };
         };
     };
+    listSessionEgressLog: {
+        parameters: {
+            query?: {
+                limit?: number;
+                cursor?: string;
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Egress decisions for the session */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Problem response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    replaySession: {
+        parameters: {
+            query?: {
+                limit?: number;
+                cursor?: string;
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Replay events ordered by timestamp */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: {
+                            /** @enum {string} */
+                            type: "exec.start" | "output" | "exec.end";
+                            exec_id: string;
+                            /** Format: date-time */
+                            timestamp: string;
+                            /** @enum {string} */
+                            stream?: "stdout" | "stderr" | "tty";
+                            /** Format: byte */
+                            data?: string;
+                            exec?: components["schemas"]["Exec"];
+                        }[];
+                        next_cursor?: string;
+                    };
+                };
+            };
+            /** @description Problem response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    listSessionSnapshots: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Snapshots created from this session */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["Snapshot"][];
+                    };
+                };
+            };
+            /** @description Problem response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    createSnapshot: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": {
+                    labels?: {
+                        [key: string]: string;
+                    };
+                };
+            };
+        };
+        responses: {
+            /** @description Immutable filesystem snapshot created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Snapshot"];
+                };
+            };
+            /** @description Problem response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    forkSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": {
+                    snapshot_id?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Forked session created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Session"];
+                };
+            };
+            /** @description Problem response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    getSnapshot: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                snapshotID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Snapshot metadata */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Snapshot"];
+                };
+            };
+            /** @description Problem response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    deleteSnapshot: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                snapshotID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Snapshot deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Problem response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     getSessionMetrics: {
         parameters: {
             query?: never;
@@ -1281,6 +1670,47 @@ export interface operations {
                 };
             };
             /** @description Exec not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Problem response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    exportAsciicast: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                execID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Asciicast v2 recording for a TTY exec */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/x-asciicast": string;
+                };
+            };
+            /** @description TTY exec not found */
             404: {
                 headers: {
                     [name: string]: unknown;

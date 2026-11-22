@@ -43,6 +43,7 @@ export default function Terminal({ sessionID }: { sessionID: string }) {
       socket.binaryType = "arraybuffer";
       socket.onopen = () => {
         reconnectDelay = 500;
+        if (hasConnected) terminal.reset();
         hasConnected = true;
         setStatus("Connected");
         socket?.send(JSON.stringify({ type: "resize", columns: terminal.cols, rows: terminal.rows }));

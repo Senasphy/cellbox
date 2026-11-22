@@ -19,6 +19,19 @@ test("dashboard creates a sandbox, streams a command, transfers a file and loads
   let createdID = "";
   const failures: string[] = [];
   let expectedInvalidLogin = false;
+  await page.addInitScript(() => {
+    const sockets: WebSocket[] = [];
+    (window as unknown as { __cellboxSockets: WebSocket[] }).__cellboxSockets = sockets;
+    const OriginalWebSocket = window.WebSocket;
+    const tracked = new Proxy(OriginalWebSocket, {
+      construct(target, args) {
+        const socket = Reflect.construct(target, args) as WebSocket;
+        sockets.push(socket);
+        return socket;
+      },
+    });
+    Object.defineProperty(window, "WebSocket", { value: tracked });
+  });
   page.on("pageerror", error => failures.push(error.message));
   page.on("console", message => { if (message.type() === "error" && !(expectedInvalidLogin && message.text().includes("401 (Unauthorized)"))) failures.push(message.text()); });
   try {
@@ -103,6 +116,16 @@ test("dashboard creates a sandbox, streams a command, transfers a file and loads
       await terminalInput.pressSequentially("printf terminal-stream-ok", {delay:50});
       await terminalInput.press("Enter");
       await expect(page.getByRole("log", {name:"Terminal output"})).toContainText("terminal-stream-ok", {timeout:20_000});
+      await terminalInput.pressSequentially("printf \"$(echo cmVhdHRhY2gtYmVmb3JlCg== | base64 -d)\"; sleep 4; printf \"$(echo cmVhdHRhY2gtYWZ0ZXIK | base64 -d)\"", {delay:10});
+      await terminalInput.press("Enter");
+      const terminalLog = page.getByRole("log", {name:"Terminal output"});
+      await expect(terminalLog).toContainText("reattach-before", {timeout:10_000});
+      const socketCount = await page.evaluate(() => (window as unknown as {__cellboxSockets:WebSocket[]}).__cellboxSockets.length);
+      await page.evaluate((index) => (window as unknown as {__cellboxSockets:WebSocket[]}).__cellboxSockets[index].close(), socketCount - 1);
+      await expect.poll(() => page.evaluate(() => (window as unknown as {__cellboxSockets:WebSocket[]}).__cellboxSockets.length), {timeout:20_000}).toBeGreaterThan(socketCount);
+      await expect(terminalLog).toContainText("reattach-after", {timeout:20_000});
+      const restoredOutput = await terminalLog.innerText();
+      expect([...restoredOutput.matchAll(/reattach-before/g)]).toHaveLength(1);
       await auditLightTheme(page);
       await page.getByRole("button", { name: "Metrics", exact: true }).click();
       await expect(page.getByRole("img", { name: "CPU chart" })).toBeVisible({ timeout: 20_000 });
