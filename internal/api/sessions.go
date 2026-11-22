@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/senasphy/cellbox/internal/api/problem"
+	"github.com/senasphy/cellbox/internal/egress"
 	"github.com/senasphy/cellbox/internal/id"
 	"github.com/senasphy/cellbox/internal/runtime"
 	"github.com/senasphy/cellbox/internal/store"
@@ -26,28 +27,29 @@ type sessionLimitsRequest struct {
 }
 
 type createSessionRequest struct {
-	Image         string               `json:"image"`
-	Limits        sessionLimitsRequest `json:"limits,omitempty"`
-	NetworkPolicy map[string]any       `json:"network_policy,omitempty"`
-	Env           map[string]string    `json:"env,omitempty"`
-	Labels        map[string]string    `json:"labels,omitempty"`
-	TTL           int                  `json:"ttl_s,omitempty"`
+	Image         string                `json:"image"`
+	Limits        sessionLimitsRequest  `json:"limits,omitempty"`
+	NetworkPolicy runtime.NetworkPolicy `json:"network_policy,omitempty"`
+	Env           map[string]string     `json:"env,omitempty"`
+	Labels        map[string]string     `json:"labels,omitempty"`
+	TTL           int                   `json:"ttl_s,omitempty"`
 }
 
 // SessionResponse is the public representation of a sandbox session.
 type SessionResponse struct {
-	ID             string            `json:"id"`
-	Image          string            `json:"image"`
-	ImageDigest    string            `json:"image_digest,omitempty"`
-	State          string            `json:"state"`
-	Limits         runtime.Limits    `json:"limits"`
-	NetworkPolicy  map[string]any    `json:"network_policy"`
-	Env            map[string]string `json:"env"`
-	Labels         map[string]string `json:"labels"`
-	CreatedAt      time.Time         `json:"created_at"`
-	LastActivityAt time.Time         `json:"last_activity_at"`
-	ExpiresAt      time.Time         `json:"expires_at"`
-	FailureReason  string            `json:"failure_reason,omitempty"`
+	ID               string            `json:"id"`
+	Image            string            `json:"image"`
+	ImageDigest      string            `json:"image_digest,omitempty"`
+	State            string            `json:"state"`
+	Limits           runtime.Limits    `json:"limits"`
+	NetworkPolicy    map[string]any    `json:"network_policy"`
+	Env              map[string]string `json:"env"`
+	Labels           map[string]string `json:"labels"`
+	CreatedAt        time.Time         `json:"created_at"`
+	LastActivityAt   time.Time         `json:"last_activity_at"`
+	ExpiresAt        time.Time         `json:"expires_at"`
+	FailureReason    string            `json:"failure_reason,omitempty"`
+	ParentSnapshotID string            `json:"parent_snapshot_id,omitempty"`
 }
 
 type sessionPersistence interface {
@@ -85,20 +87,32 @@ func (s *server) createSession(w http.ResponseWriter, r *http.Request) {
 		problem.Write(w, problem.Problem{Title: "Invalid request", Status: http.StatusUnprocessableEntity, Code: "image_required", Detail: "image is required"})
 		return
 	}
-	if len(req.NetworkPolicy) > 0 {
-		mode, ok := req.NetworkPolicy["mode"].(string)
-		if !ok || mode != "none" || len(req.NetworkPolicy) != 1 {
-			problem.Write(w, problem.Problem{Title: "Unsupported network policy", Status: http.StatusUnprocessableEntity, Code: "network_policy_unsupported", Detail: "this backend currently supports only network_policy.mode=none"})
-			return
-		}
+	if req.NetworkPolicy.Mode == "" {
+		req.NetworkPolicy.Mode = "none"
 	}
-	if err := validateEnvironment(req.Env); err != nil {
-		problem.Write(w, problem.Problem{Title: "Invalid environment", Status: http.StatusUnprocessableEntity, Code: "env_invalid", Detail: err.Error()})
+	policy := egress.Policy{Mode: req.NetworkPolicy.Mode, Allow: make([]egress.Rule, 0, len(req.NetworkPolicy.Allow)), ExtraBlockedCIDRs: s.cfg.Egress.ExtraBlockedCIDRs}
+	for _, rule := range req.NetworkPolicy.Allow {
+		policy.Allow = append(policy.Allow, egress.Rule{Host: rule.Host, Ports: rule.Ports})
+	}
+	if err := egress.ValidatePolicy(policy); err != nil {
+		problem.Write(w, problem.Problem{Title: "Invalid network policy", Status: http.StatusUnprocessableEntity, Code: "network_policy_invalid", Detail: err.Error()})
 		return
 	}
 	caps := runtime.Capabilities{}
 	if s.backend != nil {
 		caps = s.backend.Capabilities()
+	}
+	if req.NetworkPolicy.Mode != "none" && !caps.EgressPolicy {
+		problem.Write(w, problem.Problem{Title: "Unsupported network policy", Status: http.StatusUnprocessableEntity, Code: "network_policy_unsupported", Detail: "the selected runtime does not provide the egress proxy"})
+		return
+	}
+	if req.NetworkPolicy.Mode == "internet" && !s.cfg.Egress.AllowInternetMode {
+		problem.Write(w, problem.Problem{Title: "Internet egress disabled", Status: http.StatusUnprocessableEntity, Code: "network_policy_disabled", Detail: "internet egress is disabled by service configuration"})
+		return
+	}
+	if err := validateEnvironment(req.Env); err != nil {
+		problem.Write(w, problem.Problem{Title: "Invalid environment", Status: http.StatusUnprocessableEntity, Code: "env_invalid", Detail: err.Error()})
+		return
 	}
 	if req.Limits.DiskMB > 0 && !caps.DiskLimits {
 		problem.Write(w, problem.Problem{Title: "Unsupported disk limit", Status: http.StatusUnprocessableEntity, Code: "disk_limit_unsupported", Detail: "the selected runtime does not enforce per-session disk limits"})
@@ -122,7 +136,7 @@ func (s *server) createSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	limitsJSON, _ := json.Marshal(limits)
-	networkJSON, _ := json.Marshal(nonNilAnyMap(req.NetworkPolicy))
+	networkJSON, _ := json.Marshal(req.NetworkPolicy)
 	envJSON, _ := json.Marshal(nonNilMap(req.Env))
 	labelsJSON, _ := json.Marshal(nonNilMap(req.Labels))
 	record := store.SessionRecord{ID: sessionID, OwnerKeyID: key.ID, ImageReference: req.Image, State: "creating", LimitsJSON: limitsJSON, NetworkPolicyJSON: networkJSON, EnvJSON: envJSON, LabelsJSON: labelsJSON, CreatedAt: now, LastActivityAt: now, ExpiresAt: now.Add(time.Duration(limits.TTLSeconds) * time.Second)}
@@ -132,12 +146,32 @@ func (s *server) createSession(w http.ResponseWriter, r *http.Request) {
 	}
 	image, err := s.backend.EnsureImage(r.Context(), req.Image)
 	var createdSandbox runtime.Sandbox
+	var claimedWarm bool
+	createSource := "cold"
 	if err == nil {
 		record.ImageDigest = image.Digest
-		createdSandbox, err = s.backend.Create(r.Context(), runtime.SandboxSpec{ID: sessionID, Image: image, Limits: limits, Env: nonNilMap(req.Env), NetworkMode: "none"})
+		networkPolicy := req.NetworkPolicy
+		networkPolicy.ExtraBlockedCIDRs = append([]string(nil), s.cfg.Egress.ExtraBlockedCIDRs...)
+		spec := runtime.SandboxSpec{ID: sessionID, Image: image, Limits: limits, Env: nonNilMap(req.Env), NetworkMode: "none", NetworkPolicy: networkPolicy}
+		if s.pool != nil {
+			createdSandbox, claimedWarm = s.pool.Claim(r.Context(), spec)
+			if claimedWarm {
+				createSource = "warm"
+			}
+			if !claimedWarm {
+				createdSandbox, err = s.backend.Create(r.Context(), spec)
+			}
+			if err == nil && !claimedWarm {
+				s.pool.Refill(spec)
+			}
+		} else {
+			createdSandbox, err = s.backend.Create(r.Context(), spec)
+		}
 		if err == nil {
 			record.RuntimeID = createdSandbox.ID()
 			record.State = "ready"
+			record.CreateSource = createSource
+			record.LastActivityAt = time.Now().UTC()
 		}
 	}
 	if err != nil {
@@ -158,6 +192,18 @@ func (s *server) createSession(w http.ResponseWriter, r *http.Request) {
 		}
 		problem.Write(w, problem.Problem{Title: "Internal error", Status: http.StatusInternalServerError, Code: "session_persist_failed", Detail: "session started but its ready state could not be stored"})
 		return
+	}
+	if source, ok := createdSandbox.(interface {
+		LimitEvents() <-chan runtime.LimitBreach
+	}); ok {
+		go s.watchLimitEvents(sessionID, key.ID, source.LimitEvents())
+	}
+	if source, ok := createdSandbox.(interface {
+		EgressEvents() <-chan runtime.EgressEvent
+	}); ok {
+		if events := source.EgressEvents(); events != nil {
+			go s.watchEgressEvents(sessionID, key.ID, events)
+		}
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
@@ -225,16 +271,35 @@ func (s *server) deleteSession(w http.ResponseWriter, r *http.Request) {
 		problem.Write(w, problem.Problem{Title: "Not found", Status: http.StatusNotFound, Code: "session_not_found"})
 		return
 	}
-	if record.State == "stopped" || record.State == "expired" || record.State == "failed" || record.State == "lost" {
-		w.WriteHeader(http.StatusNoContent)
-		return
-	}
 	resolver, ok := s.backend.(sandboxResolver)
 	if !ok || record.RuntimeID == "" {
+		if record.State == "stopped" || record.State == "expired" || record.State == "failed" || record.State == "lost" {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
 		problem.Write(w, problem.Problem{Title: "Unavailable", Status: http.StatusServiceUnavailable, Code: "runtime_unavailable", Detail: "the runtime cannot reconnect to this session"})
 		return
 	}
 	box := resolver.SandboxByID(record.RuntimeID)
+	if record.State == "stopped" || record.State == "expired" || record.State == "failed" || record.State == "lost" {
+		s.closeTerminal(record.ID)
+		if box != nil {
+			cleanupCtx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
+			err := box.Destroy(cleanupCtx)
+			cancel()
+			if err != nil {
+				problem.Write(w, problem.Problem{Title: "Session cleanup failed", Status: http.StatusBadGateway, Code: "session_destroy_failed", Detail: err.Error()})
+				return
+			}
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if box == nil {
+		problem.Write(w, problem.Problem{Title: "Unavailable", Status: http.StatusServiceUnavailable, Code: "runtime_unavailable", Detail: "the runtime session is no longer available"})
+		return
+	}
+	s.closeTerminal(record.ID)
 	record.State = "stopping"
 	record.LastActivityAt = time.Now().UTC()
 	if err = persist.UpdateSession(r.Context(), record); err != nil {
@@ -350,7 +415,7 @@ func toSessionResponse(v store.SessionRecord) SessionResponse {
 	if labels == nil {
 		labels = map[string]string{}
 	}
-	return SessionResponse{ID: v.ID, Image: v.ImageReference, ImageDigest: v.ImageDigest, State: v.State, Limits: limits, NetworkPolicy: policy, Env: env, Labels: labels, CreatedAt: v.CreatedAt, LastActivityAt: v.LastActivityAt, ExpiresAt: v.ExpiresAt, FailureReason: v.FailureReason}
+	return SessionResponse{ID: v.ID, Image: v.ImageReference, ImageDigest: v.ImageDigest, State: v.State, Limits: limits, NetworkPolicy: policy, Env: env, Labels: labels, CreatedAt: v.CreatedAt, LastActivityAt: v.LastActivityAt, ExpiresAt: v.ExpiresAt, FailureReason: v.FailureReason, ParentSnapshotID: v.ParentSnapshotID}
 }
 func writeJSON(w http.ResponseWriter, status int, value any) {
 	w.Header().Set("Content-Type", "application/json")

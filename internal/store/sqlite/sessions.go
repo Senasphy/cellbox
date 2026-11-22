@@ -59,6 +59,9 @@ func (s *Store) UpdateSession(ctx context.Context, v store.SessionRecord) error 
 	}
 	if current != v.State {
 		detail := map[string]string{"from": current, "to": v.State}
+		if current == "creating" && v.State == "ready" && (v.CreateSource == "warm" || v.CreateSource == "cold") {
+			detail["source"] = v.CreateSource
+		}
 		if err = insertAudit(ctx, tx, v.ID, v.OwnerKeyID, "session."+v.State, detail, v.LastActivityAt); err != nil {
 			return err
 		}

@@ -20,7 +20,7 @@ import (
 )
 
 const defaultExecTimeoutMS = 60_000
-const maxExecOutputBytes = 16 << 20
+const maxExecOutputBytes = runtime.MaxExecOutputBytes
 const waitResponseOutputBytes = 1 << 20
 
 type execRequest struct {
@@ -97,8 +97,8 @@ func (s *server) createExec(w http.ResponseWriter, r *http.Request) {
 		problem.Write(w, problem.Problem{Title: "Invalid command", Status: http.StatusUnprocessableEntity, Code: "exec_command_invalid", Detail: "provide exactly one of argv or shell"})
 		return
 	}
-	if req.TTY {
-		problem.Write(w, problem.Problem{Title: "TTY unsupported", Status: http.StatusUnprocessableEntity, Code: "capability_unsupported", Detail: "interactive terminal support is not available on this backend"})
+	if req.TTY && !s.backend.Capabilities().TTYExec {
+		problem.Write(w, problem.Problem{Title: "TTY unsupported", Status: http.StatusUnprocessableEntity, Code: "capability_unsupported", Detail: "TTY execs are not available on this backend"})
 		return
 	}
 	if req.TimeoutMS == 0 {
@@ -127,7 +127,12 @@ func (s *server) createExec(w http.ResponseWriter, r *http.Request) {
 		req.Cwd = cwd
 	}
 	argvJSON, _ := json.Marshal(req.Argv)
-	envJSON, _ := json.Marshal(nonNilMap(req.Env))
+	effectiveEnv, err := sessionEnvironment(session, req.Env)
+	if err != nil {
+		problem.Write(w, problem.Problem{Title: "Internal error", Status: http.StatusInternalServerError, Code: "session_env_invalid"})
+		return
+	}
+	envJSON, _ := json.Marshal(effectiveEnv)
 	execID, err := id.New("exe")
 	if err != nil {
 		problem.Write(w, problem.Problem{Title: "Internal error", Status: http.StatusInternalServerError, Code: "id_generation_failed"})
@@ -140,7 +145,7 @@ func (s *server) createExec(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	box := resolver.SandboxByID(session.RuntimeID)
-	handle, err := box.Exec(r.Context(), runtime.ExecRequest{Argv: req.Argv, Shell: req.Shell, Cwd: req.Cwd, Env: nonNilMap(req.Env), TTY: req.TTY, TimeoutMS: req.TimeoutMS, OutputLimit: maxExecOutputBytes})
+	handle, err := box.Exec(r.Context(), runtime.ExecRequest{Argv: req.Argv, Shell: req.Shell, Cwd: req.Cwd, Env: effectiveEnv, TTY: req.TTY, TimeoutMS: req.TimeoutMS, OutputLimit: maxExecOutputBytes})
 	if err != nil {
 		record.State = "failed"
 		ended := time.Now().UTC()
@@ -186,6 +191,19 @@ func (s *server) createExec(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusAccepted, toExecResponse(record, "/v1/sessions/"+session.ID+"/execs/"+execID+"/stream"))
 }
 
+func sessionEnvironment(session store.SessionRecord, overrides map[string]string) (map[string]string, error) {
+	env := make(map[string]string)
+	if len(session.EnvJSON) > 0 {
+		if err := json.Unmarshal(session.EnvJSON, &env); err != nil {
+			return nil, err
+		}
+	}
+	for key, value := range overrides {
+		env[key] = value
+	}
+	return env, nil
+}
+
 func (s *server) collectExecOutput(persist execPersistence, box runtime.Sandbox, handle runtime.ExecHandle, record store.ExecRecord, done chan<- struct{}) {
 	defer close(done)
 	defer func() {
@@ -229,7 +247,12 @@ func (s *server) collectExecOutput(persist execPersistence, box runtime.Sandbox,
 	if result.Signal != 0 {
 		record.Signal = &result.Signal
 	}
-	if err != nil {
+	if result.OOMKilled {
+		record.State = "oom_killed"
+		record.ExitCode = nil
+	} else if result.PIDsLimitHit {
+		record.State = "pids_limited"
+	} else if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
 			record.State = "timed_out"
 		} else {
@@ -245,12 +268,17 @@ func (s *server) collectExecOutput(persist execPersistence, box runtime.Sandbox,
 		record.State = "failed"
 	}
 	_ = persist.UpdateExec(context.Background(), record)
-	if record.State == "timed_out" {
+	sessionTerminated := record.State == "oom_killed" || (record.State == "timed_out" && s.backend != nil && s.backend.Capabilities().TimeoutKillsSession)
+	if sessionTerminated {
 		if sessions, ok := s.store.(sessionPersistence); ok {
 			session, err := sessions.GetSession(context.Background(), record.SessionID)
 			if err == nil {
 				session.State = "failed"
-				session.FailureReason = "exec timed out; Docker stopped the container"
+				if record.State == "oom_killed" {
+					session.FailureReason = "memory limit killed the sandbox process group"
+				} else {
+					session.FailureReason = "exec timed out and the runtime stopped the session"
+				}
 				session.LastActivityAt = ended.UTC()
 				_ = sessions.UpdateSession(context.Background(), session)
 			}

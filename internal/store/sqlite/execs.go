@@ -61,7 +61,7 @@ func (s *Store) UpdateExec(ctx context.Context, v store.ExecRecord) error {
 	if n == 0 {
 		return sql.ErrNoRows
 	}
-	if current != v.State && (v.State == "exited" || v.State == "killed" || v.State == "timed_out" || v.State == "failed") {
+	if current != v.State && (v.State == "exited" || v.State == "killed" || v.State == "timed_out" || v.State == "oom_killed" || v.State == "pids_limited" || v.State == "failed") {
 		var keyID string
 		if err = tx.QueryRowContext(ctx, `SELECT owner_key_id FROM sessions WHERE id=?`, sessionID).Scan(&keyID); err != nil {
 			return fmt.Errorf("read exec owner key: %w", err)
@@ -76,6 +76,22 @@ func (s *Store) UpdateExec(ctx context.Context, v store.ExecRecord) error {
 		}
 		if v.Truncated {
 			breach := map[string]any{"kind": "output", "exec_id": v.ID, "output_bytes": v.OutputBytes}
+			if err = insertAudit(ctx, tx, sessionID, keyID, "limit.breach", breach, at); err != nil {
+				return err
+			}
+		}
+		if v.State == "oom_killed" || v.State == "pids_limited" {
+			kind := "memory"
+			if v.State == "pids_limited" {
+				kind = "pids"
+			}
+			breach := map[string]any{"kind": kind, "exec_id": v.ID}
+			if err = insertAudit(ctx, tx, sessionID, keyID, "limit.breach", breach, at); err != nil {
+				return err
+			}
+		}
+		if v.State == "timed_out" {
+			breach := map[string]any{"kind": "timeout", "exec_id": v.ID}
 			if err = insertAudit(ctx, tx, sessionID, keyID, "limit.breach", breach, at); err != nil {
 				return err
 			}

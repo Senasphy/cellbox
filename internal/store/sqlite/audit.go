@@ -27,6 +27,34 @@ func insertAudit(ctx context.Context, tx *sql.Tx, sessionID, keyID, eventType st
 	return nil
 }
 
+// RecordLimitBreach records a runtime breach and fails a ready session atomically.
+func (s *Store) RecordLimitBreach(ctx context.Context, sessionID, keyID, failureReason string, detail any, at time.Time) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin limit breach: %w", err)
+	}
+	defer tx.Rollback()
+	var state string
+	if err := tx.QueryRowContext(ctx, `SELECT state FROM sessions WHERE id=?`, sessionID).Scan(&state); err != nil {
+		return fmt.Errorf("read breached session state: %w", err)
+	}
+	if state == "ready" {
+		if _, err := tx.ExecContext(ctx, `UPDATE sessions SET state='failed',last_activity_at=?,failure_reason=? WHERE id=? AND state='ready'`, stamp(at), failureReason, sessionID); err != nil {
+			return fmt.Errorf("fail disk-limited session: %w", err)
+		}
+		if err := insertAudit(ctx, tx, sessionID, keyID, "session.failed", map[string]string{"from": "ready", "to": "failed", "reason": failureReason}, at); err != nil {
+			return err
+		}
+	}
+	if err := insertAudit(ctx, tx, sessionID, keyID, "limit.breach", detail, at); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit limit breach: %w", err)
+	}
+	return nil
+}
+
 func (s *Store) ListAuditEvents(ctx context.Context, sessionID string, limit int) ([]store.AuditEventRecord, error) {
 	if limit < 1 || limit > 1000 {
 		return nil, fmt.Errorf("audit event limit must be between 1 and 1000")
@@ -132,6 +160,79 @@ func (s *Store) PageAuditEvents(ctx context.Context, sessionID string, limit int
 	}
 	if err := rows.Err(); err != nil {
 		return nil, false, fmt.Errorf("iterate audit event page: %w", err)
+	}
+	hasMore := len(items) > limit
+	if hasMore {
+		items = items[:limit]
+	}
+	return items, hasMore, nil
+}
+
+func (s *Store) RecordEgressLog(ctx context.Context, sessionID, keyID string, entry store.EgressLogEntry) error {
+	at := entry.Timestamp.UTC()
+	if at.IsZero() {
+		at = time.Now().UTC()
+	}
+	logID, err := id.New("egl")
+	if err != nil {
+		return fmt.Errorf("generate egress log id: %w", err)
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin egress log: %w", err)
+	}
+	defer tx.Rollback()
+	_, err = tx.ExecContext(ctx, `INSERT INTO egress_log(id,session_id,key_id,timestamp,host,port,resolved_ip,verdict,reason,bytes_up,bytes_down,duration_ms) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, logID, sessionID, keyID, stamp(at), entry.Host, entry.Port, entry.Resolved, entry.Verdict, entry.Reason, entry.BytesUp, entry.BytesDown, entry.Duration)
+	if err != nil {
+		return fmt.Errorf("insert egress log row: %w", err)
+	}
+	eventType := "egress.deny"
+	if entry.Verdict == "allow" {
+		eventType = "egress.allow"
+	}
+	detail := map[string]any{"host": entry.Host, "port": entry.Port, "resolved_ip": entry.Resolved, "verdict": entry.Verdict, "reason": entry.Reason, "bytes_up": entry.BytesUp, "bytes_down": entry.BytesDown, "duration_ms": entry.Duration}
+	if err := insertAudit(ctx, tx, sessionID, keyID, eventType, detail, at); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit egress log: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) PageEgressEvents(ctx context.Context, sessionID string, limit int, cursor *store.ListCursor) ([]store.EgressLogRecord, bool, error) {
+	if limit < 1 {
+		return nil, false, fmt.Errorf("egress event limit must be positive")
+	}
+	query := `SELECT id,session_id,key_id,timestamp,host,port,resolved_ip,verdict,reason,bytes_up,bytes_down,duration_ms FROM egress_log WHERE session_id=?`
+	args := []any{sessionID}
+	if cursor != nil {
+		ts := stamp(cursor.Timestamp)
+		query += ` AND (timestamp > ? OR (timestamp = ? AND id > ?))`
+		args = append(args, ts, ts, cursor.ID)
+	}
+	query += ` ORDER BY timestamp,id LIMIT ?`
+	args = append(args, limit+1)
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, false, fmt.Errorf("page egress events: %w", err)
+	}
+	defer rows.Close()
+	items := []store.EgressLogRecord{}
+	for rows.Next() {
+		var item store.EgressLogRecord
+		var ts string
+		if err := rows.Scan(&item.ID, &item.SessionID, &item.KeyID, &ts, &item.Host, &item.Port, &item.Resolved, &item.Verdict, &item.Reason, &item.BytesUp, &item.BytesDown, &item.Duration); err != nil {
+			return nil, false, fmt.Errorf("scan egress event page: %w", err)
+		}
+		item.Timestamp, err = time.Parse(time.RFC3339Nano, ts)
+		if err != nil {
+			return nil, false, fmt.Errorf("parse egress event timestamp: %w", err)
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, fmt.Errorf("iterate egress event page: %w", err)
 	}
 	hasMore := len(items) > limit
 	if hasMore {

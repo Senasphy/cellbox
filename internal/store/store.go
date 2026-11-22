@@ -48,6 +48,27 @@ type SessionRecord struct {
 	ExpiresAt         time.Time
 	ParentSnapshotID  string
 	FailureReason     string
+	CreateSource      string
+}
+
+type SnapshotRecord struct {
+	ID                string
+	SourceSessionID   string
+	ParentSnapshotID  string
+	RuntimeSnapshotID string
+	LayerPath         string
+	Size              int64
+	Flattened         bool
+	CreatedAt         time.Time
+	LabelsJSON        []byte
+}
+
+type SnapshotStore interface {
+	CreateSnapshot(context.Context, SnapshotRecord) error
+	ListSnapshots(context.Context, string) ([]SnapshotRecord, error)
+	GetSnapshot(context.Context, string) (SnapshotRecord, error)
+	SnapshotHasChildren(context.Context, string) (bool, error)
+	DeleteSnapshot(context.Context, string) error
 }
 
 // SessionStore persists session lifecycle transitions.
@@ -133,7 +154,47 @@ type AuditEventStore interface {
 	PageAuditEvents(context.Context, string, int, *ListCursor) ([]AuditEventRecord, bool, error)
 }
 
+type EgressLogStore interface {
+	PageEgressEvents(context.Context, string, int, *ListCursor) ([]EgressLogRecord, bool, error)
+}
+
+type EgressLogRecord struct {
+	ID        string
+	SessionID string
+	KeyID     string
+	Timestamp time.Time
+	Host      string
+	Port      int
+	Resolved  string
+	Verdict   string
+	Reason    string
+	BytesUp   int64
+	BytesDown int64
+	Duration  int64
+}
+
+type EgressLogEntry struct {
+	Timestamp time.Time
+	Host      string
+	Port      int
+	Resolved  string
+	Verdict   string
+	Reason    string
+	BytesUp   int64
+	BytesDown int64
+	Duration  int64
+}
+
+type EgressLogRecorder interface {
+	RecordEgressLog(context.Context, string, string, EgressLogEntry) error
+}
+
 // RecentLimitBreachStore returns recent limit events visible to a key.
 type RecentLimitBreachStore interface {
 	RecentLimitBreaches(context.Context, string, bool, int) ([]AuditEventRecord, error)
+}
+
+// LimitBreachStore records a resource breach and its session failure atomically.
+type LimitBreachStore interface {
+	RecordLimitBreach(context.Context, string, string, string, any, time.Time) error
 }

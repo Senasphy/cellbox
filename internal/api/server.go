@@ -35,11 +35,14 @@ type System struct {
 type server struct {
 	store            KeyStore
 	backend          runtime.Runtime
+	pool             warmSessionPool
 	backendName      string
 	mux              *http.ServeMux
 	cfg              config.Config
 	execMu           sync.RWMutex
 	activeExecs      map[string]runtime.ExecHandle
+	terminalMu       sync.Mutex
+	terminals        map[string]*terminalHub
 	idemMu           sync.Mutex
 	idemLocks        map[string]*idemLock
 	rateMu           sync.Mutex
@@ -51,6 +54,13 @@ type server struct {
 	terminalUpgrader websocket.Upgrader
 }
 
+type warmSessionPool interface {
+	Claim(context.Context, runtime.SandboxSpec) (runtime.Sandbox, bool)
+	Refill(runtime.SandboxSpec)
+	PoolReady() map[string]int
+	PoolMemoryMB() int
+}
+
 // NewHandler builds the initial HTTP handler with health and authenticated system routes.
 func NewHandler(store KeyStore, backend runtime.Runtime, backendName string) http.Handler {
 	return NewHandlerWithConfig(store, backend, backendName, config.Defaults())
@@ -58,7 +68,16 @@ func NewHandler(store KeyStore, backend runtime.Runtime, backendName string) htt
 
 // NewHandlerWithConfig builds the service routes with configured session limits.
 func NewHandlerWithConfig(store KeyStore, backend runtime.Runtime, backendName string, cfg config.Config) http.Handler {
-	s := &server{store: store, backend: backend, backendName: backendName, mux: http.NewServeMux(), cfg: cfg, activeExecs: map[string]runtime.ExecHandle{}, idemLocks: map[string]*idemLock{}, rateCounts: map[string]rateWindow{}, terminalUpgrader: websocket.Upgrader{ReadBufferSize: 4096, WriteBufferSize: 4096}}
+	return newHandlerWithConfig(store, backend, backendName, cfg, nil)
+}
+
+// NewHandlerWithPool enables warm claims without hiding optional runtime capabilities.
+func NewHandlerWithPool(store KeyStore, backend runtime.Runtime, backendName string, cfg config.Config, warmPool warmSessionPool) http.Handler {
+	return newHandlerWithConfig(store, backend, backendName, cfg, warmPool)
+}
+
+func newHandlerWithConfig(store KeyStore, backend runtime.Runtime, backendName string, cfg config.Config, warmPool warmSessionPool) http.Handler {
+	s := &server{store: store, backend: backend, pool: warmPool, backendName: backendName, mux: http.NewServeMux(), cfg: cfg, activeExecs: map[string]runtime.ExecHandle{}, terminals: map[string]*terminalHub{}, idemLocks: map[string]*idemLock{}, rateCounts: map[string]rateWindow{}, terminalUpgrader: websocket.Upgrader{ReadBufferSize: 4096, WriteBufferSize: 4096}}
 	s.mux.Handle("GET /healthz", withTimeout(5*time.Second, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
@@ -82,10 +101,18 @@ func NewHandlerWithConfig(store KeyStore, backend runtime.Runtime, backendName s
 	s.mux.HandleFunc("GET /v1/sessions/{id}/metrics/stream", s.streamSessionMetrics)
 	s.mux.HandleFunc("GET /v1/sessions/{id}/terminal", s.sessionTerminal)
 	s.mux.Handle("GET /v1/sessions/{id}/events", withTimeout(10*time.Second, http.HandlerFunc(s.listSessionEvents)))
+	s.mux.Handle("GET /v1/sessions/{id}/replay", withTimeout(30*time.Second, http.HandlerFunc(s.replaySession)))
+	s.mux.Handle("GET /v1/sessions/{id}/egress-log", withTimeout(10*time.Second, http.HandlerFunc(s.listSessionEgressLog)))
+	s.mux.Handle("POST /v1/sessions/{id}/snapshots", withTimeout(15*time.Minute, http.HandlerFunc(s.createSnapshot)))
+	s.mux.Handle("GET /v1/sessions/{id}/snapshots", withTimeout(10*time.Second, http.HandlerFunc(s.listSessionSnapshots)))
+	s.mux.Handle("POST /v1/sessions/{id}/fork", withTimeout(15*time.Minute, http.HandlerFunc(s.forkSession)))
+	s.mux.Handle("GET /v1/snapshots/{snapshotID}", withTimeout(10*time.Second, http.HandlerFunc(s.getSnapshot)))
+	s.mux.Handle("DELETE /v1/snapshots/{snapshotID}", withTimeout(2*time.Minute, http.HandlerFunc(s.deleteSnapshot)))
 	s.mux.Handle("DELETE /v1/sessions/{id}", withTimeout(2*time.Minute, http.HandlerFunc(s.deleteSession)))
 	s.mux.Handle("POST /v1/sessions/{id}/execs", withTimeout(time.Duration(sessionLimitMaxTimeout(cfg.Limits.Max.TTLS)+30_000)*time.Millisecond, http.HandlerFunc(s.createExec)))
 	s.mux.Handle("GET /v1/sessions/{id}/execs", withTimeout(10*time.Second, http.HandlerFunc(s.listExecs)))
 	s.mux.Handle("GET /v1/sessions/{id}/execs/{execID}", withTimeout(10*time.Second, http.HandlerFunc(s.getExec)))
+	s.mux.Handle("GET /v1/sessions/{id}/execs/{execID}/asciicast", withTimeout(30*time.Second, http.HandlerFunc(s.exportAsciicast)))
 	s.mux.Handle("POST /v1/sessions/{id}/execs/{execID}/signal", withTimeout(10*time.Second, http.HandlerFunc(s.signalExec)))
 	s.mux.HandleFunc("GET /v1/sessions/{id}/execs/{execID}/stream", s.streamExec)
 	s.mux.Handle("GET /v1/sessions/{id}/files", withTimeout(10*time.Minute, http.HandlerFunc(s.readFile)))
@@ -128,6 +155,7 @@ func (s *server) system(w http.ResponseWriter, r *http.Request) {
 	if s.backend != nil {
 		caps = s.backend.Capabilities()
 	}
+	caps.WarmPool = s.pool != nil && s.cfg.Pool.Enabled && s.cfg.Pool.PerImage > 0 && s.cfg.Pool.MemoryBudgetMB >= 32
 	s.doctorOnce.Do(func() {
 		s.doctorMu.Lock()
 		s.doctorState = "checking"
@@ -149,8 +177,8 @@ func effectiveConfig(cfg config.Config) map[string]any {
 			"default": map[string]int{"cpu_millicores": cfg.Limits.Default.CPUMillicores, "memory_mb": cfg.Limits.Default.MemoryMB, "pids": cfg.Limits.Default.PIDs, "disk_mb": cfg.Limits.Default.DiskMB, "idle_ttl_s": cfg.Limits.Default.IdleTTLS, "ttl_s": cfg.Limits.Default.TTLS},
 			"max":     map[string]int{"cpu_millicores": cfg.Limits.Max.CPUMillicores, "memory_mb": cfg.Limits.Max.MemoryMB, "pids": cfg.Limits.Max.PIDs, "disk_mb": cfg.Limits.Max.DiskMB, "idle_ttl_s": cfg.Limits.Max.IdleTTLS, "ttl_s": cfg.Limits.Max.TTLS},
 		},
-		"capacity":  map[string]any{"memory_overcommit": cfg.Capacity.MemoryOvercommit, "cpu_overcommit": cfg.Capacity.CPUOvercommit, "queue_wait_s": cfg.Capacity.QueueWaitS},
-		"pool":      map[string]any{"enabled": cfg.Pool.Enabled, "per_image": cfg.Pool.PerImage, "memory_budget_mb": cfg.Pool.MemoryBudgetMB},
+		"capacity":  map[string]any{"memory_overcommit": cfg.Capacity.MemoryOvercommit, "cpu_overcommit": cfg.Capacity.CPUOvercommit, "queue_wait_s": cfg.Capacity.QueueWaitS, "min_free_disk_mb": cfg.Capacity.MinFreeDiskMB},
+		"pool":      map[string]any{"enabled": cfg.Pool.Enabled, "per_image": cfg.Pool.PerImage, "memory_budget_mb": cfg.Pool.MemoryBudgetMB, "images": cfg.Pool.Images},
 		"egress":    map[string]any{"allow_internet_mode": cfg.Egress.AllowInternetMode, "extra_blocked_cidrs": cfg.Egress.ExtraBlockedCIDRs},
 		"retention": map[string]int{"output_days": cfg.Retention.OutputDays, "audit_days": cfg.Retention.AuditDays},
 		"log":       map[string]string{"level": cfg.Log.Level, "format": cfg.Log.Format},

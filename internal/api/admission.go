@@ -3,9 +3,11 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	goruntime "runtime"
 	"strconv"
 	"strings"
@@ -13,6 +15,7 @@ import (
 	"github.com/senasphy/cellbox/internal/api/problem"
 	"github.com/senasphy/cellbox/internal/runtime"
 	"github.com/senasphy/cellbox/internal/store"
+	"golang.org/x/sys/unix"
 )
 
 type committedResources struct {
@@ -58,6 +61,21 @@ func (s *server) enforceKeyQuota(w http.ResponseWriter, r *http.Request, key sto
 }
 
 func (s *server) enforceCapacity(w http.ResponseWriter, r *http.Request, requested runtime.Limits) bool {
+	freeBytes, err := freeDiskBytes(s.cfg.DataDir)
+	if err != nil {
+		problem.Write(w, problem.Problem{Title: "Unavailable", Status: http.StatusServiceUnavailable, Code: "capacity_check_failed", Detail: "free disk space could not be determined"})
+		return false
+	}
+	minimumBytes := uint64(s.cfg.Capacity.MinFreeDiskMB) * 1024 * 1024
+	if freeBytes < minimumBytes {
+		retryAfter := s.cfg.Capacity.QueueWaitS
+		if retryAfter < 1 {
+			retryAfter = 1
+		}
+		w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
+		problem.Write(w, problem.Problem{Title: "Disk capacity exceeded", Status: http.StatusServiceUnavailable, Code: "disk_capacity_exceeded", Detail: "host free space is below the configured admission floor"})
+		return false
+	}
 	sessions, err := s.listSessionsForAdmission(r.Context())
 	if err != nil {
 		problem.Write(w, problem.Problem{Title: "Unavailable", Status: http.StatusServiceUnavailable, Code: "capacity_check_failed"})
@@ -80,7 +98,11 @@ func (s *server) enforceCapacity(w http.ResponseWriter, r *http.Request, request
 	}
 	memLimit := float64(host.memoryMB) * s.cfg.Capacity.MemoryOvercommit
 	cpuLimit := float64(host.cpuMilli) * s.cfg.Capacity.CPUOvercommit
-	if float64(committed.memoryMB+int64(requested.MemoryMB)) > memLimit || float64(committed.cpuMilli+int64(requested.CPUMillicores)) > cpuLimit || committed.pids+int64(requested.PIDs) > host.pids {
+	poolMemoryMB := int64(0)
+	if s.pool != nil {
+		poolMemoryMB = int64(s.pool.PoolMemoryMB())
+	}
+	if float64(committed.memoryMB+int64(requested.MemoryMB)+poolMemoryMB) > memLimit || float64(committed.cpuMilli+int64(requested.CPUMillicores)) > cpuLimit || committed.pids+int64(requested.PIDs) > host.pids {
 		retryAfter := s.cfg.Capacity.QueueWaitS
 		if retryAfter < 1 {
 			retryAfter = 1
@@ -90,6 +112,44 @@ func (s *server) enforceCapacity(w http.ResponseWriter, r *http.Request, request
 		return false
 	}
 	return true
+}
+
+func freeDiskBytes(path string) (uint64, error) {
+	if path == "" {
+		path = "."
+	}
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return 0, fmt.Errorf("resolve data directory for disk capacity: %w", err)
+	}
+	for {
+		info, statErr := os.Stat(absolute)
+		if statErr == nil && info.IsDir() {
+			var disk unix.Statfs_t
+			if err := unix.Statfs(absolute, &disk); err != nil {
+				return 0, err
+			}
+			if disk.Bsize <= 0 {
+				return 0, errors.New("filesystem reported an invalid block size")
+			}
+			blocks, blockSize := uint64(disk.Bavail), uint64(disk.Bsize)
+			if blocks > ^uint64(0)/blockSize {
+				return ^uint64(0), nil
+			}
+			return blocks * blockSize, nil
+		}
+		if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
+			return 0, statErr
+		}
+		parent := filepath.Dir(absolute)
+		if parent == absolute {
+			if statErr != nil {
+				return 0, statErr
+			}
+			return 0, errors.New("data directory has no existing filesystem ancestor")
+		}
+		absolute = parent
+	}
 }
 
 func (s *server) listSessionsForAdmission(ctx context.Context) ([]store.SessionRecord, error) {

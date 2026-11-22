@@ -25,7 +25,7 @@ func TestOpenMigratesEmptyDatabaseAndIsIdempotent(t *testing.T) {
 	if e = s.db.QueryRow("SELECT COUNT(*) FROM schema_migrations").Scan(&n); e != nil {
 		t.Fatal(e)
 	}
-	if n != 6 {
+	if n != 8 {
 		t.Fatalf("migration count=%d", n)
 	}
 }
@@ -72,6 +72,71 @@ func TestLifecycleAuditEventsShareStateTransactions(t *testing.T) {
 	pruned, err := s.PruneAuditEvents(context.Background(), now.Add(time.Hour))
 	if err != nil || pruned != 4 {
 		t.Fatalf("pruned audit events=%d err=%v", pruned, err)
+	}
+}
+
+func TestRecordLimitBreachFailsSessionAndAuditsAtomically(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "disk-breach.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	now := time.Now().UTC()
+	session := store.SessionRecord{ID: "ses_disk_breach", OwnerKeyID: "key_disk_breach", ImageReference: "alpine", State: "creating", LimitsJSON: []byte(`{}`), NetworkPolicyJSON: []byte(`{}`), EnvJSON: []byte(`{}`), LabelsJSON: []byte(`{}`), CreatedAt: now, LastActivityAt: now, ExpiresAt: now.Add(time.Hour)}
+	if err := s.CreateSession(context.Background(), session); err != nil {
+		t.Fatal(err)
+	}
+	session.State = "ready"
+	if err := s.UpdateSession(context.Background(), session); err != nil {
+		t.Fatal(err)
+	}
+	detail := map[string]any{"kind": "disk", "used_bytes": 2048, "limit_bytes": 1024}
+	if err := s.RecordLimitBreach(context.Background(), session.ID, session.OwnerKeyID, "disk limit exceeded", detail, now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.GetSession(context.Background(), session.ID)
+	if err != nil || got.State != "failed" || got.FailureReason != "disk limit exceeded" {
+		t.Fatalf("session=%+v err=%v", got, err)
+	}
+	events, err := s.ListAuditEvents(context.Background(), session.ID, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	counts := map[string]int{}
+	for _, event := range events {
+		counts[event.Type]++
+	}
+	if len(events) != 4 || counts["session.failed"] != 1 || counts["limit.breach"] != 1 {
+		t.Fatalf("events=%+v; want failure and breach records", events)
+	}
+}
+
+func TestRecordEgressLogStoresLogAndAuditAtomically(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "egress.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	now := time.Now().UTC()
+	session := store.SessionRecord{ID: "ses_egress", OwnerKeyID: "key_egress", ImageReference: "alpine", State: "creating", LimitsJSON: []byte(`{}`), NetworkPolicyJSON: []byte(`{}`), EnvJSON: []byte(`{}`), LabelsJSON: []byte(`{}`), CreatedAt: now, LastActivityAt: now, ExpiresAt: now.Add(time.Hour)}
+	if err := s.CreateSession(context.Background(), session); err != nil {
+		t.Fatal(err)
+	}
+	entry := store.EgressLogEntry{Timestamp: now.Add(time.Second), Host: "pkg.example", Port: 443, Resolved: "8.8.8.8", Verdict: "allow", Reason: "policy_allowed", BytesUp: 12, BytesDown: 34, Duration: 56}
+	if err := s.RecordEgressLog(context.Background(), session.ID, session.OwnerKeyID, entry); err != nil {
+		t.Fatal(err)
+	}
+	items, more, err := s.PageEgressEvents(context.Background(), session.ID, 10, nil)
+	if err != nil || more || len(items) != 1 {
+		t.Fatalf("egress items=%+v more=%v err=%v", items, more, err)
+	}
+	got := items[0]
+	if got.Host != entry.Host || got.Port != entry.Port || got.Resolved != entry.Resolved || got.Verdict != entry.Verdict || got.BytesUp != entry.BytesUp || got.BytesDown != entry.BytesDown || got.Duration != entry.Duration {
+		t.Fatalf("egress entry=%+v", got)
+	}
+	events, err := s.ListAuditEvents(context.Background(), session.ID, 10)
+	if err != nil || len(events) != 2 || events[1].Type != "egress.allow" {
+		t.Fatalf("audit events=%+v err=%v", events, err)
 	}
 }
 
@@ -404,5 +469,45 @@ func TestTruncatedExecRecordsOutputLimitBreach(t *testing.T) {
 	admin, err := s.RecentLimitBreaches(context.Background(), "", true, 20)
 	if err != nil || len(admin) != 1 {
 		t.Fatalf("admin breach results=%+v err=%v", admin, err)
+	}
+	oomExec := store.ExecRecord{ID: "exe_oom", SessionID: session.ID, ArgvJSON: []byte(`[]`), EnvJSON: []byte(`{}`), State: "running", StartedAt: ended}
+	if err := s.CreateExec(context.Background(), oomExec); err != nil {
+		t.Fatal(err)
+	}
+	endedOOM := ended.Add(time.Second)
+	oomExec.State, oomExec.EndedAt = "oom_killed", &endedOOM
+	if err := s.UpdateExec(context.Background(), oomExec); err != nil {
+		t.Fatal(err)
+	}
+	breaches, err := s.RecentLimitBreaches(context.Background(), session.OwnerKeyID, false, 20)
+	if err != nil || len(breaches) != 2 {
+		t.Fatalf("breaches after OOM=%+v err=%v", breaches, err)
+	}
+	var oomDetail map[string]any
+	if err := json.Unmarshal(breaches[0].Detail, &oomDetail); err != nil {
+		t.Fatal(err)
+	}
+	if oomDetail["kind"] != "memory" || oomDetail["exec_id"] != oomExec.ID {
+		t.Fatalf("OOM breach detail=%v", oomDetail)
+	}
+	pidsExec := store.ExecRecord{ID: "exe_pids", SessionID: session.ID, ArgvJSON: []byte(`[]`), EnvJSON: []byte(`{}`), State: "running", StartedAt: endedOOM}
+	if err := s.CreateExec(context.Background(), pidsExec); err != nil {
+		t.Fatal(err)
+	}
+	endedPIDs := endedOOM.Add(time.Second)
+	pidsExec.State, pidsExec.EndedAt = "pids_limited", &endedPIDs
+	if err := s.UpdateExec(context.Background(), pidsExec); err != nil {
+		t.Fatal(err)
+	}
+	breaches, err = s.RecentLimitBreaches(context.Background(), session.OwnerKeyID, false, 20)
+	if err != nil || len(breaches) != 3 {
+		t.Fatalf("breaches after PID limit=%+v err=%v", breaches, err)
+	}
+	var pidsDetail map[string]any
+	if err := json.Unmarshal(breaches[0].Detail, &pidsDetail); err != nil {
+		t.Fatal(err)
+	}
+	if pidsDetail["kind"] != "pids" || pidsDetail["exec_id"] != pidsExec.ID {
+		t.Fatalf("PID breach detail=%v", pidsDetail)
 	}
 }

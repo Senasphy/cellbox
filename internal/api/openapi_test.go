@@ -253,6 +253,34 @@ func TestOpenAPIResponses(t *testing.T) {
 		t.Fatalf("invalid waited exec response: %+v err=%v", waitedExec, err)
 	}
 	check(http.MethodGet, execPath+"/"+waitedExec.Exec.ID+"/stream", "", true)
+	replay := check(http.MethodGet, "/v1/sessions/"+session.ID+"/replay", "", true)
+	check(http.MethodGet, "/v1/sessions/"+session.ID+"/snapshots", "", true)
+	check(http.MethodPost, "/v1/sessions/"+session.ID+"/snapshots", `{"labels":{"branch":"base"}}`, true)
+	check(http.MethodPost, "/v1/sessions/"+session.ID+"/fork", `{"snapshot_id":"snp_missing"}`, true)
+	check(http.MethodGet, "/v1/snapshots/snp_missing", "", true)
+	check(http.MethodDelete, "/v1/snapshots/snp_missing", "", true)
+	var replayPage struct {
+		Items []struct {
+			Type      string `json:"type"`
+			Timestamp string `json:"timestamp"`
+			Data      string `json:"data"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(replay.Body.Bytes(), &replayPage); err != nil || len(replayPage.Items) < 3 {
+		t.Fatalf("replay response missing exec/output events: %s (err=%v)", replay.Body.String(), err)
+	}
+	seenOutput := false
+	for i, item := range replayPage.Items {
+		if item.Type == "output" && item.Data != "" {
+			seenOutput = true
+		}
+		if i > 0 && item.Timestamp < replayPage.Items[i-1].Timestamp {
+			t.Fatalf("replay events are not timestamp ordered: %+v", replayPage.Items)
+		}
+	}
+	if !seenOutput {
+		t.Fatalf("replay response omitted persisted output: %s", replay.Body.String())
+	}
 	firstExecPage := check(http.MethodGet, execPath+"?limit=1", "", true)
 	var execPage struct {
 		Items      []execResponse `json:"items"`

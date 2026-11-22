@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -36,8 +37,9 @@ func (s *server) metrics(w http.ResponseWriter, r *http.Request) {
 	var execTime time.Duration
 	var buckets = []float64{0.01, 0.05, 0.1, 0.5, 1, 5, 30, 60}
 	bucketCounts := make([]uint64, len(buckets))
-	results := map[string]uint64{"ok": 0, "nonzero": 0, "timed_out": 0, "oom_killed": 0, "failed": 0}
-	createDurations := []float64{}
+	results := map[string]uint64{"ok": 0, "nonzero": 0, "timed_out": 0, "oom_killed": 0, "pids_limited": 0, "failed": 0}
+	breaches := map[string]uint64{"memory": 0, "pids": 0, "disk": 0, "output": 0, "timeout": 0}
+	createDurations := map[string][]float64{"cold": {}, "warm": {}}
 	for _, session := range sessions {
 		if _, exists := states[session.State]; exists {
 			states[session.State]++
@@ -57,16 +59,33 @@ func (s *server) metrics(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		var createdAt, readyAt time.Time
+		readySource := "cold"
 		for _, event := range events {
+			if event.Type == "limit.breach" {
+				var detail struct {
+					Kind string `json:"kind"`
+				}
+				if json.Unmarshal(event.Detail, &detail) == nil {
+					if _, known := breaches[detail.Kind]; known {
+						breaches[detail.Kind]++
+					}
+				}
+			}
 			switch event.Type {
 			case "session.create":
 				createdAt = event.Timestamp
 			case "session.ready":
 				readyAt = event.Timestamp
+				var detail struct {
+					Source string `json:"source"`
+				}
+				if json.Unmarshal(event.Detail, &detail) == nil && detail.Source == "warm" {
+					readySource = "warm"
+				}
 			}
 		}
 		if !createdAt.IsZero() && !readyAt.IsZero() && !readyAt.Before(createdAt) {
-			createDurations = append(createDurations, readyAt.Sub(createdAt).Seconds())
+			createDurations[readySource] = append(createDurations[readySource], readyAt.Sub(createdAt).Seconds())
 		}
 		execs, listErr := persist.ListExecs(r.Context(), session.ID)
 		if listErr != nil {
@@ -82,6 +101,10 @@ func (s *server) metrics(w http.ResponseWriter, r *http.Request) {
 			switch exec.State {
 			case "timed_out":
 				result = "timed_out"
+			case "oom_killed":
+				result = "oom_killed"
+			case "pids_limited":
+				result = "pids_limited"
 			case "killed":
 				result = "failed"
 			case "exited":
@@ -92,7 +115,7 @@ func (s *server) metrics(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			results[result]++
-			if result == "failed" || result == "timed_out" || result == "oom_killed" {
+			if result == "failed" || result == "timed_out" || result == "oom_killed" || result == "pids_limited" {
 				sessionErrors++
 			}
 			if exec.EndedAt != nil {
@@ -125,22 +148,39 @@ func (s *server) metrics(w http.ResponseWriter, r *http.Request) {
 	f("# HELP cellbox_capacity_committed Resources reserved by active sessions.\n# TYPE cellbox_capacity_committed gauge\n")
 	f("cellbox_capacity_committed{resource=\"cpu_millicores\"} %d\n", committed.cpuMilli)
 	f("cellbox_capacity_committed{resource=\"memory_mb\"} %d\n", committed.memoryMB)
+	if s.pool != nil {
+		f("cellbox_capacity_committed{resource=\"pool_memory_mb\"} %d\n", s.pool.PoolMemoryMB())
+	}
 	f("cellbox_capacity_committed{resource=\"pids\"} %d\n", committed.pids)
 	f("# HELP cellbox_capacity_total Effective resource capacity after configured overcommit.\n# TYPE cellbox_capacity_total gauge\n")
 	f("cellbox_capacity_total{resource=\"cpu_millicores\"} %s\n", strconv.FormatFloat(float64(host.cpuMilli)*s.cfg.Capacity.CPUOvercommit, 'f', -1, 64))
 	f("cellbox_capacity_total{resource=\"memory_mb\"} %s\n", strconv.FormatFloat(float64(host.memoryMB)*s.cfg.Capacity.MemoryOvercommit, 'f', -1, 64))
 	f("cellbox_capacity_total{resource=\"pids\"} %d\n", host.pids)
+	if s.pool != nil {
+		f("# HELP cellbox_pool_ready Idle warm sandboxes available by image.\n# TYPE cellbox_pool_ready gauge\n")
+		for image, count := range s.pool.PoolReady() {
+			f("cellbox_pool_ready{image=%q} %d\n", image, count)
+		}
+	}
 	f("# HELP cellbox_exec_total Completed exec count by result.\n# TYPE cellbox_exec_total counter\n")
-	for _, result := range []string{"ok", "nonzero", "timed_out", "oom_killed", "failed"} {
+	for _, result := range []string{"ok", "nonzero", "timed_out", "oom_killed", "pids_limited", "failed"} {
 		f("cellbox_exec_total{result=%q} %d\n", result, results[result])
 	}
-	f("# HELP cellbox_session_create_seconds Session creation duration.\n# TYPE cellbox_session_create_seconds histogram\n")
-	createSum := 0.0
-	for _, duration := range createDurations {
-		createSum += duration
+	f("# HELP cellbox_limit_breach_total Recorded resource limit breaches by kind.\n# TYPE cellbox_limit_breach_total counter\n")
+	for _, kind := range []string{"memory", "pids", "disk", "output", "timeout"} {
+		f("cellbox_limit_breach_total{kind=%q} %d\n", kind, breaches[kind])
 	}
-	renderHistogram(f, "cellbox_session_create_seconds", `source="cold"`, buckets, createDurations)
-	f("cellbox_session_create_seconds_sum{source=\"cold\"} %s\ncellbox_session_create_seconds_count{source=\"cold\"} %d\n", strconv.FormatFloat(createSum, 'f', -1, 64), len(createDurations))
+	f("# HELP cellbox_session_create_seconds Session creation duration.\n# TYPE cellbox_session_create_seconds histogram\n")
+	for _, source := range []string{"cold", "warm"} {
+		values := createDurations[source]
+		sum := 0.0
+		for _, duration := range values {
+			sum += duration
+		}
+		labels := fmt.Sprintf("source=%q", source)
+		renderHistogram(f, "cellbox_session_create_seconds", labels, buckets, values)
+		f("cellbox_session_create_seconds_sum{source=%q} %s\ncellbox_session_create_seconds_count{source=%q} %d\n", source, strconv.FormatFloat(sum, 'f', -1, 64), source, len(values))
+	}
 	f("# HELP cellbox_exec_seconds Duration of completed execs.\n# TYPE cellbox_exec_seconds histogram\n")
 	for i, bound := range buckets {
 		f("cellbox_exec_seconds_bucket{le=%q} %d\n", strconv.FormatFloat(bound, 'f', -1, 64), bucketCounts[i])

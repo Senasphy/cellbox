@@ -42,11 +42,13 @@ type Capacity struct {
 	MemoryOvercommit float64 `yaml:"memory_overcommit"`
 	CPUOvercommit    float64 `yaml:"cpu_overcommit"`
 	QueueWaitS       int     `yaml:"queue_wait_s"`
+	MinFreeDiskMB    int     `yaml:"min_free_disk_mb"`
 }
 type Pool struct {
-	Enabled        bool `yaml:"enabled"`
-	PerImage       int  `yaml:"per_image"`
-	MemoryBudgetMB int  `yaml:"memory_budget_mb"`
+	Enabled        bool     `yaml:"enabled"`
+	PerImage       int      `yaml:"per_image"`
+	MemoryBudgetMB int      `yaml:"memory_budget_mb"`
+	Images         []string `yaml:"images"`
 }
 type Egress struct {
 	AllowInternetMode bool     `yaml:"allow_internet_mode"`
@@ -67,7 +69,7 @@ type TLS struct {
 
 // Defaults returns conservative service defaults.
 func Defaults() Config {
-	return Config{Listen: "127.0.0.1:8080", DataDir: "~/.local/share/cellbox", Backend: "native", DockerSocket: "/var/run/docker.sock", Limits: Limits{Default: ResourceLimits{1000, 512, 256, 1024, 600, 3600}, Max: ResourceLimits{4000, 4096, 2048, 10240, 0, 86400}}, Capacity: Capacity{1, 4, 5}, Pool: Pool{true, 2, 1024}, Retention: Retention{7, 30}, Log: Log{"info", "json"}}
+	return Config{Listen: "127.0.0.1:8080", DataDir: "~/.local/share/cellbox", Backend: "native", DockerSocket: "/var/run/docker.sock", Limits: Limits{Default: ResourceLimits{1000, 512, 256, 1024, 600, 3600}, Max: ResourceLimits{4000, 4096, 2048, 10240, 0, 86400}}, Capacity: Capacity{MemoryOvercommit: 1, CPUOvercommit: 4, QueueWaitS: 5, MinFreeDiskMB: 1024}, Pool: Pool{Enabled: true, PerImage: 2, MemoryBudgetMB: 1024, Images: []string{"python:3.12-slim", "node:22-slim", "golang:1.23", "debian:bookworm-slim"}}, Retention: Retention{7, 30}, Log: Log{"info", "json"}}
 }
 
 // Load reads YAML, applies CELLBOX_* overrides, expands the data directory and validates values.
@@ -154,11 +156,22 @@ func (c Config) Validate() error {
 	if c.Limits.Max.TTLS > 86400 {
 		return errors.New("limits.max.ttl_s cannot exceed 86400")
 	}
-	if c.Capacity.MemoryOvercommit <= 0 || c.Capacity.CPUOvercommit <= 0 || c.Capacity.QueueWaitS < 0 {
-		return errors.New("capacity ratios must be positive and queue_wait_s cannot be negative")
+	if c.Capacity.MemoryOvercommit <= 0 || c.Capacity.CPUOvercommit <= 0 || c.Capacity.QueueWaitS < 0 || c.Capacity.MinFreeDiskMB <= 0 || int64(c.Capacity.MinFreeDiskMB) > (1<<63-1)/(1024*1024) {
+		return errors.New("capacity ratios and min_free_disk_mb must be positive and queue_wait_s cannot be negative")
 	}
 	if c.Pool.PerImage < 0 || c.Pool.MemoryBudgetMB < 0 || c.Retention.OutputDays < 0 || c.Retention.AuditDays < 0 {
 		return errors.New("pool and retention limits cannot be negative")
+	}
+	seenPoolImages := map[string]struct{}{}
+	for _, image := range c.Pool.Images {
+		image = strings.TrimSpace(image)
+		if image == "" || len(image) > 512 || strings.ContainsAny(image, " \t\r\n") {
+			return errors.New("pool image references must contain 1 to 512 characters without whitespace")
+		}
+		if _, exists := seenPoolImages[image]; exists {
+			return fmt.Errorf("duplicate pool image reference %q", image)
+		}
+		seenPoolImages[image] = struct{}{}
 	}
 	for _, cidr := range c.Egress.ExtraBlockedCIDRs {
 		if _, _, err := net.ParseCIDR(cidr); err != nil {

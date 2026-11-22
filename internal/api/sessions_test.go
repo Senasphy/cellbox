@@ -122,6 +122,7 @@ func (f *fakeRuntime) SandboxByID(id string) runtime.Sandbox {
 
 type fakeSandbox struct {
 	id         string
+	snapshot   runtime.SnapshotInfo
 	killed     bool
 	destroyed  bool
 	files      map[string][]byte
@@ -132,10 +133,11 @@ type fakeSandbox struct {
 type fakeExecHandle struct {
 	output chan runtime.OutputChunk
 	result runtime.ExecResult
+	err    error
 }
 
 func (f *fakeExecHandle) Output() <-chan runtime.OutputChunk               { return f.output }
-func (f *fakeExecHandle) Wait(context.Context) (runtime.ExecResult, error) { return f.result, nil }
+func (f *fakeExecHandle) Wait(context.Context) (runtime.ExecResult, error) { return f.result, f.err }
 func (f *fakeExecHandle) Signal(context.Context, int) error                { return runtime.ErrUnsupported }
 
 type blockingExecHandle struct {
@@ -244,6 +246,9 @@ func (f *fakeSandbox) Extract(_ context.Context, dest string, r io.Reader) error
 	}
 }
 func (f *fakeSandbox) Snapshot(context.Context) (runtime.SnapshotInfo, error) {
+	if f.snapshot.ID != "" {
+		return f.snapshot, nil
+	}
 	return runtime.SnapshotInfo{}, runtime.ErrUnsupported
 }
 func (f *fakeSandbox) UpdateLimits(context.Context, runtime.Limits) error {
@@ -292,7 +297,7 @@ func TestSessionLifecycleAndOwnership(t *testing.T) {
 	if response.State != "ready" || response.ImageDigest != "sha256:test" || response.Limits.MemoryMB != 512 {
 		t.Fatalf("response=%+v", response)
 	}
-	backend.box.stats = runtime.Stats{CPUUsageNS: 42, MemoryBytes: 2048, PIDs: 3, IOReadBytes: 4096, IOWriteBytes: 8192}
+	backend.box.stats = runtime.Stats{CPUUsageNS: 42, MemoryBytes: 2048, PIDs: 3, IOReadBytes: 4096, IOWriteBytes: 8192, OOMKills: 2}
 	metricsRequest := httptest.NewRequest(http.MethodGet, "/v1/sessions/"+response.ID+"/metrics", nil)
 	metricsRequest.Header.Set("Authorization", "Bearer "+user.Secret)
 	metricsResult := httptest.NewRecorder()
@@ -301,7 +306,7 @@ func TestSessionLifecycleAndOwnership(t *testing.T) {
 	if metricsResult.Code != http.StatusOK || json.Unmarshal(metricsResult.Body.Bytes(), &sample) != nil {
 		t.Fatalf("session metrics status=%d body=%s", metricsResult.Code, metricsResult.Body.String())
 	}
-	if sample.CPUUsageNS != 42 || sample.MemoryBytes != 2048 || sample.PIDs != 3 || sample.IOReadBytes != 4096 || sample.IOWriteBytes != 8192 || sample.Limits.MemoryMB != 512 {
+	if sample.CPUUsageNS != 42 || sample.MemoryBytes != 2048 || sample.PIDs != 3 || sample.IOReadBytes != 4096 || sample.IOWriteBytes != 8192 || sample.OOMKills != 2 || sample.Limits.MemoryMB != 512 {
 		t.Fatalf("session metrics sample=%+v", sample)
 	}
 	streamCtx, cancelMetrics := context.WithCancel(context.Background())
@@ -693,7 +698,7 @@ func TestPrometheusMetricsReportSessionsExecsAndCapacity(t *testing.T) {
 	if w.Code != http.StatusOK || !strings.Contains(w.Header().Get("Content-Type"), "text/plain") {
 		t.Fatalf("metrics status=%d content-type=%q body=%s", w.Code, w.Header().Get("Content-Type"), w.Body.String())
 	}
-	for _, metric := range []string{"cellbox_sessions{state=\"ready\"} 1", "cellbox_capacity_committed{resource=\"memory_mb\"} 256", "cellbox_exec_total{result=\"ok\"} 1", "cellbox_output_bytes_total 12", "cellbox_exec_seconds_count 2", "cellbox_session_create_seconds_count{source=\"cold\"} 1", "cellbox_session_create_total 1", "cellbox_error_total 1"} {
+	for _, metric := range []string{"cellbox_sessions{state=\"ready\"} 1", "cellbox_capacity_committed{resource=\"memory_mb\"} 256", "cellbox_exec_total{result=\"ok\"} 1", "cellbox_exec_total{result=\"pids_limited\"} 0", "cellbox_output_bytes_total 12", "cellbox_limit_breach_total{kind=\"output\"} 1", "cellbox_limit_breach_total{kind=\"timeout\"} 1", "cellbox_exec_seconds_count 2", "cellbox_session_create_seconds_count{source=\"cold\"} 1", "cellbox_session_create_total 1", "cellbox_error_total 1"} {
 		if !strings.Contains(w.Body.String(), metric) {
 			t.Errorf("metrics output missing %q:\n%s", metric, w.Body.String())
 		}
@@ -750,6 +755,56 @@ func TestExecCollectorPersistsOutputAndDrains(t *testing.T) {
 	s.execMu.RUnlock()
 	if active {
 		t.Fatal("completed exec remains registered as active")
+	}
+}
+
+func TestNativeStyleExecTimeoutKeepsSessionReady(t *testing.T) {
+	db, err := sqlite.Open(filepath.Join(t.TempDir(), "timeout-session.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	now := time.Now().UTC()
+	session := store.SessionRecord{ID: "ses_timeout", OwnerKeyID: "key_timeout", ImageReference: "alpine", State: "ready", LimitsJSON: []byte(`{}`), NetworkPolicyJSON: []byte(`{}`), EnvJSON: []byte(`{}`), LabelsJSON: []byte(`{}`), CreatedAt: now, LastActivityAt: now, ExpiresAt: now.Add(time.Hour)}
+	if err := db.CreateSession(context.Background(), session); err != nil {
+		t.Fatal(err)
+	}
+	exec := store.ExecRecord{ID: "exe_timeout", SessionID: session.ID, ArgvJSON: []byte(`[]`), EnvJSON: []byte(`{}`), State: "running", StartedAt: now}
+	if err := db.CreateExec(context.Background(), exec); err != nil {
+		t.Fatal(err)
+	}
+	ended := make(chan runtime.OutputChunk)
+	close(ended)
+	handle := &fakeExecHandle{output: ended, result: runtime.ExecResult{ExitCode: 124}, err: context.DeadlineExceeded}
+	server := &server{store: db, backend: &fakeRuntime{}}
+	done := make(chan struct{})
+	go server.collectExecOutput(db, &fakeSandbox{id: "sandbox-test"}, handle, exec, done)
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("exec collector did not finish")
+	}
+	got, err := db.GetSession(context.Background(), session.ID)
+	if err != nil || got.State != "ready" {
+		t.Fatalf("timed out exec changed native-style session state: session=%+v err=%v", got, err)
+	}
+	oomExec := store.ExecRecord{ID: "exe_oom", SessionID: session.ID, ArgvJSON: []byte(`[]`), EnvJSON: []byte(`{}`), State: "running", StartedAt: now}
+	if err := db.CreateExec(context.Background(), oomExec); err != nil {
+		t.Fatal(err)
+	}
+	closeOutput := make(chan runtime.OutputChunk)
+	close(closeOutput)
+	oomHandle := &fakeExecHandle{output: closeOutput, result: runtime.ExecResult{OOMKilled: true}}
+	done = make(chan struct{})
+	go server.collectExecOutput(db, &fakeSandbox{id: "sandbox-test"}, oomHandle, oomExec, done)
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("OOM collector did not finish")
+	}
+	got, err = db.GetSession(context.Background(), session.ID)
+	if err != nil || got.State != "failed" || got.FailureReason != "memory limit killed the sandbox process group" {
+		t.Fatalf("OOM did not fail the terminated sandbox: session=%+v err=%v", got, err)
 	}
 }
 

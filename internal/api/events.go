@@ -70,3 +70,39 @@ func (s *server) listSessionEvents(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, result)
 }
+
+func (s *server) listSessionEgressLog(w http.ResponseWriter, r *http.Request) {
+	_, session, ok := s.authorizedSession(w, r)
+	if !ok {
+		return
+	}
+	limit, cursor, ok := parseListQuery(w, r)
+	if !ok {
+		return
+	}
+	persist, ok := s.store.(store.EgressLogStore)
+	if !ok {
+		problem.Write(w, problem.Problem{Title: "Unavailable", Status: http.StatusServiceUnavailable, Code: "egress_log_unavailable"})
+		return
+	}
+	items, hasMore, err := persist.PageEgressEvents(r.Context(), session.ID, limit, cursor)
+	if err != nil {
+		problem.Write(w, problem.Problem{Title: "Internal server error", Status: http.StatusInternalServerError, Code: "egress_log_failed"})
+		return
+	}
+	responses := make([]auditEventResponse, 0, len(items))
+	for _, item := range items {
+		detail, _ := json.Marshal(map[string]any{"host": item.Host, "port": item.Port, "resolved_ip": item.Resolved, "verdict": item.Verdict, "reason": item.Reason, "bytes_up": item.BytesUp, "bytes_down": item.BytesDown, "duration_ms": item.Duration})
+		eventType := "egress.deny"
+		if item.Verdict == "allow" {
+			eventType = "egress.allow"
+		}
+		responses = append(responses, auditEventResponse{ID: item.ID, SessionID: item.SessionID, KeyID: item.KeyID, Type: eventType, Timestamp: item.Timestamp.UTC().Format(time.RFC3339Nano), Detail: detail})
+	}
+	result := map[string]any{"items": responses}
+	if hasMore && len(items) > 0 {
+		last := items[len(items)-1]
+		result["next_cursor"] = encodeListCursor(last.Timestamp, last.ID)
+	}
+	writeJSON(w, http.StatusOK, result)
+}

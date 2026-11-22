@@ -19,6 +19,7 @@ type sessionMetricsSample struct {
 	PIDs         int            `json:"pids"`
 	IOReadBytes  uint64         `json:"io_read_bytes"`
 	IOWriteBytes uint64         `json:"io_write_bytes"`
+	OOMKills     uint64         `json:"oom_kills"`
 	Limits       runtime.Limits `json:"limits"`
 }
 
@@ -109,7 +110,7 @@ func readSessionMetrics(ctx context.Context, record store.SessionRecord, box run
 	}
 	return sessionMetricsSample{
 		SampledAt: time.Now().UTC(), CPUUsageNS: stats.CPUUsageNS, MemoryBytes: stats.MemoryBytes,
-		PIDs: stats.PIDs, IOReadBytes: stats.IOReadBytes, IOWriteBytes: stats.IOWriteBytes,
+		PIDs: stats.PIDs, IOReadBytes: stats.IOReadBytes, IOWriteBytes: stats.IOWriteBytes, OOMKills: stats.OOMKills,
 		Limits: sessionResources(record),
 	}, nil
 }
