@@ -12,6 +12,7 @@ lint:
 
 test-integration:
 	CELLBOX_RUN_DOCKER_CONTRACT=1 go test -race ./internal/runtime/docker -run '^TestRuntimeContract$$' -count=1
+	CELLBOX_RUN_DOCKER_EGRESS_INTEGRATION=1 go test -race ./internal/runtime/docker -run '^TestDockerAllowlistedHTTPSUsesEgressProxy$$' -count=1
 
 test-security fuzz:
 	@echo "$@ is added in the corresponding implementation phase"
