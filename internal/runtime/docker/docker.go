@@ -33,9 +33,10 @@ const maxDirectoryEntries = 100_000
 
 // Runtime is a Docker Engine-backed sandbox runtime.
 type Runtime struct {
-	client *http.Client
-	socket string
-	host   string
+	client     *http.Client
+	socket     string
+	host       string
+	helperPath string
 }
 
 // New connects to a Docker-compatible Unix socket.
@@ -46,7 +47,8 @@ func New(socket string) *Runtime {
 	tr := &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 		return (&net.Dialer{}).DialContext(ctx, "unix", socket)
 	}}
-	return &Runtime{client: &http.Client{Transport: tr}, socket: socket, host: "http://docker"}
+	helperPath, _ := os.Executable()
+	return &Runtime{client: &http.Client{Transport: tr}, socket: socket, host: "http://docker", helperPath: helperPath}
 }
 
 // Name returns the backend name.
@@ -54,7 +56,7 @@ func (*Runtime) Name() string { return "docker" }
 
 // Capabilities reports Docker backend support.
 func (r *Runtime) Capabilities() runtime.Capabilities {
-	return runtime.Capabilities{Snapshots: true, CPULimits: true, TTY: r.socket != "", TTYExec: r.socket != "", TimeoutKillsSession: true}
+	return runtime.Capabilities{Snapshots: true, CPULimits: true, TTY: r.socket != "", TTYExec: r.socket != "", TimeoutKillsSession: true, EgressPolicy: true}
 }
 
 // Reconcile removes every container previously created for a cellbox session.
@@ -249,23 +251,44 @@ func (r *Runtime) Create(ctx context.Context, spec runtime.SandboxSpec) (runtime
 	if spec.NetworkMode != "" && spec.NetworkMode != "none" {
 		return nil, fmt.Errorf("Docker backend only supports network mode none: %w", runtime.ErrUnsupported)
 	}
-	if spec.NetworkPolicy.Mode != "" && spec.NetworkPolicy.Mode != "none" {
-		return nil, fmt.Errorf("Docker backend does not enforce network policy %q: %w", spec.NetworkPolicy.Mode, runtime.ErrUnsupported)
+	egressSession, err := newDockerEgress(spec.NetworkPolicy)
+	if err != nil {
+		return nil, fmt.Errorf("configure Docker egress policy: %w", err)
 	}
-	if len(spec.NetworkPolicy.Allow) > 0 {
-		return nil, fmt.Errorf("Docker backend does not support egress allow rules: %w", runtime.ErrUnsupported)
-	}
+	keepEgress := false
+	defer func() {
+		if !keepEgress {
+			egressSession.close()
+		}
+	}()
 	name := "cellbox-" + strings.TrimPrefix(spec.ID, "ses_")
 	if name == "cellbox-" {
 		name = fmt.Sprintf("cellbox-%d", time.Now().UnixNano())
 	}
-	env := make([]string, 0, len(spec.Env))
+	envValues := make(map[string]string, len(spec.Env)+6)
 	for k, v := range spec.Env {
+		envValues[k] = v
+	}
+	if egressSession != nil {
+		egressSession.env(envValues)
+	}
+	env := make([]string, 0, len(envValues))
+	for k, v := range envValues {
 		env = append(env, k+"="+v)
 	}
 	sort.Strings(env)
 	hostConfig := map[string]any{"Memory": int64(spec.Limits.MemoryMB) << 20, "MemorySwap": int64(spec.Limits.MemoryMB) << 20, "NanoCpus": int64(spec.Limits.CPUMillicores) * 1_000_000, "PidsLimit": spec.Limits.PIDs, "CapDrop": []string{"ALL"}, "SecurityOpt": []string{"no-new-privileges:true"}, "NetworkMode": "none"}
 	config := map[string]any{"Image": spec.Image.Reference, "Cmd": []string{"sleep", "infinity"}, "Env": env, "Labels": map[string]string{"io.cellbox.session": spec.ID}, "HostConfig": hostConfig}
+	var helperContainerPath string
+	if egressSession != nil {
+		helperContainerPath, _, err = egressHelperPath(spec.ID)
+		if err != nil {
+			return nil, err
+		}
+		hostConfig["Binds"] = []string{egressSession.proxySocketPath() + ":" + dockerEgressSocket}
+		config["Entrypoint"] = []string{helperContainerPath}
+		config["Cmd"] = []string{"_egress-forwarder", "--listen", "127.0.0.1:3128", "--socket", dockerEgressSocket}
+	}
 	resp, err := r.request(ctx, http.MethodPost, "/containers/create?name="+url.QueryEscape(name), config)
 	if err != nil {
 		return nil, fmt.Errorf("create Docker container: %w", err)
@@ -281,13 +304,24 @@ func (r *Runtime) Create(ctx context.Context, spec runtime.SandboxSpec) (runtime
 	if created.ID == "" {
 		return nil, errors.New("Docker returned an empty container id")
 	}
+	if egressSession != nil {
+		if _, err := r.installEgressHelper(ctx, created.ID, spec.ID); err != nil {
+			r.deleteContainer(created.ID)
+			return nil, err
+		}
+	}
 	if err = r.simple(ctx, http.MethodPost, "/containers/"+url.PathEscape(created.ID)+"/start", nil); err != nil {
-		cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_ = r.simple(cleanupCtx, http.MethodDelete, "/containers/"+url.PathEscape(created.ID)+"?force=true&v=true", nil)
+		r.deleteContainer(created.ID)
 		return nil, fmt.Errorf("start Docker container: %w", err)
 	}
-	return &sandbox{runtime: r, id: created.ID}, nil
+	keepEgress = true
+	return &sandbox{runtime: r, id: created.ID, egress: egressSession}, nil
+}
+
+func (r *Runtime) deleteContainer(id string) {
+	cleanupCtx, cancel := context.WithTimeout(context.Background(), cleanupRequestTimeout)
+	defer cancel()
+	_ = r.simple(cleanupCtx, http.MethodDelete, "/containers/"+url.PathEscape(id)+"?force=true&v=true", nil)
 }
 func (r *Runtime) simple(ctx context.Context, m, e string, b any) error {
 	resp, err := r.request(ctx, m, e, b)
@@ -300,6 +334,7 @@ func (r *Runtime) simple(ctx context.Context, m, e string, b any) error {
 type sandbox struct {
 	runtime *Runtime
 	id      string
+	egress  *dockerEgress
 }
 
 // SandboxByID returns a handle for an existing Docker container ID.
@@ -314,11 +349,7 @@ func (s *sandbox) Exec(ctx context.Context, req runtime.ExecRequest) (runtime.Ex
 	if len(argv) == 0 {
 		return nil, errors.New("exec requires argv or shell")
 	}
-	env := make([]string, 0, len(req.Env))
-	for k, v := range req.Env {
-		env = append(env, k+"="+v)
-	}
-	sort.Strings(env)
+	env := s.egressEnv(req.Env)
 	createBody := map[string]any{"AttachStdout": true, "AttachStderr": true, "Tty": req.TTY, "Cmd": argv, "Env": env, "WorkingDir": req.Cwd}
 	resp, err := s.runtime.request(ctx, http.MethodPost, "/containers/"+url.PathEscape(s.id)+"/exec", createBody)
 	if err != nil {
@@ -349,11 +380,7 @@ func (s *sandbox) OpenTerminal(ctx context.Context, terminalReq runtime.Terminal
 	if terminalReq.Rows == 0 {
 		terminalReq.Rows = 24
 	}
-	env := make([]string, 0, len(terminalReq.Env))
-	for key, value := range terminalReq.Env {
-		env = append(env, key+"="+value)
-	}
-	sort.Strings(env)
+	env := s.egressEnv(terminalReq.Env)
 	resp, err := s.runtime.request(ctx, http.MethodPost, "/containers/"+url.PathEscape(s.id)+"/exec", map[string]any{"AttachStdin": true, "AttachStdout": true, "AttachStderr": true, "Tty": true, "Cmd": []string{"/bin/sh"}, "Env": env, "WorkingDir": terminalReq.Cwd})
 	if err != nil {
 		return nil, fmt.Errorf("create Docker terminal: %w", err)
@@ -774,10 +801,24 @@ func (s *sandbox) Kill(ctx context.Context) error {
 }
 func (s *sandbox) Destroy(ctx context.Context) error {
 	err := s.runtime.simple(ctx, http.MethodDelete, "/containers/"+url.PathEscape(s.id)+"?force=true&v=true", nil)
+	if err != nil && strings.Contains(err.Error(), "returned 404") {
+		err = nil
+	}
 	if err != nil && strings.Contains(err.Error(), "returned 409") && strings.Contains(strings.ToLower(err.Error()), "already in progress") {
-		return nil
+		err = nil
+	}
+	if err == nil && s.egress != nil {
+		s.egress.close()
 	}
 	return err
+}
+
+// EgressEvents reports policy decisions made by this sandbox's host proxy.
+func (s *sandbox) EgressEvents() <-chan runtime.EgressEvent {
+	if s.egress == nil {
+		return nil
+	}
+	return s.egress.events.events
 }
 
 func (r *Runtime) killContainerWithTimeout(parent context.Context, id string, timeout time.Duration) error {
