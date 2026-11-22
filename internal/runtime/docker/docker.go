@@ -246,6 +246,15 @@ func (r *Runtime) Create(ctx context.Context, spec runtime.SandboxSpec) (runtime
 	if spec.Limits.DiskMB > 0 {
 		return nil, fmt.Errorf("Docker backend does not enforce per-container disk limits: %w", runtime.ErrUnsupported)
 	}
+	if spec.NetworkMode != "" && spec.NetworkMode != "none" {
+		return nil, fmt.Errorf("Docker backend only supports network mode none: %w", runtime.ErrUnsupported)
+	}
+	if spec.NetworkPolicy.Mode != "" && spec.NetworkPolicy.Mode != "none" {
+		return nil, fmt.Errorf("Docker backend does not enforce network policy %q: %w", spec.NetworkPolicy.Mode, runtime.ErrUnsupported)
+	}
+	if len(spec.NetworkPolicy.Allow) > 0 {
+		return nil, fmt.Errorf("Docker backend does not support egress allow rules: %w", runtime.ErrUnsupported)
+	}
 	name := "cellbox-" + strings.TrimPrefix(spec.ID, "ses_")
 	if name == "cellbox-" {
 		name = fmt.Sprintf("cellbox-%d", time.Now().UnixNano())

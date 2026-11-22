@@ -440,6 +440,35 @@ func TestCreateRejectsUnsupportedDiskQuota(t *testing.T) {
 	}
 }
 
+func TestCreateRejectsUnsupportedNetworkPolicy(t *testing.T) {
+	r := &Runtime{}
+	base := runtime.SandboxSpec{
+		ID:     "ses_policy",
+		Image:  runtime.ImageInfo{Reference: "image"},
+		Limits: runtime.Limits{MemoryMB: 512, CPUMillicores: 1000, PIDs: 100},
+	}
+	tests := []struct {
+		name string
+		edit func(*runtime.SandboxSpec)
+	}{
+		{name: "allowlist mode", edit: func(spec *runtime.SandboxSpec) { spec.NetworkPolicy.Mode = "allowlist" }},
+		{name: "internet mode", edit: func(spec *runtime.SandboxSpec) { spec.NetworkPolicy.Mode = "internet" }},
+		{name: "direct bridge mode", edit: func(spec *runtime.SandboxSpec) { spec.NetworkMode = "bridge" }},
+		{name: "allow rules without mode", edit: func(spec *runtime.SandboxSpec) {
+			spec.NetworkPolicy.Allow = []runtime.EgressRule{{Host: "example.com", Ports: []int{443}}}
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			spec := base
+			test.edit(&spec)
+			if _, err := r.Create(context.Background(), spec); !errors.Is(err, runtime.ErrUnsupported) {
+				t.Fatalf("Create error = %v, want ErrUnsupported", err)
+			}
+		})
+	}
+}
+
 func TestDockerDoesNotClaimDiskQuotaSupport(t *testing.T) {
 	if New("").Capabilities().DiskLimits {
 		t.Fatal("Docker runtime must not claim unsupported disk quota enforcement")
