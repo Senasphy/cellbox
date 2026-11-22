@@ -120,10 +120,12 @@ func (r *Manager) Claim(ctx context.Context, spec runtime.SandboxSpec) (runtime.
 		r.mu.Unlock()
 		if time.Since(candidate.createdAt) > warmMaxAge {
 			destroyWarm(candidate.box)
+			r.Refill(spec)
 			continue
 		}
 		if err := candidate.box.UpdateLimits(ctx, spec.Limits); err != nil {
 			destroyWarm(candidate.box)
+			r.Refill(spec)
 			continue
 		}
 		r.Refill(spec)
