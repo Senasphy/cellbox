@@ -68,6 +68,7 @@ func newRoot() *cobra.Command {
 	root.AddCommand(newImagesCommand())
 	root.AddCommand(newSessionsCommand())
 	root.AddCommand(newSnapshotCommand())
+	root.AddCommand(newEgressForwarderCommand())
 	root.AddCommand(newForkCommand())
 	root.AddCommand(newShellCommand())
 	root.AddCommand(newRunCommand())
