@@ -283,7 +283,9 @@ func destroyWarm(box runtime.Sandbox) {
 }
 
 func (r *Manager) eligible(spec runtime.SandboxSpec) bool {
-	return r.settings.Enabled && r.settings.PerImage > 0 && r.settings.MemoryBudgetMB >= warmMemoryMB && spec.Image.Reference != "" && len(spec.SnapshotLayers) == 0 && (spec.NetworkPolicy.Mode == "" || spec.NetworkPolicy.Mode == "none")
+	return r.settings.Enabled && r.settings.PerImage > 0 && r.settings.MemoryBudgetMB >= warmMemoryMB && spec.Image.Reference != "" && len(spec.SnapshotLayers) == 0 &&
+		(spec.NetworkMode == "" || spec.NetworkMode == "none") &&
+		(spec.NetworkPolicy.Mode == "" || spec.NetworkPolicy.Mode == "none") && len(spec.NetworkPolicy.Allow) == 0
 }
 
 func warmSpec(spec runtime.SandboxSpec) runtime.SandboxSpec {
