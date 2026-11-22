@@ -45,14 +45,17 @@ def main() -> int:
     source = "def add(a, b):\n    return a - b\n"
     with Client(os.getenv("CELLBOX_URL", "http://127.0.0.1:8080"), os.environ["CELLBOX_KEY"]) as client:
         with client.sessions.create("python:3.12-slim", memory_mb=512, network_policy={"mode": "none"}) as box:
-            box.exec(["mkdir", "-p", "/work"])
+            setup = box.exec(["mkdir", "-p", "/work"])
+            if setup.state != "exited" or setup.exit_code != 0:
+                print(f"could not prepare /work: state={setup.state} exit={setup.exit_code}\n{setup.stderr}")
+                return 1
             for attempt in range(1, args.max_attempts + 1):
                 module = f"app_{attempt}"
                 box.write_file(f"/work/{module}.py", source)
                 command = f"from {module} import add; assert add(2, 3) == 5, 'expected 5'"
                 result = box.exec(["python", "-c", command], cwd="/work", timeout_s=30)
                 print(f"attempt {attempt}: exit={result.exit_code}\n{result.stdout}{result.stderr}")
-                if result.exit_code == 0:
+                if result.state == "exited" and result.exit_code == 0:
                     return 0
                 if attempt < args.max_attempts:
                     source = suggest_fix(source, result.stdout + result.stderr, fake_model=args.fake_model)

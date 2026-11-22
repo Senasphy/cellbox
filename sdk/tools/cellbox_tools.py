@@ -22,7 +22,7 @@ def dispatch(session: Any, name: str, arguments: dict[str, Any]) -> dict[str, An
         result = session.exec(arguments["command"], timeout_s=float(arguments.get("timeout_s", 60)))
         stdout, out_omitted = _clip(result.stdout)
         stderr, err_omitted = _clip(result.stderr)
-        reason = "timeout" if result.state == "timed_out" else ("oom" if result.state == "oom" else None)
+        reason = "timeout" if result.state == "timed_out" else ("oom" if result.state in {"oom", "oom_killed"} else None)
         return {"exit_code": result.exit_code, "duration_ms": result.duration_ms,
                 "timeout_or_oom_reason": reason, "stdout": stdout, "stderr": stderr,
                 "omitted_bytes": {"stdout": out_omitted, "stderr": err_omitted}}
@@ -34,8 +34,11 @@ def dispatch(session: Any, name: str, arguments: dict[str, Any]) -> dict[str, An
         return {"path": arguments["path"], "contents": content, "omitted_bytes": omitted}
     if name == "list_files":
         return {"items": session.list_files(arguments.get("path", "/"), limit=arguments.get("limit", 50))}
-    if name in {"snapshot", "fork"}:
-        raise NotImplementedError(f"{name} is available in Phase 6")
+    if name == "snapshot":
+        return session.snapshot(labels=arguments.get("labels"))
+    if name == "fork":
+        child = session.fork(arguments.get("snapshot_id"))
+        return {"session_id": child.id, "parent_snapshot_id": child.data.get("parent_snapshot_id", "")}
     raise ValueError(f"unknown cellbox tool: {name}")
 
 def dispatch_json(session: Any, name: str, arguments: str | dict[str, Any]) -> str:

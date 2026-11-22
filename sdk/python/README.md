@@ -1,6 +1,6 @@
 # Python SDK
 
-Install with `python -m pip install cellbox-sdk` (or `pip install -e 'sdk/python[test]'` from this repository). Both `Client` and `AsyncClient` accept a base URL and API key. Session objects support exec, SSE output iteration, file transfer, directory listing, and destroy; context managers always destroy sessions.
+Install with `python -m pip install cellbox-sdk` (or `pip install -e 'sdk/python[test]'` from this repository). Both `Client` and `AsyncClient` accept a base URL and API key. Session objects support exec, SSE output iteration and resume, file transfer, directory listing, and destroy; context managers always destroy sessions. Streamed chunks include `exec_id` and `cursor`; pass them to `resume_exec_stream(exec_id, after=cursor)` or its async equivalent after a dropped connection.
 
 ```python
 from cellbox import Client

@@ -31,6 +31,13 @@ func TestBoundedExecClipsStreamsAndReportsExitMetadata(t *testing.T) {
 	}
 }
 
+func TestBoundedExecReportsNativeOOMState(t *testing.T) {
+	result := boundedExec(map[string]any{"exec": map[string]any{"state": "oom_killed", "duration_ms": int64(12)}})
+	if result["timeout_or_oom_reason"] != "oom" {
+		t.Fatalf("OOM reason=%v", result["timeout_or_oom_reason"])
+	}
+}
+
 func TestMCPToolWorksOverProtocolClient(t *testing.T) {
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer test-key" {
@@ -44,6 +51,12 @@ func TestMCPToolWorksOverProtocolClient(t *testing.T) {
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/execs"):
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"exec":{"id":"exe_test","state":"exited","exit_code":0,"duration_ms":3},"output":[{"stream":"stdout","data":"b2s="}]}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/snapshots"):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"id":"snp_test","size_bytes":12}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/fork"):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"id":"ses_child","state":"ready"}`))
 		case r.Method == http.MethodDelete:
 			w.WriteHeader(http.StatusNoContent)
 		default:
@@ -84,5 +97,11 @@ func TestMCPToolWorksOverProtocolClient(t *testing.T) {
 	}
 	if result["stdout"] != "ok" || result["duration_ms"] != float64(3) {
 		t.Fatalf("unexpected result: %#v", result)
+	}
+	for _, name := range []string{"snapshot", "fork"} {
+		call, err = session.CallTool(ctx, &mcp.CallToolParams{Name: name, Arguments: map[string]any{}})
+		if err != nil || call.IsError {
+			t.Fatalf("%s tool failed: result=%#v err=%v", name, call, err)
+		}
 	}
 }

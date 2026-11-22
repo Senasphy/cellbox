@@ -118,6 +118,7 @@ func attachShell(ctx context.Context, client *http.Client, base, key, id string,
 		defer func() { stopResize(); signal.Stop(signals) }()
 	}
 	inputDone := make(chan error, 1)
+	stdinEnded := false
 	go func() {
 		buf := make([]byte, 4096)
 		for {
@@ -169,10 +170,20 @@ func attachShell(ctx context.Context, client *http.Client, base, key, id string,
 			if websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) || errors.Is(err, io.EOF) {
 				return nil
 			}
+			if stdinEnded && websocket.IsCloseError(err, websocket.CloseAbnormalClosure) {
+				// The Docker attach stream can end without a close frame after the
+				// foreground shell exits in response to terminal EOF.
+				return nil
+			}
 			return err
 		case err := <-inputDone:
 			if errors.Is(err, io.EOF) {
-				_ = write(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, "stdin closed"))
+				// Forward terminal EOF to the foreground process, then keep reading
+				// until the shell exits so its final PTY output is not discarded.
+				if writeErr := write(websocket.BinaryMessage, []byte{4}); writeErr != nil {
+					return writeErr
+				}
+				stdinEnded = true
 				inputDone = nil
 				continue
 			}

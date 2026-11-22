@@ -17,3 +17,26 @@ def test_command_result_includes_status_and_bounded_streams():
     assert result["timeout_or_oom_reason"]=="timeout"
     assert len(result["stdout"].encode())<=16*1024
     assert result["omitted_bytes"]["stdout"]>0
+
+def test_command_result_reports_native_oom_state():
+    class Result:
+        exit_code=None;duration_ms=17;state="oom_killed";stdout="";stderr=""
+    class Session:
+        def exec(self,*args,**kwargs):return Result()
+    result=dispatch(Session(),"run_command",{"command":["memory-bomb"]})
+    assert result["timeout_or_oom_reason"]=="oom"
+
+def test_snapshot_and_fork_dispatch():
+    class Child:
+        id="ses_child"
+        data={"parent_snapshot_id":"snp_base"}
+    class Session:
+        def snapshot(self,**kwargs):
+            assert kwargs=={"labels":{"purpose":"eval"}}
+            return {"id":"snp_base"}
+        def fork(self,snapshot_id=None):
+            assert snapshot_id=="snp_base"
+            return Child()
+    session=Session()
+    assert dispatch(session,"snapshot",{"labels":{"purpose":"eval"}})=={"id":"snp_base"}
+    assert dispatch(session,"fork",{"snapshot_id":"snp_base"})=={"session_id":"ses_child","parent_snapshot_id":"snp_base"}

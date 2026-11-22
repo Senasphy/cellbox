@@ -39,7 +39,14 @@ func TestAttachShellStreamsInputAndOutput(t *testing.T) {
 			t.Error(err)
 			return
 		}
-		_, _, _ = conn.ReadMessage()
+		kind, message, err = conn.ReadMessage()
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		if kind != websocket.BinaryMessage || !bytes.Equal(message, []byte{4}) {
+			t.Errorf("terminal EOF frame kind=%d payload=%v", kind, message)
+		}
 	}))
 	defer server.Close()
 	var output, stderr bytes.Buffer

@@ -1,8 +1,10 @@
+export type ExecState = "starting" | "running" | "exited" | "killed" | "timed_out" | "oom_killed" | "pids_limited" | "failed" | (string & {});
+export interface ExecStreamExit { exit_code: number | null; signal: number | null; duration_ms: number; truncated: boolean; state: ExecState }
 export interface ExecResult {
-  id: string; state: string; exit_code: number | null; signal: number | null;
+  id: string; state: ExecState; exit_code: number | null; signal: number | null;
   duration_ms: number; stdout: string; stderr: string; output_bytes: number; truncated: boolean;
 }
-export interface OutputChunk { stream: "stdout" | "stderr"; data: Uint8Array; text: string }
+export interface OutputChunk { stream: "stdout" | "stderr"; data: Uint8Array; text: string; sequence: number; cursor: number; execId: string }
 export interface SessionOptions {
   cpu_millicores?: number; memory_mb?: number; pids?: number; disk_mb?: number;
   ttl_s?: number; idle_ttl_s?: number; env?: Record<string,string>;
@@ -29,7 +31,15 @@ export class Client {
   }
   requestRaw(path:string,init:RequestInit):Promise<Response> {
     const headers=new Headers(init.headers);headers.set("Authorization",`Bearer ${this.apiKey}`);
-    return this.fetcher(this.baseUrl+path,{...init,headers});
+    let target:URL;
+    try {
+      target=new URL(/^https?:\/\//i.test(path)?path:this.baseUrl+path);
+      if(target.origin!==new URL(this.baseUrl).origin)throw new CellboxError("request URL is outside the configured service origin");
+    } catch(error) {
+      if(error instanceof CellboxError)throw error;
+      throw new CellboxError("request URL is invalid");
+    }
+    return this.fetcher(target.href,{...init,headers});
   }
   async request<T>(method:string,path:string,body?:unknown):Promise<T> {
     const headers:Record<string,string>={Authorization:`Bearer ${this.apiKey}`};
@@ -53,6 +63,8 @@ export class Client {
 }
 export class Session {
   constructor(private client:Client,readonly id:string,readonly data:any={}){}
+  async snapshot(labels?:Record<string,string>):Promise<any>{return this.client.request("POST",`/v1/sessions/${encodeURIComponent(this.id)}/snapshots`,labels?{labels}:{});}
+  async fork(snapshotId?:string):Promise<Session>{const data=await this.client.request<any>("POST",`/v1/sessions/${encodeURIComponent(this.id)}/fork`,snapshotId?{snapshot_id:snapshotId}:{});return new Session(this.client,String(data.id),data);}
   async exec(command:string|string[],options:{timeout_s?:number;cwd?:string;env?:Record<string,string>}={}):Promise<ExecResult>{
     const body=commandBody(command,options); const r=await this.client.request<any>("POST",`/v1/sessions/${encodeURIComponent(this.id)}/execs?wait=true`,body);
     const stdout:string[]=[],stderr:string[]=[]; for(const o of r.output||[]) (o.stream==="stderr"?stderr:stdout).push(atob(o.data));
@@ -60,13 +72,24 @@ export class Session {
   }
   async *execStream(command:string|string[],options:{timeout_s?:number;cwd?:string;env?:Record<string,string>}={}):AsyncIterable<OutputChunk>{
     const r=await this.client.request<any>("POST",`/v1/sessions/${encodeURIComponent(this.id)}/execs`,commandBody(command,options));
-    const response=await this.client.requestRaw(r.stream_url,{method:"GET"});
+    if(!r.id||!r.stream_url)throw new CellboxError("exec response did not include id or stream_url");
+    yield* this.followExecStream(String(r.id),r.stream_url,0);
+  }
+  async *resumeExecStream(execId:string,after=0):AsyncIterable<OutputChunk>{
+    if(!Number.isSafeInteger(after)||after<0)throw new Error("resume cursor must be a non-negative safe integer");
+    const path=`/v1/sessions/${encodeURIComponent(this.id)}/execs/${encodeURIComponent(execId)}/stream`;
+    yield* this.followExecStream(execId,path,after);
+  }
+  private async *followExecStream(execId:string,path:string,after:number):AsyncIterable<OutputChunk>{
+    const headers:Record<string,string>={};if(after>0)headers["Last-Event-ID"]=String(after);
+    const response=await this.client.requestRaw(path,{method:"GET",headers});
     if(!response.ok) await parse(response);
-    const reader=response.body!.getReader(),decoder=new TextDecoder();let buf="",event="",data="";
+    if(!response.headers.get("content-type")?.toLowerCase().startsWith("text/event-stream"))throw new CellboxError("exec stream returned an unexpected content type");
+    const reader=response.body!.getReader(),decoder=new TextDecoder();let buf="",event="",data="",cursor=0;
     while(true){const {value,done}=await reader.read();buf+=decoder.decode(value||new Uint8Array(),{stream:!done});let i;
       while((i=buf.indexOf("\n"))>=0){const line=buf.slice(0,i).replace(/\r$/,"" );buf=buf.slice(i+1);
-        if(!line){if(event==="output"&&data){const x=JSON.parse(data);const bytes=Uint8Array.from(atob(x.data),c=>c.charCodeAt(0));yield {stream:x.stream,data:bytes,text:new TextDecoder().decode(bytes)};}event="";data="";}
-        else if(line.startsWith("event:"))event=line.slice(6).trim();else if(line.startsWith("data:"))data+=line.slice(5).trimStart();
+        if(!line){if(data&&event==="output"){const x=JSON.parse(data);const bytes=Uint8Array.from(atob(x.data),c=>c.charCodeAt(0));const sequence=Number(x.seq||0);yield {stream:x.stream,data:bytes,text:new TextDecoder().decode(bytes),sequence,cursor:cursor||sequence+bytes.length,execId};}else if(data&&event==="error"){const error=JSON.parse(data);throw new CellboxError(error.detail||error.message||error.title||"exec stream failed");}event="";data="";cursor=0;}
+        else if(line.startsWith("event:"))event=line.slice(6).trim();else if(line.startsWith("data:"))data+=line.slice(5).trimStart();else if(line.startsWith("id:")){cursor=Number(line.slice(3).trim());if(!Number.isFinite(cursor)||cursor<0)throw new CellboxError("invalid exec stream cursor");}
       } if(done)break;
     }
   }
@@ -77,6 +100,6 @@ export class Session {
   async using<T>(fn:(session:this)=>Promise<T>):Promise<T>{try{return await fn(this);}finally{await this.destroy();}}
 }
 function commandBody(command:string|string[],options:{timeout_s?:number;cwd?:string;env?:Record<string,string>}):any {
-  const body:any=typeof command==="string"?{shell:command}:{argv:command};if(!body.shell&&!body.argv?.length)throw new Error("command must not be empty");
-  const timeout=options.timeout_s??60;if(timeout<=0)throw new Error("timeout_s must be positive");body.timeout_ms=Math.round(timeout*1000);if(options.cwd)body.cwd=options.cwd;if(options.env)body.env=options.env;return body;
+  const body:any=typeof command==="string"?{shell:command}:{argv:command};if(typeof body.shell==="string"&&!body.shell.trim()||!body.shell&&!body.argv?.length)throw new Error("command must not be empty");
+  const timeout=options.timeout_s??60;if(!Number.isFinite(timeout)||timeout<=0)throw new Error("timeout_s must be a finite positive number");body.timeout_ms=Math.max(1,Math.round(timeout*1000));if(options.cwd)body.cwd=options.cwd;if(options.env)body.env=options.env;return body;
 }

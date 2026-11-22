@@ -24,6 +24,7 @@ import (
 	"github.com/senasphy/cellbox/internal/doctor"
 	"github.com/senasphy/cellbox/internal/id"
 	"github.com/senasphy/cellbox/internal/logging"
+	warmruntime "github.com/senasphy/cellbox/internal/pool"
 	"github.com/senasphy/cellbox/internal/reconcile"
 	"github.com/senasphy/cellbox/internal/runtime"
 	dockerruntime "github.com/senasphy/cellbox/internal/runtime/docker"
@@ -66,6 +67,8 @@ func newRoot() *cobra.Command {
 	root.AddCommand(newKeysCommand())
 	root.AddCommand(newImagesCommand())
 	root.AddCommand(newSessionsCommand())
+	root.AddCommand(newSnapshotCommand())
+	root.AddCommand(newForkCommand())
 	root.AddCommand(newShellCommand())
 	root.AddCommand(newRunCommand())
 	root.AddCommand(newMCPCommand())
@@ -96,7 +99,7 @@ func newRoot() *cobra.Command {
 			return err
 		}
 		logger := logging.New(cfg.Log.Level, cfg.Log.Format)
-		if err = os.MkdirAll(cfg.DataDir, 0700); err != nil {
+		if err = os.MkdirAll(cfg.DataDir, 0o700); err != nil {
 			return fmt.Errorf("create data directory: %w", err)
 		}
 		db, err := sqlitestore.Open(filepath.Join(cfg.DataDir, "cellbox.db"))
@@ -154,7 +157,25 @@ func newRoot() *cobra.Command {
 			return fmt.Errorf("startup reconciliation failed: %w", err)
 		}
 		reconcileCancel()
-		handler := dashboard.Wrap(api.NewHandlerWithConfig(db, runtimeBackend, cfg.Backend, cfg))
+		var warmPool *warmruntime.Manager
+		if cfg.Pool.Enabled {
+			warmPool = warmruntime.New(runtimeBackend, cfg.Pool)
+			warmPool.Prime(cfg.Pool.Images)
+			defer func() {
+				poolCtx, poolCancel := context.WithTimeout(context.Background(), 2*time.Minute)
+				defer poolCancel()
+				if closeErr := warmPool.Close(poolCtx); closeErr != nil {
+					logger.Error("warm pool shutdown failed", "error", closeErr)
+				}
+			}()
+		}
+		var apiHandler http.Handler
+		if warmPool != nil {
+			apiHandler = api.NewHandlerWithPool(db, runtimeBackend, cfg.Backend, cfg, warmPool)
+		} else {
+			apiHandler = api.NewHandlerWithConfig(db, runtimeBackend, cfg.Backend, cfg)
+		}
+		handler := dashboard.Wrap(apiHandler)
 		srv := &http.Server{Addr: cfg.Listen, Handler: handler, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 1 << 20}
 		serveCtx, stop := signalContext(cmd.Context())
 		defer stop()
@@ -456,7 +477,7 @@ func newKeysCommand() *cobra.Command {
 		if cmd.Flags().Changed("data-dir") {
 			cfg.DataDir = dataDir
 		}
-		if err = os.MkdirAll(cfg.DataDir, 0700); err != nil {
+		if err = os.MkdirAll(cfg.DataDir, 0o700); err != nil {
 			return err
 		}
 		db, err := sqlitestore.Open(filepath.Join(cfg.DataDir, "cellbox.db"))

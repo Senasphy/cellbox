@@ -21,9 +21,10 @@ type Config struct {
 	MemoryMB        int
 }
 type service struct {
-	cfg       Config
-	mu        sync.Mutex
-	sessionID string
+	cfg        Config
+	mu         sync.Mutex
+	sessionID  string
+	sessionIDs []string
 }
 
 func New(cfg Config) *mcp.Server {
@@ -124,21 +125,55 @@ func newService(cfg Config) (*mcp.Server, func(context.Context) error) {
 		}
 		return result(map[string]any{"session_id": id}), nil, nil
 	})
-	for _, name := range []string{"snapshot", "fork"} {
-		n := name
-		mcp.AddTool[empty, any](s, &mcp.Tool{Name: n, Description: n + " support is planned for Phase 6"}, func(context.Context, *mcp.CallToolRequest, empty) (*mcp.CallToolResult, any, error) {
-			return nil, nil, fmt.Errorf("%s is not implemented by this server yet", n)
-		})
+	type snapshotArgs struct {
+		Labels map[string]string `json:"labels,omitempty"`
 	}
+	mcp.AddTool(s, &mcp.Tool{Name: "snapshot", Description: "Create an immutable filesystem snapshot of the current session"}, func(ctx context.Context, _ *mcp.CallToolRequest, a snapshotArgs) (*mcp.CallToolResult, any, error) {
+		id, e := svc.ensure(ctx)
+		if e != nil {
+			return nil, nil, e
+		}
+		body, _ := json.Marshal(map[string]any{"labels": a.Labels})
+		var snapshot map[string]any
+		if e = svc.request(ctx, "POST", "/v1/sessions/"+url.PathEscape(id)+"/snapshots", body, &snapshot); e != nil {
+			return nil, nil, e
+		}
+		return result(snapshot), nil, nil
+	})
+	type forkArgs struct {
+		SnapshotID string `json:"snapshot_id,omitempty"`
+	}
+	mcp.AddTool(s, &mcp.Tool{Name: "fork", Description: "Fork the current session from a snapshot, or snapshot and fork it in one call"}, func(ctx context.Context, _ *mcp.CallToolRequest, a forkArgs) (*mcp.CallToolResult, any, error) {
+		id, e := svc.ensure(ctx)
+		if e != nil {
+			return nil, nil, e
+		}
+		body, _ := json.Marshal(a)
+		var child struct {
+			ID string `json:"id"`
+		}
+		if e = svc.request(ctx, "POST", "/v1/sessions/"+url.PathEscape(id)+"/fork", body, &child); e != nil {
+			return nil, nil, e
+		}
+		svc.mu.Lock()
+		svc.sessionID = child.ID
+		svc.sessionIDs = append(svc.sessionIDs, child.ID)
+		svc.mu.Unlock()
+		return result(map[string]string{"session_id": child.ID}), nil, nil
+	})
 	cleanup := func(ctx context.Context) error {
 		svc.mu.Lock()
-		id := svc.sessionID
+		ids := append([]string(nil), svc.sessionIDs...)
 		svc.sessionID = ""
+		svc.sessionIDs = nil
 		svc.mu.Unlock()
-		if id == "" {
-			return nil
+		var firstErr error
+		for _, id := range ids {
+			if err := svc.request(ctx, "DELETE", "/v1/sessions/"+url.PathEscape(id), nil, nil); err != nil && firstErr == nil {
+				firstErr = err
+			}
 		}
-		return svc.request(ctx, "DELETE", "/v1/sessions/"+url.PathEscape(id), nil, nil)
+		return firstErr
 	}
 	return s, cleanup
 }
@@ -160,6 +195,7 @@ func (s *service) ensure(ctx context.Context) (string, error) {
 		return "", e
 	}
 	s.sessionID = r.ID
+	s.sessionIDs = append(s.sessionIDs, r.ID)
 	return r.ID, nil
 }
 func (s *service) writeFile(ctx context.Context, id, path, contents string) error {
@@ -249,7 +285,7 @@ func boundedExec(v map[string]any) map[string]any {
 	var reason any
 	if state == "timed_out" {
 		reason = "timeout"
-	} else if state == "oom" {
+	} else if state == "oom" || state == "oom_killed" {
 		reason = "oom"
 	}
 	duration := exec["duration_ms"]
