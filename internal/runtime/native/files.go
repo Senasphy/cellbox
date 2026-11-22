@@ -283,6 +283,9 @@ func (s *sandbox) ListDir(ctx context.Context, value string) ([]cellruntime.File
 	}
 	result := make([]cellruntime.FileInfo, 0, len(entries))
 	for _, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		var stat unix.Stat_t
 		if err := unix.Fstatat(fd, entry.Name(), &stat, unix.AT_SYMLINK_NOFOLLOW); err != nil {
 			return nil, fmt.Errorf("stat sandbox entry %s/%s: %w", clean, entry.Name(), err)
