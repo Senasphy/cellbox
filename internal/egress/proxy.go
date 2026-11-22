@@ -229,25 +229,40 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func target(r *http.Request) (string, int, error) {
-	address := r.Host
+	var host, portText string
 	if r.Method == http.MethodConnect {
-		address = r.Host
-	} else if r.URL != nil && r.URL.IsAbs() {
-		address = r.URL.Host
-	}
-	host, portText, err := net.SplitHostPort(address)
-	if err != nil {
-		if strings.Contains(err.Error(), "missing port in address") && r.Method != http.MethodConnect {
-			host, portText = address, "80"
-		} else {
+		var err error
+		host, portText, err = net.SplitHostPort(r.Host)
+		if err != nil {
 			return "", 0, err
+		}
+	} else if r.URL != nil && r.URL.IsAbs() {
+		host, portText = r.URL.Hostname(), r.URL.Port()
+		if portText == "" {
+			switch strings.ToLower(r.URL.Scheme) {
+			case "http":
+				portText = "80"
+			case "https":
+				portText = "443"
+			default:
+				return "", 0, errors.New("unsupported proxy URL scheme")
+			}
+		}
+	} else {
+		var err error
+		host, portText, err = net.SplitHostPort(r.Host)
+		if err != nil {
+			if !strings.Contains(err.Error(), "missing port in address") && !(strings.HasPrefix(r.Host, "[") && strings.HasSuffix(r.Host, "]")) {
+				return "", 0, err
+			}
+			host, portText = strings.Trim(r.Host, "[]"), "80"
 		}
 	}
 	port, err := strconv.Atoi(portText)
 	if err != nil || port < 1 || port > 65535 {
 		return "", 0, errors.New("invalid port")
 	}
-	return strings.Trim(host, "[]"), port, nil
+	return host, port, nil
 }
 
 func normalizeHost(host string) (string, error) {

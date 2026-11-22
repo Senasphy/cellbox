@@ -32,6 +32,42 @@ func TestPolicyWildcardAndPortMatching(t *testing.T) {
 	}
 }
 
+func TestTargetDefaultsPortsAndParsesIPv6(t *testing.T) {
+	tests := []struct {
+		name        string
+		method      string
+		target      string
+		requestHost string
+		wantHost    string
+		wantPort    int
+		wantErr     bool
+	}{
+		{name: "IPv4 HTTP default", method: http.MethodGet, target: "http://example.test/path", wantHost: "example.test", wantPort: 80},
+		{name: "IPv6 HTTP default", method: http.MethodGet, target: "http://[2606:4700::4700]/path", wantHost: "2606:4700::4700", wantPort: 80},
+		{name: "IPv6 HTTPS default", method: http.MethodGet, target: "https://[2606:4700::4700]/path", wantHost: "2606:4700::4700", wantPort: 443},
+		{name: "IPv6 CONNECT explicit port", method: http.MethodConnect, target: "http://example.test", requestHost: "[2606:4700::4700]:443", wantHost: "2606:4700::4700", wantPort: 443},
+		{name: "CONNECT requires port", method: http.MethodConnect, target: "http://example.test", requestHost: "example.test", wantErr: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(test.method, test.target, nil)
+			if test.requestHost != "" {
+				request.Host = test.requestHost
+			}
+			host, port, err := target(request)
+			if test.wantErr {
+				if err == nil {
+					t.Fatal("target() error = nil, want error")
+				}
+				return
+			}
+			if err != nil || host != test.wantHost || port != test.wantPort {
+				t.Fatalf("target() = (%q, %d, %v), want (%q, %d, nil)", host, port, err, test.wantHost, test.wantPort)
+			}
+		})
+	}
+}
+
 func TestUnixProxyForwardsAllowedHTTPAndDeniesPrivateIP(t *testing.T) {
 	upstream, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
