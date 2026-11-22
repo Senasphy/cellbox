@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -92,6 +93,79 @@ func TestNativeNonePolicyBlocksDirectPublicNetwork(t *testing.T) {
 	}
 	if result.ExitCode == 0 || result.ExitCode == 124 {
 		t.Fatalf("direct public network unexpectedly reachable or probe hung: %+v", result)
+	}
+}
+
+func TestNativeAllowlistedPipAndGitUseEgressProxy(t *testing.T) {
+	if os.Getenv("CELLBOX_RUN_NATIVE_EGRESS_INTEGRATION") != "1" {
+		t.Skip("set CELLBOX_RUN_NATIVE_EGRESS_INTEGRATION=1 inside a delegated cgroup scope to run package-manager egress checks")
+	}
+	cgroupPath, err := CurrentCgroupPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cgroups, err := InitializeCgroupRoot(cgroupPath, os.Getpid())
+	if err != nil {
+		t.Fatalf("initialize delegated cgroup: %v", err)
+	}
+	dataDir, err := os.MkdirTemp("/tmp", "cb-egress-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dataDir) })
+	backend, err := NewRuntime(filepath.Join(dataDir, "n"), cgroups)
+	if err != nil {
+		t.Fatalf("create native runtime: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	checks := []struct {
+		name  string
+		image string
+		allow []cellruntime.EgressRule
+		argv  []string
+	}{
+		{
+			name:  "pip",
+			image: "python:3.12-slim",
+			allow: []cellruntime.EgressRule{{Host: "pypi.org", Ports: []int{443}}, {Host: "files.pythonhosted.org", Ports: []int{443}}},
+			argv:  []string{"python", "-m", "pip", "download", "--no-deps", "--only-binary=:all:", "--dest", "/tmp/cellbox-wheels", "idna==3.10"},
+		},
+		{
+			name:  "git",
+			image: "golang:1.23",
+			allow: []cellruntime.EgressRule{{Host: "github.com", Ports: []int{443}}},
+			argv:  []string{"git", "ls-remote", "https://github.com/octocat/Hello-World.git", "HEAD"},
+		},
+	}
+	for _, check := range checks {
+		t.Run(check.name, func(t *testing.T) {
+			image, err := backend.EnsureImage(ctx, check.image)
+			if err != nil {
+				t.Fatalf("ensure %s image: %v", check.name, err)
+			}
+			box, err := backend.Create(ctx, cellruntime.SandboxSpec{
+				ID: fmt.Sprintf("ses_egress_%s_%d", check.name, os.Getpid()), Image: image,
+				Limits:        cellruntime.Limits{CPUMillicores: 1000, MemoryMB: 512, PIDs: 128},
+				NetworkPolicy: cellruntime.NetworkPolicy{Mode: "allowlist", Allow: check.allow},
+			})
+			if err != nil {
+				t.Fatalf("create allowlisted %s sandbox: %v", check.name, err)
+			}
+			defer box.Destroy(context.Background())
+			handle, err := box.Exec(ctx, cellruntime.ExecRequest{Argv: check.argv, TimeoutMS: 60000, OutputLimit: 16 << 10})
+			if err != nil {
+				t.Fatalf("start %s workflow: %v", check.name, err)
+			}
+			var output strings.Builder
+			for chunk := range handle.Output() {
+				output.Write(chunk.Data)
+			}
+			result, err := handle.Wait(ctx)
+			if err != nil || result.ExitCode != 0 {
+				t.Fatalf("%s workflow failed: result=%+v err=%v output=%s", check.name, result, err, output.String())
+			}
+		})
 	}
 }
 
