@@ -243,6 +243,7 @@ type sandbox struct {
 	dir            string
 	env            map[string]string
 	mu             sync.Mutex
+	destroyMu      sync.Mutex
 	done           bool
 	killed         bool
 	diskLimitBytes atomic.Uint64
@@ -579,6 +580,8 @@ func (s *sandbox) Kill(ctx context.Context) error {
 	return nil
 }
 func (s *sandbox) Destroy(ctx context.Context) error {
+	s.destroyMu.Lock()
+	defer s.destroyMu.Unlock()
 	s.mu.Lock()
 	if s.done {
 		s.mu.Unlock()
