@@ -43,6 +43,57 @@ func TestRuntimeContract(t *testing.T) {
 	contract.RunBasic(t, New(socket), image)
 }
 
+func TestDockerSnapshotForkPreservesCapturedFiles(t *testing.T) {
+	if os.Getenv("CELLBOX_RUN_DOCKER_SNAPSHOT_INTEGRATION") != "1" {
+		t.Skip("set CELLBOX_RUN_DOCKER_SNAPSHOT_INTEGRATION=1 to run live Docker snapshot integration")
+	}
+	socket := os.Getenv("CELLBOX_DOCKER_SOCKET")
+	if socket == "" {
+		socket = "/var/run/docker.sock"
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	r := New(socket)
+	image, err := r.EnsureImage(ctx, "alpine:latest")
+	if err != nil {
+		t.Fatalf("ensure snapshot test image: %v", err)
+	}
+	limits := runtime.Limits{CPUMillicores: 1000, MemoryMB: 256, PIDs: 64}
+	parent, err := r.Create(ctx, runtime.SandboxSpec{ID: fmt.Sprintf("ses_snapshot_parent_%d", os.Getpid()), Image: image, Limits: limits, NetworkMode: "none"})
+	if err != nil {
+		t.Fatalf("create snapshot parent: %v", err)
+	}
+	defer parent.Destroy(context.Background())
+	if err := parent.WriteFile(ctx, "/tmp/before-snapshot", strings.NewReader("captured"), 0600); err != nil {
+		t.Fatalf("write captured file: %v", err)
+	}
+	snapshot, err := parent.Snapshot(ctx)
+	if err != nil {
+		t.Fatalf("capture Docker snapshot: %v", err)
+	}
+	defer r.DeleteSnapshot(context.Background(), snapshot.ID)
+	if err := parent.WriteFile(ctx, "/tmp/after-snapshot", strings.NewReader("later"), 0600); err != nil {
+		t.Fatalf("write post-snapshot file: %v", err)
+	}
+	child, err := r.Create(ctx, runtime.SandboxSpec{ID: fmt.Sprintf("ses_snapshot_child_%d", os.Getpid()), Image: runtime.ImageInfo{Reference: snapshot.ID}, Limits: limits, NetworkMode: "none"})
+	if err != nil {
+		t.Fatalf("fork snapshot: %v", err)
+	}
+	defer child.Destroy(context.Background())
+	file, _, err := child.ReadFile(ctx, "/tmp/before-snapshot")
+	if err != nil {
+		t.Fatalf("read captured file in fork: %v", err)
+	}
+	got, readErr := io.ReadAll(file)
+	closeErr := file.Close()
+	if readErr != nil || closeErr != nil || string(got) != "captured" {
+		t.Fatalf("fork captured file=%q read err=%v close err=%v", got, readErr, closeErr)
+	}
+	if _, _, err := child.ReadFile(ctx, "/tmp/after-snapshot"); err == nil {
+		t.Fatal("fork contains a file written by the parent after its snapshot")
+	}
+}
+
 func TestDockerAllowlistedHTTPSUsesEgressProxy(t *testing.T) {
 	if os.Getenv("CELLBOX_RUN_DOCKER_EGRESS_INTEGRATION") != "1" {
 		t.Skip("set CELLBOX_RUN_DOCKER_EGRESS_INTEGRATION=1 to run live Docker egress")
