@@ -406,7 +406,7 @@ func upperDirectoryUsage(root string, stop <-chan struct{}, limit uint64) (uint6
 				return errors.New("native upper directory usage overflow")
 			}
 			used += size
-			if used > limit {
+			if limit > 0 && used > limit {
 				return errUpperUsageLimit
 			}
 		}
