@@ -131,7 +131,7 @@ func TestRecordEgressLogStoresLogAndAuditAtomically(t *testing.T) {
 		t.Fatalf("egress items=%+v more=%v err=%v", items, more, err)
 	}
 	got := items[0]
-	if got.Host != entry.Host || got.Port != entry.Port || got.Resolved != entry.Resolved || got.Verdict != entry.Verdict || got.BytesUp != entry.BytesUp || got.BytesDown != entry.BytesDown || got.Duration != entry.Duration {
+	if got.Host != entry.Host || got.Port != entry.Port || got.Resolved != entry.Resolved || got.Verdict != entry.Verdict || got.Reason != entry.Reason || got.BytesUp != entry.BytesUp || got.BytesDown != entry.BytesDown || got.Duration != entry.Duration {
 		t.Fatalf("egress entry=%+v", got)
 	}
 	events, err := s.ListAuditEvents(context.Background(), session.ID, 10)

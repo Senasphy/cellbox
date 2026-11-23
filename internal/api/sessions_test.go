@@ -25,9 +25,10 @@ import (
 )
 
 type fakeRuntime struct {
-	box      *fakeSandbox
-	imageErr error
-	boxes    map[string]*fakeSandbox
+	box          *fakeSandbox
+	imageErr     error
+	boxes        map[string]*fakeSandbox
+	egressEvents chan runtime.EgressEvent
 }
 
 type noDiskLimitRuntime struct{ *fakeRuntime }
@@ -105,7 +106,7 @@ func (f *fakeRuntime) EnsureImage(_ context.Context, ref string) (runtime.ImageI
 	return runtime.ImageInfo{Reference: ref, Digest: "sha256:test"}, nil
 }
 func (f *fakeRuntime) Create(_ context.Context, s runtime.SandboxSpec) (runtime.Sandbox, error) {
-	f.box = &fakeSandbox{id: "container-test"}
+	f.box = &fakeSandbox{id: "container-test", egressEvents: f.egressEvents}
 	if f.boxes == nil {
 		f.boxes = map[string]*fakeSandbox{}
 	}
@@ -121,13 +122,14 @@ func (f *fakeRuntime) SandboxByID(id string) runtime.Sandbox {
 }
 
 type fakeSandbox struct {
-	id         string
-	snapshot   runtime.SnapshotInfo
-	killed     bool
-	destroyed  bool
-	files      map[string][]byte
-	execHandle runtime.ExecHandle
-	stats      runtime.Stats
+	id           string
+	snapshot     runtime.SnapshotInfo
+	killed       bool
+	destroyed    bool
+	files        map[string][]byte
+	execHandle   runtime.ExecHandle
+	stats        runtime.Stats
+	egressEvents <-chan runtime.EgressEvent
 }
 
 type fakeExecHandle struct {
@@ -167,7 +169,8 @@ func (f *blockingExecHandle) finish() {
 	})
 }
 
-func (f *fakeSandbox) ID() string { return f.id }
+func (f *fakeSandbox) ID() string                               { return f.id }
+func (f *fakeSandbox) EgressEvents() <-chan runtime.EgressEvent { return f.egressEvents }
 func (f *fakeSandbox) Exec(context.Context, runtime.ExecRequest) (runtime.ExecHandle, error) {
 	if f.execHandle != nil {
 		return f.execHandle, nil
@@ -524,6 +527,80 @@ func TestSessionLifecycleAndOwnership(t *testing.T) {
 	}
 	if stored.State != "stopped" {
 		t.Fatalf("state=%s", stored.State)
+	}
+}
+
+func TestSessionEgressLogPersistsAllowAndDenyReasons(t *testing.T) {
+	db, err := sqlite.Open(filepath.Join(t.TempDir(), "egress-api.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	user, err := auth.Generate("key_egress", "egress", "session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.CreateKey(context.Background(), sqlite.KeyRecord{ID: user.ID, Name: user.Name, Prefix: user.Prefix, Hash: user.Hash, Scope: user.Scope, CreatedAt: time.Now().UTC()}); err != nil {
+		t.Fatal(err)
+	}
+	egressEvents := make(chan runtime.EgressEvent, 2)
+	backend := &fakeRuntime{egressEvents: egressEvents}
+	handler := NewHandlerWithConfig(db, backend, "fake", config.Defaults())
+	create := httptest.NewRequest(http.MethodPost, "/v1/sessions", strings.NewReader(`{"image":"python:3.12","network_policy":{"mode":"none"}}`))
+	create.Header.Set("Authorization", "Bearer "+user.Secret)
+	create.Header.Set("Content-Type", "application/json")
+	created := httptest.NewRecorder()
+	handler.ServeHTTP(created, create)
+	if created.Code != http.StatusCreated {
+		t.Fatalf("create status=%d body=%s", created.Code, created.Body.String())
+	}
+	var session SessionResponse
+	if err := json.Unmarshal(created.Body.Bytes(), &session); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	egressEvents <- runtime.EgressEvent{Host: "allowed.example", Port: 443, Resolved: "8.8.8.8", Verdict: "allow", Reason: "policy_allowed", Timestamp: now}
+	egressEvents <- runtime.EgressEvent{Host: "blocked.example", Port: 443, Verdict: "deny", Reason: "policy_denied", Timestamp: now.Add(time.Second)}
+	close(egressEvents)
+
+	timer := time.NewTimer(5 * time.Second)
+	defer timer.Stop()
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		request := httptest.NewRequest(http.MethodGet, "/v1/sessions/"+session.ID+"/egress-log", nil)
+		request.Header.Set("Authorization", "Bearer "+user.Secret)
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != http.StatusOK {
+			t.Fatalf("egress log status=%d body=%s", response.Code, response.Body.String())
+		}
+		var result struct {
+			Items []auditEventResponse `json:"items"`
+		}
+		if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
+			t.Fatal(err)
+		}
+		found := map[string]string{}
+		for _, item := range result.Items {
+			var detail struct {
+				Host    string `json:"host"`
+				Verdict string `json:"verdict"`
+				Reason  string `json:"reason"`
+			}
+			if err := json.Unmarshal(item.Detail, &detail); err != nil {
+				t.Fatal(err)
+			}
+			found[detail.Host] = detail.Verdict + ":" + detail.Reason
+		}
+		if found["allowed.example"] == "allow:policy_allowed" && found["blocked.example"] == "deny:policy_denied" {
+			return
+		}
+		select {
+		case <-ticker.C:
+		case <-timer.C:
+			t.Fatalf("egress log omitted decision reasons: %+v", found)
+		}
 	}
 }
 
