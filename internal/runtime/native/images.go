@@ -14,6 +14,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
@@ -24,19 +25,31 @@ import (
 )
 
 const maxUnpackedImageBytes = int64(20 << 30)
+const maxResolvedImageReferences = 128
 
 type imageStore struct {
 	root  string
 	group singleflight.Group
+	mu    sync.RWMutex
+	cache map[string]imageStoreResult
+	order []string
 }
 
-func newImageStore(root string) *imageStore { return &imageStore{root: root} }
+func newImageStore(root string) *imageStore {
+	return &imageStore{root: root, cache: make(map[string]imageStoreResult)}
+}
 
-// Ensure pulls the host-platform image, verifies and flattens its layers, and
-// publishes the rootfs atomically under its content digest.
+// Ensure resolves a host-platform image once per process, verifies and flattens
+// its layers, and publishes the rootfs atomically under its content digest.
 func (s *imageStore) Ensure(ctx context.Context, reference string) (cellruntime.ImageInfo, string, map[string]string, error) {
 	if strings.TrimSpace(reference) == "" {
 		return cellruntime.ImageInfo{}, "", nil, errors.New("image reference must not be empty")
+	}
+	s.mu.RLock()
+	cached, ok := s.cache[reference]
+	s.mu.RUnlock()
+	if ok {
+		return cached.info, cached.rootfs, cloneEnv(cached.env), nil
 	}
 	value, err, _ := s.group.Do(reference, func() (any, error) {
 		ref, err := name.ParseReference(reference)
@@ -120,6 +133,16 @@ func (s *imageStore) Ensure(ctx context.Context, reference string) (cellruntime.
 		return cellruntime.ImageInfo{}, "", nil, err
 	}
 	result := value.(imageStoreResult)
+	s.mu.Lock()
+	if _, exists := s.cache[reference]; !exists {
+		if len(s.order) >= maxResolvedImageReferences {
+			delete(s.cache, s.order[0])
+			s.order = s.order[1:]
+		}
+		s.order = append(s.order, reference)
+	}
+	s.cache[reference] = result
+	s.mu.Unlock()
 	return result.info, result.rootfs, cloneEnv(result.env), nil
 }
 

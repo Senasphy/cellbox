@@ -5,11 +5,14 @@ package native
 import (
 	"archive/tar"
 	"bytes"
+	"context"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	cellruntime "github.com/senasphy/cellbox/internal/runtime"
 )
 
 func tarLayer(t *testing.T, entries ...tar.Header) *bytes.Buffer {
@@ -46,6 +49,30 @@ func TestParseImageEnvironmentAndSessionOverrides(t *testing.T) {
 		if _, err := parseImageEnvironment([]string{invalid}); err == nil {
 			t.Errorf("accepted invalid OCI environment value %q", invalid)
 		}
+	}
+}
+
+func TestImageStoreEnsureUsesResolvedCache(t *testing.T) {
+	store := newImageStore(t.TempDir())
+	store.cache["alpine:latest"] = imageStoreResult{
+		info:   cellruntime.ImageInfo{Reference: "alpine:latest", Digest: "sha256:cached"},
+		rootfs: "/cached/rootfs",
+		env:    map[string]string{"PATH": "/bin"},
+	}
+	info, rootfs, env, err := store.Ensure(context.Background(), "alpine:latest")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Digest != "sha256:cached" || rootfs != "/cached/rootfs" || env["PATH"] != "/bin" {
+		t.Fatalf("cached image result: info=%+v rootfs=%q env=%v", info, rootfs, env)
+	}
+	env["PATH"] = "/mutated"
+	_, _, nextEnv, err := store.Ensure(context.Background(), "alpine:latest")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if nextEnv["PATH"] != "/bin" {
+		t.Fatalf("caller mutated cached image environment: %v", nextEnv)
 	}
 }
 

@@ -8,11 +8,15 @@ The command prints the host kernel, CPU count/quota, detected memory/cgroup limi
 
 ## Current measurements
 
-Measured 2026-11-23 on the local Docker backend with `alpine:latest`, 10 sequential samples per path. The pool-enabled service's warm path was confirmed by the `cellbox_session_create_seconds_count{source="warm"}` metric after each request.
+Measured 2026-11-23 on the local host with `alpine:latest`, 10 sequential samples per path. The pool-enabled service's warm path was confirmed by the `cellbox_session_create_seconds_count{source="warm"}` metric after each request.
 
-| Path | p50 | p95 | Target |
-| --- | ---: | ---: | ---: |
-| Cold | 813 ms | 832 ms | under 400 ms |
-| Warm | 374 ms | 487 ms | under 60 ms |
+| Backend and revision | Path | p50 | p95 | Target |
+| --- | --- | ---: | ---: | ---: |
+| Docker, before native cache change | Cold | 813 ms | 832 ms | under 400 ms |
+| Docker, before native cache change | Warm | 374 ms | 487 ms | under 60 ms |
+| Native, before native cache change | Cold | 2,844 ms | 3,823 ms | under 400 ms |
+| Native, before native cache change | Warm | 1,464 ms | 1,746 ms | under 60 ms |
+| Native, with resolved-image cache | Cold | 42 ms | 1,955 ms | under 400 ms |
+| Native, with resolved-image cache | Warm | 8.6 ms | 9.9 ms | under 60 ms |
 
-The host reported Linux kernel `7.3.4-arch1-2`, 8 CPUs, and 15,828 MiB RAM, with no cgroup CPU or memory cap detected. Both targets were missed on this host. This is an initial local baseline, not a reference-machine result; the warm pool is functioning, but the measured end-to-end creation path still needs optimization before latency acceptance.
+The host reported Linux kernel `7.3.4-arch1-2`, 8 CPUs, and 15,828 MiB RAM, with no cgroup CPU or memory cap detected. The native cache change memoizes up to 128 resolved references per service process, avoiding repeated registry manifest lookups while retaining the content-addressed rootfs. On the cached native run, warm p50 met the target and cold p50 met the target; its first sample still fetched the image manifest and accounts for the high p95. Docker remains above both targets in this environment. These are measured local results, not reference-machine results.
