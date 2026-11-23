@@ -13,38 +13,17 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"os/signal"
+	"os/exec"
 	"path"
 	"path/filepath"
 	"strings"
 	"sync"
-	"syscall"
 	"testing"
 	"time"
 
-	"github.com/senasphy/cellbox/internal/egress"
 	"github.com/senasphy/cellbox/internal/runtime"
 	"github.com/senasphy/cellbox/internal/runtime/contract"
 )
-
-func init() {
-	// The live Docker test injects this test binary as the container helper.
-	if len(os.Args) < 6 || os.Args[1] != "_egress-forwarder" {
-		return
-	}
-	forwarder, err := egress.NewForwarder(os.Args[3], os.Args[5])
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "test egress forwarder:", err)
-		os.Exit(1)
-	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-	if err := forwarder.Serve(ctx); err != nil {
-		fmt.Fprintln(os.Stderr, "test egress forwarder:", err)
-		os.Exit(1)
-	}
-	os.Exit(0)
-}
 
 func TestRuntimeContract(t *testing.T) {
 	if os.Getenv("CELLBOX_RUN_DOCKER_CONTRACT") != "1" {
@@ -78,6 +57,18 @@ func TestDockerAllowlistedHTTPSUsesEgressProxy(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 	r := New(socket)
+	repoRoot, err := filepath.Abs(filepath.Join("..", "..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	helperPath := filepath.Join(t.TempDir(), "cellbox")
+	build := exec.Command("go", "build", "-trimpath", "-o", helperPath, "./cmd/cellbox")
+	build.Dir = repoRoot
+	build.Env = append(os.Environ(), "CGO_ENABLED=0")
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build cellbox egress helper: %v\n%s", err, output)
+	}
+	r.helperPath = helperPath
 	image, err := r.EnsureImage(ctx, "curlimages/curl:8.10.1")
 	if err != nil {
 		t.Fatalf("ensure curl image: %v", err)
@@ -91,6 +82,33 @@ func TestDockerAllowlistedHTTPSUsesEgressProxy(t *testing.T) {
 		t.Fatalf("create allowlisted Docker sandbox: %v", err)
 	}
 	defer box.Destroy(context.Background())
+	eventSource, ok := box.(interface {
+		EgressEvents() <-chan runtime.EgressEvent
+	})
+	if !ok || eventSource.EgressEvents() == nil {
+		t.Fatal("Docker sandbox does not expose egress events")
+	}
+	events := eventSource.EgressEvents()
+	waitForEvent := func(host, verdict, reason string) {
+		t.Helper()
+		timer := time.NewTimer(5 * time.Second)
+		defer timer.Stop()
+		for {
+			select {
+			case event, open := <-events:
+				if !open {
+					t.Fatal("Docker egress event stream closed before expected event")
+				}
+				if event.Host == host && event.Port == 443 && event.Verdict == verdict && event.Reason == reason {
+					return
+				}
+			case <-timer.C:
+				t.Fatalf("no %s event with reason %q was recorded for %s:443", verdict, reason, host)
+			case <-ctx.Done():
+				t.Fatal(ctx.Err())
+			}
+		}
+	}
 	direct, err := box.Exec(ctx, runtime.ExecRequest{Argv: []string{"curl", "--noproxy", "*", "--connect-timeout", "3", "--max-time", "5", "https://1.1.1.1/"}, TimeoutMS: 7000, OutputLimit: 4096})
 	if err != nil {
 		t.Fatalf("start direct-network bypass probe: %v", err)
@@ -101,6 +119,17 @@ func TestDockerAllowlistedHTTPSUsesEgressProxy(t *testing.T) {
 	if err != nil || directResult.ExitCode == 0 {
 		t.Fatalf("direct network bypass unexpectedly succeeded: result=%+v err=%v", directResult, err)
 	}
+	denied, err := box.Exec(ctx, runtime.ExecRequest{Argv: []string{"curl", "--fail", "--silent", "--show-error", "--max-time", "20", "https://example.org/"}, TimeoutMS: 30000, OutputLimit: 4096})
+	if err != nil {
+		t.Fatalf("start disallowed proxied curl: %v", err)
+	}
+	for range denied.Output() {
+	}
+	deniedResult, err := denied.Wait(ctx)
+	if err != nil || deniedResult.ExitCode == 0 {
+		t.Fatalf("disallowed proxied curl unexpectedly succeeded: result=%+v err=%v", deniedResult, err)
+	}
+	waitForEvent("example.org", "deny", "policy_denied")
 	handle, err := box.Exec(ctx, runtime.ExecRequest{Argv: []string{"curl", "--retry", "3", "--retry-connrefused", "--retry-delay", "1", "--fail", "--silent", "--show-error", "--max-time", "20", "https://example.com/"}, TimeoutMS: 30000, OutputLimit: 16 << 10})
 	if err != nil {
 		t.Fatalf("start proxied curl: %v", err)
@@ -111,29 +140,7 @@ func TestDockerAllowlistedHTTPSUsesEgressProxy(t *testing.T) {
 	if err != nil || result.ExitCode != 0 {
 		t.Fatalf("proxied curl failed: result=%+v err=%v", result, err)
 	}
-	events, ok := box.(interface {
-		EgressEvents() <-chan runtime.EgressEvent
-	})
-	if !ok || events.EgressEvents() == nil {
-		t.Fatal("Docker sandbox does not expose egress events")
-	}
-	timer := time.NewTimer(5 * time.Second)
-	defer timer.Stop()
-	for {
-		select {
-		case event, open := <-events.EgressEvents():
-			if !open {
-				t.Fatal("Docker egress event stream closed before allow event")
-			}
-			if event.Host == "example.com" && event.Port == 443 && event.Verdict == "allow" && event.Reason == "policy_allowed" {
-				return
-			}
-		case <-timer.C:
-			t.Fatal("no allow event was recorded for example.com:443")
-		case <-ctx.Done():
-			t.Fatal(ctx.Err())
-		}
-	}
+	waitForEvent("example.com", "allow", "policy_allowed")
 }
 
 func TestReconcileRemovesOnlyLabeledCellboxContainers(t *testing.T) {
