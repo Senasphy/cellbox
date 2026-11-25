@@ -101,7 +101,11 @@ func (r *Runtime) Create(ctx context.Context, spec cellruntime.SandboxSpec) (cel
 	var egressProxy *egress.Server
 	var egressCancel context.CancelFunc
 	var egressQueue *egressEventQueue
+	var cgroupDir *os.File
 	cleanup := func() {
+		if cgroupDir != nil {
+			_ = cgroupDir.Close()
+		}
 		if egressCancel != nil {
 			egressCancel()
 		}
@@ -112,7 +116,7 @@ func (r *Runtime) Create(ctx context.Context, spec cellruntime.SandboxSpec) (cel
 			egressQueue.Close()
 		}
 		if created {
-			_ = os.RemoveAll(base)
+			_ = removeTree(base)
 		}
 		_ = cgroup.Destroy()
 	}
@@ -136,7 +140,7 @@ func (r *Runtime) Create(ctx context.Context, spec cellruntime.SandboxSpec) (cel
 		cleanup()
 		return nil, fmt.Errorf("close native exec helper mountpoint: %w", err)
 	}
-	cgroupDir, err := os.Open(cgroup.path)
+	cgroupDir, err = os.Open(cgroup.path)
 	if err != nil {
 		cleanup()
 		return nil, fmt.Errorf("open native session cgroup: %w", err)
@@ -186,6 +190,7 @@ func (r *Runtime) Create(ctx context.Context, spec cellruntime.SandboxSpec) (cel
 	initConfig := InitConfig{SessionID: spec.ID, LowerDirs: lowerDirs, UpperDir: filepath.Join(base, "upper"), WorkDir: filepath.Join(base, "work"), RootDir: filepath.Join(base, "root"), RunDir: filepath.Join(base, "run"), Hostname: spec.ID, Env: env, Egress: egressProxy != nil}
 	process, err := SpawnInit(ctx, initConfig, int(cgroupDir.Fd()))
 	_ = cgroupDir.Close()
+	cgroupDir = nil
 	if err != nil {
 		cleanup()
 		return nil, err
@@ -225,11 +230,55 @@ func (r *Runtime) Reconcile(ctx context.Context) error {
 		if err := cgroup.Destroy(); err != nil {
 			return err
 		}
-		if err := os.RemoveAll(filepath.Join(r.root, "sessions", entry.Name())); err != nil {
+		if err := removeTree(filepath.Join(r.root, "sessions", entry.Name())); err != nil {
 			return fmt.Errorf("remove orphan native session data %s: %w", entry.Name(), err)
 		}
 	}
+	sessionsDir := filepath.Join(r.root, "sessions")
+	sessionDirs, err := os.ReadDir(sessionsDir)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("list native session directories: %w", err)
+	}
+	for _, entry := range sessionDirs {
+		if !entry.IsDir() {
+			continue
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		r.mu.RLock()
+		_, active := r.boxes[entry.Name()]
+		r.mu.RUnlock()
+		if active {
+			continue
+		}
+		if err := removeTree(filepath.Join(sessionsDir, entry.Name())); err != nil {
+			return fmt.Errorf("remove orphan native session directory %s: %w", entry.Name(), err)
+		}
+	}
 	return nil
+}
+
+func removeTree(root string) error {
+	err := os.RemoveAll(root)
+	if err == nil {
+		return nil
+	}
+	_ = filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return nil
+		}
+		if entry.Type()&os.ModeSymlink != 0 {
+			return nil
+		}
+		if entry.IsDir() {
+			_ = os.Chmod(path, 0700)
+		} else {
+			_ = os.Chmod(path, 0600)
+		}
+		return nil
+	})
+	return os.RemoveAll(root)
 }
 
 func (r *Runtime) SandboxByID(id string) cellruntime.Sandbox {
@@ -612,7 +661,7 @@ func (s *sandbox) Destroy(ctx context.Context) error {
 	if s.egressEvents != nil {
 		s.egressEvents.Close()
 	}
-	if err := os.RemoveAll(s.dir); err != nil {
+	if err := removeTree(s.dir); err != nil {
 		return err
 	}
 	s.mu.Lock()

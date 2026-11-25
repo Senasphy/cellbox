@@ -4,6 +4,8 @@ package native
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -57,5 +59,49 @@ func TestSpawnInitRequiresCgroupFD(t *testing.T) {
 	_, err := SpawnInit(context.Background(), validInitConfig(), -1)
 	if err == nil || !strings.Contains(err.Error(), "cgroup directory fd") {
 		t.Fatalf("SpawnInit error = %v", err)
+	}
+}
+
+func TestRemoveTreeHandlesRestrictivePermissionsAndReconcileSweepsOrphanDirs(t *testing.T) {
+	root := t.TempDir()
+	lockedDir := filepath.Join(root, "locked")
+	if err := os.MkdirAll(lockedDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	lockedFile := filepath.Join(lockedDir, "secret.txt")
+	if err := os.WriteFile(lockedFile, []byte("x"), 0400); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(lockedFile, 0000); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(lockedDir, 0500); err != nil {
+		t.Fatal(err)
+	}
+	if err := removeTree(lockedDir); err != nil {
+		t.Fatalf("removeTree: %v", err)
+	}
+	if _, err := os.Stat(lockedDir); !os.IsNotExist(err) {
+		t.Fatalf("locked directory still exists: %v", err)
+	}
+
+	dataDir := filepath.Join(root, "data")
+	cgroupDir := filepath.Join(root, "cgroups")
+	if err := os.MkdirAll(cgroupDir, 0750); err != nil {
+		t.Fatal(err)
+	}
+	runtime, err := NewRuntime(dataDir, &CgroupRoot{path: cgroupDir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	orphanDir := filepath.Join(dataDir, "sessions", "ses_orphan_dir_only")
+	if err := os.MkdirAll(filepath.Join(orphanDir, "upper"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := runtime.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if _, err := os.Stat(orphanDir); !os.IsNotExist(err) {
+		t.Fatalf("orphan session directory still exists after Reconcile: %v", err)
 	}
 }
