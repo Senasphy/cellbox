@@ -50,14 +50,13 @@ def main() -> int:
             snapshot = base.snapshot(labels={"purpose": "eval-base"})
             base.write_file("/tmp/eval-parent-after-snapshot.txt", "must not appear in forks\n")
             isolation_error = ""
-            with client.sessions.get(base.id) as parent:
-                with parent.fork(snapshot["id"]) as first:
-                    if first.exec(["test", "!", "-e", "/tmp/eval-parent-after-snapshot.txt"]).exit_code != 0:
-                        isolation_error = "first fork included a post-snapshot parent change"
-                    first.write_file("/tmp/eval-sibling-probe.txt", "first fork only\n")
-                with parent.fork(snapshot["id"]) as second:
-                    if second.exec(["test", "!", "-e", "/tmp/eval-sibling-probe.txt"]).exit_code != 0:
-                        isolation_error = "sibling fork included another fork's write"
+            with base.fork(snapshot["id"]) as first:
+                if first.exec(["test", "!", "-e", "/tmp/eval-parent-after-snapshot.txt"]).exit_code != 0:
+                    isolation_error = "first fork included a post-snapshot parent change"
+                first.write_file("/tmp/eval-sibling-probe.txt", "first fork only\n")
+            with base.fork(snapshot["id"]) as second:
+                if second.exec(["test", "!", "-e", "/tmp/eval-sibling-probe.txt"]).exit_code != 0:
+                    isolation_error = "sibling fork included another fork's write"
             if isolation_error:
                 print(json.dumps({"results": [], "passed": 0, "failed": 1, "total": 1, "error": isolation_error}, indent=2))
                 return 1
