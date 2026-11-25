@@ -14,7 +14,11 @@ test-integration:
 	CELLBOX_RUN_DOCKER_CONTRACT=1 go test -race ./internal/runtime/docker -run '^TestRuntimeContract$$' -count=1
 	CELLBOX_RUN_DOCKER_EGRESS_INTEGRATION=1 go test -race ./internal/runtime/docker -run '^TestDockerAllowlistedHTTPSUsesEgressProxy$$' -count=1
 
-test-security fuzz:
+test-security: build
+	CGO_ENABLED=0 go test -c -tags security -o /tmp/cellbox-security.test ./test/security
+	systemd-run --user --scope -p Delegate=yes /tmp/cellbox-security.test -test.v -test.count=1
+
+fuzz:
 	@echo "$@ is added in the corresponding implementation phase"
 
 release-dry-run:
