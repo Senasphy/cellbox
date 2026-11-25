@@ -68,7 +68,7 @@ describe("TypeScript client", () => {
   });
 
   it("rejects blank shell commands before making a request", async () => {
-    const fetcher = vi.fn(async () => new Response());
+    const fetcher = vi.fn(async () => new Response(JSON.stringify({ id: "ses_test", state: "ready" }), { status: 200 }));
     const client = new Client("http://cellbox.test", "cbx_test", fetcher as typeof fetch);
     const session = await client.sessions.get("ses_test");
     await expect(session.exec("   ")).rejects.toThrow("command must not be empty");

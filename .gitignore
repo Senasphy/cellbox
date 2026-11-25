@@ -7,4 +7,6 @@ coverage.out
 /web/node_modules/
 /web/.next/
 /web/out/
+/sdk/typescript/node_modules/
+/sdk/typescript/dist/
 .DS_Store
