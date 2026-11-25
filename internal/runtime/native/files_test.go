@@ -144,4 +144,16 @@ func TestNativeArchiveExtractAndValidateBeforeWriting(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(root, "partial.txt")); !os.IsNotExist(err) {
 		t.Fatalf("validation wrote a partial entry: %v", err)
 	}
+
+	var symEscape bytes.Buffer
+	writer = tar.NewWriter(&symEscape)
+	_ = writer.WriteHeader(&tar.Header{Name: "pre.txt", Mode: 0600, Size: 3, Typeflag: tar.TypeReg})
+	_, _ = writer.Write([]byte("bad"))
+	_ = writer.WriteHeader(&tar.Header{Name: "sub", Typeflag: tar.TypeSymlink, Linkname: "/etc"})
+	_ = writer.WriteHeader(&tar.Header{Name: "sub/evil", Mode: 0600, Size: 4, Typeflag: tar.TypeReg})
+	_, _ = writer.Write([]byte("evil"))
+	_ = writer.Close()
+	if err := validateNativeArchive(bytes.NewReader(symEscape.Bytes())); err == nil {
+		t.Fatal("accepted archive entry traversing symlink created in archive")
+	}
 }

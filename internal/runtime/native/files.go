@@ -499,6 +499,7 @@ func validateNativeArchive(archive io.Reader) error {
 	reader := tar.NewReader(archive)
 	var expanded int64
 	entries := 0
+	symlinks := make(map[string]struct{})
 	for {
 		header, err := reader.Next()
 		if errors.Is(err, io.EOF) {
@@ -518,20 +519,38 @@ func validateNativeArchive(archive io.Reader) error {
 		if name == "." && header.Typeflag != tar.TypeDir {
 			return errors.New("archive cannot replace the extraction root")
 		}
+		for parent := path.Dir(name); parent != "." && parent != ""; parent = path.Dir(parent) {
+			if _, isLink := symlinks[parent]; isLink {
+				return fmt.Errorf("archive path %q traverses symlink %q", name, parent)
+			}
+		}
 		switch header.Typeflag {
 		case tar.TypeReg, tar.TypeRegA:
 			if header.Size < 0 || header.Size > maxNativeExpandedArchiveBytes-expanded {
 				return fmt.Errorf("expanded archive exceeds %d byte limit", maxNativeExpandedArchiveBytes)
 			}
 			expanded += header.Size
+			delete(symlinks, name)
+		case tar.TypeDir:
+			if _, isLink := symlinks[name]; isLink {
+				return fmt.Errorf("archive directory %q collides with symlink", name)
+			}
 		case tar.TypeSymlink:
 			if strings.IndexByte(header.Linkname, 0) >= 0 {
 				return errors.New("archive symlink target contains NUL")
 			}
+			symlinks[name] = struct{}{}
 		case tar.TypeLink:
-			if _, err := safeArchiveEntry(header.Linkname); err != nil {
+			link, err := safeArchiveEntry(header.Linkname)
+			if err != nil {
 				return fmt.Errorf("unsafe archive hardlink target: %w", err)
 			}
+			for parent := path.Dir(link); parent != "." && parent != ""; parent = path.Dir(parent) {
+				if _, isLink := symlinks[parent]; isLink {
+					return fmt.Errorf("archive hardlink target %q traverses symlink %q", link, parent)
+				}
+			}
+			delete(symlinks, name)
 		}
 	}
 }
