@@ -19,7 +19,11 @@ test-security: build
 	systemd-run --user --scope -p Delegate=yes /tmp/cellbox-security.test -test.v -test.count=1
 
 fuzz:
-	@echo "$@ is added in the corresponding implementation phase"
+	go test -fuzz=FuzzValidatePath -fuzztime=5s ./internal/sandboxpath
+	go test -fuzz=FuzzValidateNativeArchive -fuzztime=5s ./internal/runtime/native
+	go test -fuzz=FuzzDecodeControlPacket -fuzztime=5s ./internal/runtime/native
+	go test -fuzz=FuzzProxyTargetAndHost -fuzztime=5s ./internal/egress
+	go test -fuzz=FuzzOutputAndPagination -fuzztime=5s ./internal/api
 
 release-dry-run:
 	goreleaser check
