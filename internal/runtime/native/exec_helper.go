@@ -82,7 +82,7 @@ func RunExec(requestFD, errorFD int) error {
 	if err := InstallDefaultSeccomp(); err != nil {
 		return reportExecHelperError(errorFD, fmt.Errorf("install exec seccomp filter: %w", err))
 	}
-	env := mergeWorkloadEnvironment(os.Environ(), request.Env)
+	env := mergeWorkloadEnvironment(filterInternalHelperEnv(os.Environ()), request.Env)
 	pathValue := os.Getenv("PATH")
 	for _, entry := range env {
 		if strings.HasPrefix(entry, "PATH=") {
@@ -104,6 +104,17 @@ func RunExec(requestFD, errorFD int) error {
 		return reportExecHelperError(errorFD, err)
 	}
 	return nil
+}
+
+func filterInternalHelperEnv(base []string) []string {
+	filtered := make([]string, 0, len(base))
+	for _, entry := range base {
+		if strings.HasPrefix(entry, "GOMAXPROCS=") {
+			continue
+		}
+		filtered = append(filtered, entry)
+	}
+	return filtered
 }
 
 func mergeWorkloadEnvironment(base []string, overrides map[string]string) []string {

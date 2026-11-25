@@ -34,6 +34,9 @@ type InitConfig struct {
 
 // RunInit reads the config from fd 4, prepares the sandbox root, then serves the control channel on fd 3.
 func RunInit(controlFD, configFD int) error {
+	if err := unix.SetNonblock(controlFD, true); err != nil {
+		return fmt.Errorf("configure nonblocking native control fd: %w", err)
+	}
 	controlFile := os.NewFile(uintptr(controlFD), "cellbox-control")
 	configFile := os.NewFile(uintptr(configFD), "cellbox-init-config")
 	if controlFile == nil || configFile == nil {
@@ -51,27 +54,27 @@ func RunInit(controlFD, configFD int) error {
 		return err
 	}
 	if err := setupSandboxRoot(config); err != nil {
-		_ = SendControlMessage(controlFD, ControlMessage{Type: "error", Error: err.Error()})
+		_ = sendControlMessageFile(controlFile, ControlMessage{Type: "error", Error: err.Error()})
 		return err
 	}
 	if config.Egress {
 		if err := startEgressForwarder(); err != nil {
-			_ = SendControlMessage(controlFD, ControlMessage{Type: "error", Error: err.Error()})
+			_ = sendControlMessageFile(controlFile, ControlMessage{Type: "error", Error: err.Error()})
 			return fmt.Errorf("start native egress forwarder: %w", err)
 		}
 	}
 	// Install the filter only after namespace and mount setup, then keep the
 	// filtered init alive so any future workload children inherit the policy.
 	if err := InstallDefaultSeccomp(); err != nil {
-		_ = SendControlMessage(controlFD, ControlMessage{Type: "error", Error: err.Error()})
+		_ = sendControlMessageFile(controlFile, ControlMessage{Type: "error", Error: err.Error()})
 		return fmt.Errorf("install native seccomp filter: %w", err)
 	}
 	stopReaper := startOrphanReaper()
 	defer stopReaper()
-	if err := SendControlMessage(controlFD, ControlMessage{Type: "ready", ID: config.SessionID}); err != nil {
+	if err := sendControlMessageFile(controlFile, ControlMessage{Type: "ready", ID: config.SessionID}); err != nil {
 		return err
 	}
-	return controlLoop(controlFD)
+	return controlLoopFile(controlFile)
 }
 
 func validateInitConfig(config InitConfig) error {
@@ -337,21 +340,35 @@ func dropCapabilities() error {
 }
 
 func controlLoop(fd int) error {
+	dupFD, err := unix.FcntlInt(uintptr(fd), unix.F_DUPFD_CLOEXEC, 0)
+	if err != nil {
+		return fmt.Errorf("dup native control fd: %w", err)
+	}
+	if err := unix.SetNonblock(dupFD, true); err != nil {
+		_ = unix.Close(dupFD)
+		return fmt.Errorf("configure nonblocking native control fd: %w", err)
+	}
+	controlFile := os.NewFile(uintptr(dupFD), "cellbox-control-loop")
+	defer controlFile.Close()
+	return controlLoopFile(controlFile)
+}
+
+func controlLoopFile(controlFile *os.File) error {
 	var sendMu sync.Mutex
 	send := func(message ControlMessage) error {
 		sendMu.Lock()
 		defer sendMu.Unlock()
-		return SendControlMessage(fd, message)
+		return sendControlMessageFile(controlFile, message)
 	}
 	sendFiles := func(message ControlMessage, files ...*os.File) error {
 		sendMu.Lock()
 		defer sendMu.Unlock()
-		return SendControlMessage(fd, message, files...)
+		return sendControlMessageFile(controlFile, message, files...)
 	}
 	var activeMu sync.Mutex
 	active := make(map[string]chan int)
 	for {
-		message, files, err := ReceiveControlMessage(fd)
+		message, files, err := receiveControlMessageFile(controlFile)
 		closeFiles(files)
 		if err != nil {
 			return err

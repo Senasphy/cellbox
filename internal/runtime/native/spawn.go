@@ -346,7 +346,9 @@ func SpawnInit(ctx context.Context, config InitConfig, cgroupFD int) (*InitProce
 	}
 	command := exec.Command("/proc/self/exe")
 	command.Args = []string{"cellbox-init"}
-	command.Env = []string{"PATH=/usr/bin:/bin", "HOME=/"}
+	// Keep cellbox-init and cellbox-exec on one Go processor so low pids.max
+	// ceilings do not fail Go runtime thread creation inside the sandbox cgroup.
+	command.Env = []string{"PATH=/usr/bin:/bin", "HOME=/", "GOMAXPROCS=1"}
 	command.ExtraFiles = []*os.File{childSocket, configRead}
 	stderr := &bytes.Buffer{}
 	command.Stderr = stderr

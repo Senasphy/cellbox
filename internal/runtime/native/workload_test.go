@@ -197,3 +197,23 @@ func TestRunWorkloadSignalsProcessGroup(t *testing.T) {
 		t.Fatalf("signal result = %+v", result)
 	}
 }
+
+func TestFilterInternalHelperEnvPreservesExplicitOverrides(t *testing.T) {
+	base := filterInternalHelperEnv([]string{"PATH=/usr/bin:/bin", "GOMAXPROCS=1", "HOME=/"})
+	env := mergeWorkloadEnvironment(base, nil)
+	for _, entry := range env {
+		if strings.HasPrefix(entry, "GOMAXPROCS=") {
+			t.Fatalf("internal GOMAXPROCS leaked into workload env: %v", env)
+		}
+	}
+	override := mergeWorkloadEnvironment(base, map[string]string{"GOMAXPROCS": "4"})
+	found := false
+	for _, entry := range override {
+		if entry == "GOMAXPROCS=4" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("explicit GOMAXPROCS override missing: %v", override)
+	}
+}
