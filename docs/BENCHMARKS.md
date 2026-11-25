@@ -20,3 +20,14 @@ Measured 2026-11-23 on the local host with `alpine:latest`, 10 sequential sample
 | Native, with resolved-image cache | Warm | 8.6 ms | 9.9 ms | under 60 ms |
 
 The host reported Linux kernel `7.3.4-arch1-2`, 8 CPUs, and 15,828 MiB RAM, with no cgroup CPU or memory cap detected. The native cache change memoizes up to 128 resolved references per service process, avoiding repeated registry manifest lookups while retaining the content-addressed rootfs. On the cached native run, warm p50 met the target and cold p50 met the target; its first sample still fetched the image manifest and accounts for the high p95. Docker remains above both targets in this environment. These are measured local results, not reference-machine results.
+
+## Concurrent load check (`test/load`)
+
+Measured 2026-11-25 on the local host against the native backend (`pool.enabled: false`, `alpine:latest`, concurrency 4, 15s duration) inside a delegated systemd user scope:
+
+- Completed cycles: 272 (`errors: 0`, `leaked_cgroups: 0`)
+- Create latency: p50 `95.35 ms`, p95 `151.09 ms`, p99 `188.74 ms`
+- Exec latency: p50 `86.81 ms`, p95 `146.37 ms`, p99 `182.19 ms`
+- Server process footprint: RSS `26,492 KiB` → `37,368 KiB`, open FDs `84` → `86`
+
+A full 1-hour soak run has not been executed.

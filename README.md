@@ -1,8 +1,8 @@
 # cellbox
 
-cellbox is a self-hostable service for creating disposable computers that AI agents can use. It is intended to provide isolated filesystems, resource limits, controlled networking, command streaming, snapshots, and replay through an API and dashboard.
+cellbox is a self-hostable service for creating disposable computers that AI agents can use. It provides isolated filesystems, resource limits, fail-closed egress proxying, command streaming, snapshots and forks, replay, an embedded web dashboard, SDKs (Python, TypeScript, Go), and an MCP server.
 
-This repository is in the early phases of the build specification. It provides configuration validation, SQLite persistence, local API key management, basic health and system endpoints, and an initial Docker runtime implementation. Session APIs and complete workload isolation are still under development; do not use it to run untrusted code yet.
+The native Linux, egress, snapshot/fork, warm-pool, and security/chaos acceptance gates pass locally inside a delegated cgroup v2 scope, while some Phase 7 v1.0 release/soak items and a live hosted-model run remain incomplete (see [docs/DEFERRED.md](docs/DEFERRED.md)). Read the security boundaries below before exposing the service or running untrusted workloads.
 
 ## Build
 
@@ -24,7 +24,7 @@ The currently implemented endpoints and a Docker-backed curl walkthrough are in 
 
 The native backend isolates workloads using Linux user, mount, PID, network, IPC, UTS and cgroup namespaces, cgroup v2 resource limits, a seccomp filter and capability dropping. It shares the host kernel, so a kernel vulnerability can allow escape. For hostile multi-tenant workloads, run cellbox inside a dedicated virtual machine. Never expose the service to untrusted networks without TLS and the quotas and egress policy described in the documentation.
 
-The current implementation enforces a soft per-session disk quota by scanning the writable overlay every two seconds; a live over-quota check passed in a delegated cgroup scope. The shared basic runtime contract passes in that scope, but the full security, resource-enforcement, cleanup/chaos, and benchmark acceptance checks have not passed. Continuous cgroup event monitoring remains incomplete. The shared terminal API supports reconnecting to a live PTY with 256 KiB scrollback and a fixed 30-second grace period; the Docker-backed browser reconnect flow passed locally.
+The current implementation enforces a soft per-session disk quota by scanning the writable overlay every two seconds; live resource enforcement, security attack-matrix, cleanup/chaos, and native terminal reconnect checks pass inside a delegated cgroup v2 scope (`make test-security`). Host-side file operations use `/proc/<init-pid>/root` with `openat2` confinement, and the terminal reconnect grace period is fixed at 30 seconds (256 KiB scrollback ring). Full 1-hour soak testing and external security review remain incomplete.
 
 The Docker backend applies daemon-managed container limits and hardening options, but it is not the specified native isolation design. The Docker runtime contract and API walkthrough passed locally against Docker Engine 29.10.0; hosted CI has not been rerun for the current work. Its effective protections depend on the Docker-compatible daemon and host configuration. Do not use it for hostile workloads.
 

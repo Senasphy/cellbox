@@ -14,8 +14,10 @@ All notable Cellbox changes are recorded here. The project has not published a s
 - Dashboard session creation supports image and network policy selection; the Network view pages through older egress decisions.
 - Native PID 1 reaps adopted zombie descendants while preserving helper exit statuses managed by Go.
 
+- Native security attack-matrix, cleanup/chaos, and live terminal reconnect tests (`make test-security`), five Go fuzz targets (`make fuzz`), and a concurrent load/soak generator (`test/load`).
+
 ### Security and verification notes
 
 - The native runtime shares the host kernel. Use a dedicated VM for hostile multi-tenant workloads.
 - The Docker backend does not enforce a per-session writable-layer disk cap.
-- Full native security, resource, cleanup/chaos, network-bypass, snapshot-isolation, warm-pool latency, soak, and release-pipeline acceptance remains incomplete. See [docs/DEFERRED.md](docs/DEFERRED.md) for current gaps.
+- External security review, `staticcheck`/`golangci-lint`/`govulncheck`, a full 1-hour soak run, live hosted-model verification, and release-pipeline execution remain incomplete. See [docs/DEFERRED.md](docs/DEFERRED.md) for current gaps.

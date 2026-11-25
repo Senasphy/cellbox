@@ -9,4 +9,6 @@ coverage.out
 /web/out/
 /sdk/typescript/node_modules/
 /sdk/typescript/dist/
+__pycache__/
+*.pyc
 .DS_Store
