@@ -129,3 +129,15 @@ func TestSweepRetriesStoppingSession(t *testing.T) {
 		t.Fatalf("session=%+v destroy_calls=%d", sessions.items[0], backend.box.destroyed)
 	}
 }
+
+func TestSweepSkipsRecentlyStoppingSession(t *testing.T) {
+	now := time.Now().UTC()
+	sessions := &fakeSessions{items: []store.SessionRecord{{ID: "ses_stopping_now", RuntimeID: "container", State: "stopping", LastActivityAt: now.Add(-2 * time.Second), ExpiresAt: now.Add(time.Hour)}}}
+	backend := &fakeSandboxRuntime{}
+	if err := Sweep(context.Background(), backend, sessions, now); err != nil {
+		t.Fatal(err)
+	}
+	if sessions.items[0].State != "stopping" || backend.box.destroyed != 0 {
+		t.Fatalf("sweep hijacked active delete: session=%+v destroy_calls=%d", sessions.items[0], backend.box.destroyed)
+	}
+}

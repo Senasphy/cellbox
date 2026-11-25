@@ -317,6 +317,10 @@ func (s *server) deleteSession(w http.ResponseWriter, r *http.Request) {
 	record.State = "stopped"
 	record.LastActivityAt = time.Now().UTC()
 	if err = persist.UpdateSession(r.Context(), record); err != nil {
+		if latest, getErr := persist.GetSession(r.Context(), record.ID); getErr == nil && (latest.State == "stopped" || latest.State == "expired" || latest.State == "failed" || latest.State == "lost") {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
 		problem.Write(w, problem.Problem{Title: "Internal error", Status: http.StatusInternalServerError, Code: "session_update_failed"})
 		return
 	}

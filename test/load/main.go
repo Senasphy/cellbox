@@ -6,7 +6,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"flag"
 	"fmt"
 	"net/http"
@@ -75,9 +74,6 @@ func main() {
 		HTTP:    &http.Client{Timeout: 60 * time.Second},
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), *duration)
-	defer cancel()
-
 	var (
 		mu              sync.Mutex
 		createLatencies []float64
@@ -88,24 +84,24 @@ func main() {
 	)
 
 	started := time.Now()
+	deadline := started.Add(*duration)
 	for worker := 0; worker < *concurrency; worker++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			for {
-				if ctx.Err() != nil {
+				if time.Now().After(deadline) {
 					return
 				}
+				iterCtx, iterCancel := context.WithTimeout(context.Background(), 30*time.Second)
 				cStart := time.Now()
-				session, createErr := client.CreateSession(ctx, *image, map[string]int{
+				session, createErr := client.CreateSession(iterCtx, *image, map[string]int{
 					"cpu_millicores": 500,
 					"memory_mb":      128,
 					"pids":           32,
 				})
 				if createErr != nil {
-					if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-						return
-					}
+					iterCancel()
 					errCount.Add(1)
 					lastErr.Store(createErr.Error())
 					continue
@@ -113,18 +109,17 @@ func main() {
 				cElapsed := float64(time.Since(cStart).Microseconds()) / 1000.0
 
 				eStart := time.Now()
-				_, execErr := client.Exec(ctx, session.ID, []string{"/bin/echo", "ok"}, 15*time.Second)
+				_, execErr := client.Exec(iterCtx, session.ID, []string{"/bin/echo", "ok"}, 15*time.Second)
 				eElapsed := float64(time.Since(eStart).Microseconds()) / 1000.0
+				iterCancel()
 
 				delCtx, delCancel := context.WithTimeout(context.Background(), 15*time.Second)
 				delErr := client.DeleteSession(delCtx, session.ID)
 				delCancel()
 
 				if execErr != nil {
-					if !errors.Is(ctx.Err(), context.DeadlineExceeded) {
-						errCount.Add(1)
-						lastErr.Store(execErr.Error())
-					}
+					errCount.Add(1)
+					lastErr.Store(execErr.Error())
 					continue
 				}
 				if delErr != nil {

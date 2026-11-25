@@ -14,6 +14,8 @@ type sandboxRuntime interface {
 	SandboxByID(string) runtime.Sandbox
 }
 
+const stoppingRetryGrace = 30 * time.Second
+
 // Sweep expires ready sessions whose wall-clock or idle TTL has elapsed.
 // The stopping state is persisted before runtime cleanup so a later sweep can
 // retry cleanup after a transient backend failure.
@@ -32,6 +34,9 @@ func Sweep(ctx context.Context, backend sandboxRuntime, sessions sessionStore, n
 		if item.State == "ready" && !sessionExpired(item, now) {
 			continue
 		}
+		if item.State == "stopping" && !item.LastActivityAt.IsZero() && now.Sub(item.LastActivityAt) < stoppingRetryGrace {
+			continue
+		}
 		if item.State == "ready" {
 			item.State = "stopping"
 			if err := sessions.UpdateSession(ctx, item); err != nil {
@@ -39,8 +44,10 @@ func Sweep(ctx context.Context, backend sandboxRuntime, sessions sessionStore, n
 			}
 		}
 		if backend != nil && item.RuntimeID != "" {
-			if err := backend.SandboxByID(item.RuntimeID).Destroy(ctx); err != nil {
-				return fmt.Errorf("destroy expired session %s: %w", item.ID, err)
+			if box := backend.SandboxByID(item.RuntimeID); box != nil {
+				if err := box.Destroy(ctx); err != nil {
+					return fmt.Errorf("destroy expired session %s: %w", item.ID, err)
+				}
 			}
 		}
 		item.State = "expired"
