@@ -1,0 +1,69 @@
+---
+title: "Egress Proxy & SSRF Guard"
+description: "Fail-closed networking, allowlist rules, loopback proxy forwarding, bandwidth limiting, and built-in SSRF IP/DNS defenses."
+order: 1
+---
+
+# Egress Proxy & SSRF Guard
+
+CellBox enforces **fail-closed** sandbox networking. By default, sandboxes have zero network connectivity (`mode: "none"`).
+
+## Network Policy Modes
+
+Specify `network_policy` when calling `POST /v1/sessions`:
+
+| Mode | `native` Support | `docker` Support | Behavior |
+| --- | --- | --- | --- |
+| `none` (default) | Yes | Yes (`NetworkMode=none`) | No external interface; zero outbound traffic. Eligible for warm pool. |
+| `allowlist` | Yes | Rejected | Outbound HTTP/HTTPS traffic allowed only via session proxy to matching `(host, port)` rules. |
+| `internet` | Opt-in (`egress.allow_internet_mode: true`) | Rejected | Outbound HTTP/HTTPS via session proxy to any non-blocked public IP. |
+
+### Allowlist Rule Syntax
+
+```json
+{
+  "image": "python:3.12-slim",
+  "network_policy": {
+    "mode": "allowlist",
+    "allow": [
+      { "host": "pypi.org", "ports": [443] },
+      { "host": "*.pythonhosted.org", "ports": [443] }
+    ]
+  }
+}
+```
+
+- **Subdomain wildcards:** `*.example.com` matches `files.example.com` and `a.b.example.com`, **not** the apex `example.com`. Add `example.com` explicitly if needed.
+- **Ports required:** Every allow rule must specify at least one port in `1..65535`.
+- **IDNA normalization:** Hostnames are normalized using IDNA before matching.
+
+## How the Native Egress Proxy Works
+
+When a native session uses `allowlist` or `internet`:
+
+1. CellBox starts a **per-session host proxy** listening on a private Unix socket in the session run directory.
+2. Inside the sandbox network namespace, a loopback forwarder listens on `127.0.0.1:3128`.
+3. The sandbox receives `HTTP_PROXY=http://127.0.0.1:3128`, `HTTPS_PROXY=http://127.0.0.1:3128` (and lowercase equivalents).
+4. Direct external interfaces do not exist inside the sandbox netns; all HTTP and `CONNECT` TLS tunnel requests pass through the host proxy.
+5. **Bandwidth cap:** If `egress.bandwidth_bytes_per_sec` (`CELLBOX_EGRESS_BANDWIDTH_BPS`) is positive, a shared token-bucket limiter throttles both HTTP forwarding and `CONNECT` tunnels.
+
+## Built-in SSRF Defenses
+
+Even when `allowlist` or `internet` permits a hostname, the host proxy blocks requests to private, loopback, link-local, metadata, multicast, and reserved networks (`internal/egress/proxy.go`):
+
+- **DNS resolution check:** Resolves the normalized host and verifies **every** returned address is a valid global unicast IP outside blocked CIDRs.
+- **Blocked IPv4 CIDRs:** `0.0.0.0/8`, `10.0.0.0/8`, `100.64.0.0/10` (CGNAT), `127.0.0.0/8`, `169.254.0.0/16` (cloud metadata / link-local), `172.16.0.0/12`, `192.0.0.0/24`, `192.0.2.0/24`, `192.168.0.0/16`, `198.18.0.0/15`, `198.51.100.0/24`, `203.0.113.0/24`, `224.0.0.0/4`, `240.0.0.0/4`, `255.0.0.0/8`.
+- **Blocked IPv6 CIDRs:** `::/128`, `::1/128`, `64:ff9b::/96`, `64:ff9b:1::/48`, `100::/64`, `2001::/23`, `2001:2::/48`, `2001:db8::/32`, `2002::/16`, `3fff::/20`, `fc00::/7` (ULA), `fe80::/10` (link-local), `ff00::/8`.
+- **Custom blocklist:** Add internal cluster/VPC ranges via `egress.extra_blocked_cidrs` in `cellbox.yaml`.
+- **Dial & redirect safety:** Dials the validated IP directly, verifies the connected peer address, and re-authorizes HTTP redirects against policy and the IP blocklist.
+
+## Auditing Egress Decisions
+
+Every allowed and denied request (with host, port, resolved IP, verdict, deny reason, bytes up/down, and duration) is recorded and accessible via:
+
+```bash
+curl -fsS "$CELLBOX_URL/v1/sessions/$session_id/egress-log" \
+  -H "Authorization: Bearer $CELLBOX_KEY" | jq .
+```
+
+Denied requests also return an `X-Cellbox-Deny-Reason` header (e.g. `blocked_address`).

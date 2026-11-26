@@ -1,0 +1,66 @@
+---
+title: "API Keys, Quotas & Dashboard Auth"
+description: "Bearer key scopes, default quotas for session keys, capacity admission, and cookie/CSRF authentication for the embedded dashboard."
+order: 2
+---
+
+# API Keys, Quotas & Dashboard Auth
+
+CellBox separates programmatic API authentication (bearer keys) from browser dashboard sessions (`HttpOnly` cookies + CSRF tokens).
+
+## API Key Scopes & Quotas
+
+| Scope | Who Uses It | Quotas & Privileges |
+| --- | --- | --- |
+| `admin` | Operators, CI, bootstrap key | Unmetered. Can manage keys (`POST/GET/DELETE /v1/keys`), pull/remove images, view `/v1/system`, and access any session. |
+| `session` | AI agents, SDK clients, user apps | Scoped strictly to sessions owned by that key. Limited to **20 active sessions**, **8,192 MB aggregate memory**, and **20 req/s** (`429 rate_limited`). |
+
+Secrets (`cbx_...`) are hashed with SHA-256 before storage and compared in constant time. The full secret is returned **only** in the `POST /v1/keys` response (or on stdout during initial `cellbox serve` bootstrap).
+
+### Creating & Revoking Keys
+
+<Tabs items={["HTTP API (admin key)", "Local CLI (offline SQLite)"]}>
+  <Tab value="HTTP API (admin key)">
+```bash
+# Create a session-scoped key
+created=$(curl -fsS -X POST "$CELLBOX_URL/v1/keys" \
+  -H "Authorization: Bearer $CELLBOX_ADMIN_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"eval-runner","scope":"session"}')
+
+secret=$(printf '%s' "$created" | jq -r .secret)
+key_id=$(printf '%s' "$created" | jq -r .id)
+
+# List key metadata (never returns secret or digest)
+curl -fsS "$CELLBOX_URL/v1/keys" \
+  -H "Authorization: Bearer $CELLBOX_ADMIN_KEY"
+
+# Revoke key
+curl -fsS -X DELETE "$CELLBOX_URL/v1/keys/$key_id" \
+  -H "Authorization: Bearer $CELLBOX_ADMIN_KEY"
+```
+  </Tab>
+  <Tab value="Local CLI (offline SQLite)">
+```bash
+# Creates an admin key directly in cellbox.db
+cellbox keys create ci-admin
+
+# List keys and revocation state
+cellbox keys ls
+
+# Revoke a key by ID
+cellbox keys revoke key_01JD9...
+```
+  </Tab>
+</Tabs>
+
+## Dashboard Browser Authentication
+
+The embedded web dashboard at `/` never stores API keys in `localStorage` or `sessionStorage`:
+
+1. **Sign-in:** The UI posts `{"api_key": "cbx_..."}` to `POST /v1/auth/session`.
+2. **Cookies:** On valid verification, CellBox stores the session in **server memory** (invalidated on service restart) and sets:
+   - `cellbox_session`: 12-hour `HttpOnly`, `SameSite=Strict` (`Secure` over TLS) cookie.
+   - `cellbox_csrf`: matching CSRF cookie.
+3. **Mutations:** The UI keeps the CSRF token in tab memory and sends `X-CSRF-Token` on every `POST`, `PUT`, `PATCH`, and `DELETE` call.
+4. **Sign-out:** `DELETE /v1/auth/session` clears the server-side session and expires both cookies.

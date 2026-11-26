@@ -1,0 +1,107 @@
+---
+title: "Execs, Streaming & TTY"
+description: "Command execution modes, synchronous ?wait=true vs resumable SSE streaming, POSIX signals, interactive PTY terminals, and asciicast v2 export."
+order: 2
+---
+
+# Execs, Streaming & TTY
+
+Commands run inside an active (`ready`) session via `POST /v1/sessions/{id}/execs`. Both the native and Docker backends support concurrent execs and interactive PTYs on the same session.
+
+## Command Invocation: `argv` vs `shell`
+
+Provide **exactly one** of `argv` (array of strings) or `shell` (string executed by `/bin/sh -c`):
+
+```json
+{
+  "argv": ["python3", "-m", "pytest", "-q"],
+  "cwd": "/work",
+  "env": { "PYTHONDONTWRITEBYTECODE": "1" },
+  "timeout_ms": 60000,
+  "tty": false
+}
+```
+
+- **`timeout_ms`:** Defaults to `60000` (60 seconds). Must be between `1` and `(limits.max.ttl_s * 1000) + 30000`.
+- **`cwd`:** Must resolve inside the sandbox filesystem (`/`-rooted). Path traversal outside the sandbox returns `422 path_outside_sandbox`.
+- **`output_bytes` cap:** Each exec persists up to **16 MiB** (`16 << 20` bytes) of output. Output exceeding 16 MiB sets `truncated: true` and records a `limit.breach` (`kind: "output"`).
+- **Peak memory:** While an exec is running, CellBox samples session cgroup memory every **250 ms** and stores `peak_memory_bytes` on the exec record.
+
+## Exec States
+
+| State | Meaning |
+| --- | --- |
+| `starting` | Persisted and dispatching to sandbox init |
+| `running` | Process is active |
+| `exited` | Process terminated normally (`exit_code` populated) |
+| `killed` | Terminated by POSIX signal (`signal` populated) |
+| `timed_out` | Exceeded `timeout_ms` (triggers `limit.breach` `kind: "timeout"`) |
+| `oom_killed` | Killed by cgroup OOM event detected at exec completion |
+| `pids_limited` | Blocked by `pids.max` delta detected at exec completion |
+| `failed` | Runtime failed to start or collect the process |
+
+<Callout type="info" title="OOM & PID Detection Timing">
+On the native backend, `oom_killed` and `pids_limited` states are detected from cgroup counter deltas when an exec finishes. Events occurring outside an active exec are not continuously attributed to a specific command.
+</Callout>
+
+## Synchronous (`?wait=true`) vs Resumable SSE
+
+### Synchronous Wait
+
+Append `?wait=true` to block until the command finishes and receive `{ "exec": { ... }, "output": [ ... ] }` in one JSON response. Inline wait responses are capped at **1 MiB** (`waitResponseOutputBytes`).
+
+### Resumable SSE Stream
+
+Omit `?wait=true` to start the exec asynchronously (`202` / `201`) and receive `id` and `stream_url` (`/v1/sessions/{id}/execs/{execID}/stream`).
+
+Each SSE `output` frame carries:
+
+- `id:` The byte cursor (`seq + len(decoded_bytes)`)
+- `event: output`
+- `data:` JSON `{"seq": 0, "ts": "...", "stream": "stdout"|"stderr"|"tty", "data": "<base64>"}`
+
+When the command completes, CellBox emits `event: exit` (or `event: error`) with `state`, `exit_code`, `signal`, `duration_ms`, and `truncated`.
+
+If the HTTP connection drops mid-command, reconnect to `/v1/sessions/{id}/execs/{execID}/stream` with the `Last-Event-ID` header set to the last received byte cursor:
+
+```bash
+curl -N "$CELLBOX_URL/v1/sessions/$session_id/execs/$exec_id/stream" \
+  -H "Authorization: Bearer $CELLBOX_KEY" \
+  -H "Last-Event-ID: 4096"
+```
+
+All three official SDKs (`resume_exec_stream`, `resumeExecStream`, `ResumeExecStream`) handle `Last-Event-ID` resumption natively.
+
+## Sending POSIX Signals (Native Only)
+
+Send a signal (`1..64`) to a running exec process:
+
+```bash
+curl -fsS -X POST "$CELLBOX_URL/v1/sessions/$session_id/execs/$exec_id/signal" \
+  -H "Authorization: Bearer $CELLBOX_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"signal": 15}'
+```
+
+The Docker backend returns `422 capability_unsupported` because Docker Engine cannot signal individual exec processes independently.
+
+## Interactive PTY Terminals & Asciicast
+
+### WebSocket Terminal (`/v1/sessions/{id}/terminal`)
+
+- Connect via WebSocket with `Authorization: Bearer <key>` (or dashboard session cookie).
+- Binary frames carry raw PTY stdin/stdout bytes.
+- Text frames carry JSON control messages such as terminal resize:
+  ```json
+  {"type": "resize", "columns": 120, "rows": 40}
+  ```
+- **Detach & Reconnect Grace:** Disconnected PTYs stay alive for `terminal.grace_s` seconds (default **30s**, configurable `1..3600` via `CELLBOX_TERMINAL_GRACE_S`) and retain a **256 KiB** scrollback ring buffer that replays immediately upon reconnection.
+
+### TTY Exec & Asciicast v2 Export
+
+Pass `"tty": true` in `POST /v1/sessions/{id}/execs` to allocate a PTY for that command (`capabilities.tty_exec: true` on both native and Docker). Completed TTY execs can be exported as standard **asciicast v2** recordings:
+
+```bash
+curl -fsS "$CELLBOX_URL/v1/sessions/$session_id/execs/$exec_id/asciicast" \
+  -H "Authorization: Bearer $CELLBOX_KEY" -o session.cast
+```

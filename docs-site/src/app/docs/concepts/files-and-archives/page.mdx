@@ -1,0 +1,63 @@
+---
+title: "Files & Archives"
+description: "openat2 path confinement inside cellbox-init, single-file transfers, octal permissions, directory pagination, and tar archive upload/download."
+order: 3
+---
+
+# Files & Archives
+
+CellBox separates file manipulation from host path traversal by mediating sandbox file operations inside the pivoted sandbox environment.
+
+## `openat2` Path Confinement (Native Backend)
+
+On the native backend, file and archive operations (`ReadFile`, `WriteFile`, `DeleteFile`, `ListDir`, `Archive`, `Extract`) do **not** read `/proc/<init-pid>/root` from the host. Instead, the host supervisor sends structured requests over the private `SOCK_SEQPACKET` channel to `cellbox-init` (`fs_open_read`, `fs_open_write`, `fs_commit_write`, `fs_abort_write`, `fs_delete`, `fs_list`, `fs_tar_create`, `fs_tar_extract`):
+
+- `cellbox-init` runs inside the sandbox's pivoted root filesystem.
+- Paths are validated and opened with Linux `openat2(2)` flags (`RESOLVE_IN_ROOT` / `RESOLVE_NO_MAGICLINKS`, `RESOLVE_BENEATH` / `RESOLVE_NO_SYMLINKS`).
+- File descriptors are passed back to the supervisor via `SCM_RIGHTS` only after confinement checks pass.
+- Tar uploads are pre-validated against path escapes, symlink escapes, and size bounds before extraction.
+
+## Single-File Operations
+
+| Operation | HTTP Method & Path | Notes |
+| --- | --- | --- |
+| **Read file** | `GET /v1/sessions/{id}/files?path=/work/out.txt` | Max **256 MiB**. Returns `X-Cellbox-File-Mode` header (e.g. `0644`). Rejects directories with `422 path_not_file`. |
+| **Write file** | `PUT /v1/sessions/{id}/files?path=/work/app.py` | Max **256 MiB** (`Content-Type: application/octet-stream`). Optional `X-Cellbox-Mode` header sets octal permissions (`0000`–`0777`, default `0644`). |
+| **Delete file** | `DELETE /v1/sessions/{id}/files?path=/work/tmp.txt` | Rejects `/` with `422 path_invalid`. |
+
+### Example: Writing an Executable Script
+
+```bash
+curl -fsS -X PUT "$CELLBOX_URL/v1/sessions/$session_id/files?path=%2Fwork%2Frun.sh" \
+  -H "Authorization: Bearer $CELLBOX_KEY" \
+  -H 'Content-Type: application/octet-stream' \
+  -H 'X-Cellbox-Mode: 0755' \
+  --data-binary @run.sh
+```
+
+## Paginated Directory Listing
+
+List entries inside a directory via `GET /v1/sessions/{id}/files/list`:
+
+- Query parameters: `path` (sandbox path), `limit` (`1..200`, default `50`), and opaque `cursor`.
+- Entries are sorted lexicographically by `path`.
+- Response includes `next_cursor` only when more entries remain.
+- Each item returns `path`, `size`, `mode`, and `is_dir`.
+- Note: The Docker adapter rejects directory listings exceeding **100,000** entries.
+
+## Tar Archives (Up to 512 MiB)
+
+Transfer entire project directories in one request using `/v1/sessions/{id}/archive` (maximum **512 MiB** per transfer):
+
+```bash
+# Upload a local workspace directory into /work inside the sandbox
+tar -czf - -C ./my-repo . | curl -fsS -X PUT \
+  "$CELLBOX_URL/v1/sessions/$session_id/archive?path=%2Fwork" \
+  -H "Authorization: Bearer $CELLBOX_KEY" \
+  -H 'Content-Type: application/gzip' \
+  --data-binary @-
+
+# Download /work back as an archive
+curl -fsS "$CELLBOX_URL/v1/sessions/$session_id/archive?path=%2Fwork" \
+  -H "Authorization: Bearer $CELLBOX_KEY" -o work-out.tar
+```

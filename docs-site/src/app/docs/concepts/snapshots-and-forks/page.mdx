@@ -1,0 +1,78 @@
+---
+title: "Snapshots, Forking & Replay"
+description: "Immutable filesystem snapshot trees, automatic 7-layer overlay flattening, one-call session forking, and timestamped output replay."
+order: 4
+---
+
+# Snapshots, Forking & Replay
+
+CellBox lets AI agents checkpoint filesystem state, branch into parallel speculative runs, and replay full execution history.
+
+## How Snapshots Work
+
+Snapshots capture the sandbox's writable filesystem state into an immutable, ULID-identified (`snp_...`) artifact stored independently of the source session's lifetime.
+
+- **Native backend:** Temporarily freezes the session via `cgroup.freeze`, copies the writable `overlayfs` upper layer, and thaws the cgroup.
+- **Docker backend:** Commits the container filesystem as a Docker image layer.
+
+Create and manage snapshots via HTTP or CLI:
+
+```bash
+# Create a snapshot with optional labels
+snap=$(curl -fsS -X POST "$CELLBOX_URL/v1/sessions/$session_id/snapshots" \
+  -H "Authorization: Bearer $CELLBOX_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"labels":{"checkpoint":"tests-green"}}')
+
+snap_id=$(printf '%s' "$snap" | jq -r .id)
+
+# List snapshots for a session
+curl -fsS "$CELLBOX_URL/v1/sessions/$session_id/snapshots" \
+  -H "Authorization: Bearer $CELLBOX_KEY"
+
+# Inspect or delete a specific snapshot
+curl -fsS "$CELLBOX_URL/v1/snapshots/$snap_id" \
+  -H "Authorization: Bearer $CELLBOX_KEY"
+```
+
+## Snapshot Trees & 7-Layer Flattening
+
+Forking a session stacks immutable snapshot layers beneath the child session's new writable upper directory:
+
+```txt
+Base OCI Rootfs
+  └── snp_A (Parent: none)
+        ├── snp_B (Parent: snp_A) ──▶ Fork ses_1
+        └── snp_C (Parent: snp_A) ──▶ Fork ses_2
+```
+
+On the native backend, Linux `overlayfs` mounts stack `lowerdir` layers. To prevent unbounded overlay chains, CellBox tracks ancestry depth (`parent_snapshot_id`) and **automatically flattens** the merged filesystem into a standalone base snapshot (`flattened: true`) once a snapshot chain reaches depth **7**.
+
+<Callout type="info" title="Deletion Protection">
+`DELETE /v1/snapshots/{snapshotID}` returns `409 snapshot_in_use` if any child snapshots or live forked sessions still depend on that snapshot. Destroy dependent forks and child snapshots first.
+</Callout>
+
+## Forking Sessions
+
+`POST /v1/sessions/{id}/fork` creates a new child session (`ses_...`) inheriting the source session's image, limits, network policy, environment, and labels:
+
+- **Fork from an existing snapshot:** Pass `{"snapshot_id": "snp_..."}`.
+- **Snapshot & fork in one call:** Send `{}` (omit `snapshot_id`). CellBox captures a fresh snapshot of the source session and immediately boots the forked child from it.
+
+```bash
+# Fork directly from current session state
+fork_json=$(curl -fsS -X POST "$CELLBOX_URL/v1/sessions/$session_id/fork" \
+  -H "Authorization: Bearer $CELLBOX_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{}')
+fork_id=$(printf '%s' "$fork_json" | jq -r .id)
+```
+
+Because forked sessions use snapshot layers, they always use cold creation rather than the warm pool.
+
+## Session Replay
+
+`GET /v1/sessions/{id}/replay` returns a paginated, chronological stream of exec boundaries (`exec.start`, `exec.end`) and base64-encoded timestamped output chunks so clients—or the embedded dashboard's Replay scrubber—can reconstruct an entire session run deterministically.
+
+- Supports standard `limit` and `cursor` pagination.
+- Individual TTY execs also support asciicast v2 download at `GET /v1/sessions/{id}/execs/{execID}/asciicast`.

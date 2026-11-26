@@ -1,0 +1,59 @@
+---
+title: "Security & Threat Model"
+description: "Isolation architecture, trust boundaries, seccomp-bpf syscall denylist, and honest residual risks."
+icon: "shield"
+order: 5
+---
+
+# Security & Threat Model
+
+<Callout type="warn" title="Required Security Statement">
+The native backend isolates workloads using Linux user, mount, PID, network, IPC, UTS, and cgroup namespaces, cgroup v2 resource limits, a seccomp filter, and capability dropping. It shares the host kernel, so a kernel vulnerability can allow escape. For hostile multi-tenant workloads, run CellBox inside a dedicated virtual machine. Never expose the service to untrusted networks without TLS and the quotas and egress policy described in this documentation.
+</Callout>
+
+## Isolation Layers (Native Backend)
+
+Every native sandbox runs inside a dedicated child process tree (`cellbox-init` as PID 1 + workload processes):
+
+1. **Seven Linux Namespaces:** `user`, `mount`, `PID`, `network`, `IPC`, `UTS`, and `cgroup`.
+2. **Unprivileged UID/GID Mapping:** Runs in an unprivileged user namespace with a single host UID mapping and zero Linux capabilities.
+3. **Filesystem Pivoting:** Mounts a rootless `overlayfs` (`userxattr`), runs `pivot_root`, detaches the old root, sets `nosuid` mounts, and confines all host-initiated file operations inside `cellbox-init` via `openat2(2)`.
+4. **Cgroup v2 Limits:** Enforces `cpu.max`, `memory.max` (`memory.swap.max=0`), and `pids.max` via `CLONE_INTO_CGROUP`.
+5. **Process Death Signal:** `PR_SET_PDEATHSIG` ensures sandboxes terminate if the host `cellbox serve` process dies.
+6. **Privilege Lock:** Sets `no_new_privs`, marks `cellbox-init` non-dumpable (`PR_SET_DUMPABLE=0`), and installs a synchronized (`SECCOMP_FILTER_FLAG_TSYNC`) seccomp-bpf filter.
+
+## Trust Boundaries
+
+| Boundary | Enforcement |
+| --- | --- |
+| **Client → API** | Constant-time SHA-256 bearer key verification, `admin` vs `session` scopes, per-key quotas & rate limits, bounded JSON/file/archive bodies, optional TLS (`--allow-remote`). |
+| **Supervisor ↔ `cellbox-init`** | Private Unix `SOCK_SEQPACKET` control channel (never mounted into the workload) with bounded JSON packets and `SCM_RIGHTS` FD passing. |
+| **Sandbox → Host Kernel** | Unprivileged namespaces, dropped capabilities, `no_new_privs`, and TSYNC seccomp filter. **Kernel remains shared.** |
+| **Sandbox → Network** | Isolated netns with no external NIC (`none` mode) or loopback-only proxy forwarder (`allowlist` / `internet` modes). |
+
+## Seccomp-BPF Policy (`v1`)
+
+CellBox's default workload profile (`DefaultSeccompFilter` in `internal/runtime/native/seccomp.go`) is **default-allow with `EPERM` denials** synchronized across all threads via `SECCOMP_FILTER_FLAG_TSYNC`:
+
+| Category | Denied Syscalls (`EPERM`) |
+| --- | --- |
+| **Tracing & Process Memory** | `ptrace`, `process_vm_readv`, `process_vm_writev` |
+| **Kernel Modules, BPF & Perf** | `kexec_load`, `init_module`, `finit_module`, `delete_module`, `bpf`, `perf_event_open` |
+| **Mounts & Root Changes** | `mount`, `umount2`, `pivot_root`, `chroot` |
+| **Swap & System Control** | `swapon`, `swapoff`, `reboot` |
+| **Namespaces** | `setns`, `unshare`, `clone` (when any `CLONE_NEW*` flag is set), `clone3` (unconditional) |
+| **Handle-Based Path Access** | `open_by_handle_at`, `name_to_handle_at` |
+| **Keyrings, Memory & Direct I/O** | `add_key`, `request_key`, `keyctl`, `userfaultfd`, `iopl`, `ioperm` |
+
+<Callout type="info" title="Why clone3 Is Denied">
+`clone3` stores its flags in a userspace struct behind a pointer, which classic seccomp-bpf cannot safely dereference. CellBox denies `clone3` with `EPERM` so runtimes (glibc, Go, Python) fall back to `clone`, where namespace creation bits in argument 0 are inspected directly.
+</Callout>
+
+An optional `StrictSeccompFilter` additionally denies `clone`, `fork`, and `vfork` for single-process tasks that must not spawn child processes.
+
+## Honest Residual Risks
+
+- **Shared host kernel:** Native sandboxes are Linux containment, not a hardware VM. Put hostile multi-tenant workloads inside a dedicated VM.
+- **Soft disk quota:** Native `disk_mb` scans the writable overlay every 2 seconds; rapid disk writes can briefly exceed the limit before termination.
+- **Docker backend limitations:** Docker runs daemon-managed containers (socket access implies host root), enforces no per-session writable disk quota, and supports only `network_policy.mode: "none"`.
+- **Verification status:** `make test-security` (attack-matrix, cleanup/chaos, live terminal reconnect) passes locally inside a delegated cgroup v2 scope; a full 1-hour soak run and independent external security review remain open.

@@ -1,0 +1,55 @@
+---
+title: "Core Concepts"
+description: "Domain model, ID conventions, session actors, execution streams, filesystem confinement, and snapshot trees."
+icon: "layers"
+order: 3
+---
+
+# Core Concepts
+
+CellBox models sandbox compute around five core resources stored in SQLite (WAL mode) with UTC timestamps and forward-only embedded schema migrations.
+
+## Resource Identifiers
+
+All primary entities use sortable, type-prefixed **ULIDs**:
+
+| Prefix | Entity | Example |
+| --- | --- | --- |
+| `ses_` | Sandbox session | `ses_01JD9X4K8R2W...` |
+| `exe_` | Command execution inside a session | `exe_01JD9X4M1P9Q...` |
+| `snp_` | Immutable filesystem snapshot | `snp_01JD9X50A7ZV...` |
+| `key_` | Scoped API key (`admin` or `session`) | `key_01JD9X2B3C4D...` |
+
+API key secrets themselves use the `cbx_` prefix and are returned **only once** upon creation.
+
+## Domain Entities at a Glance
+
+- **Session:** Owns an isolated rootfs (OCI image + optional snapshot layers), cgroup v2 resource limits, network egress policy, environment variables, labels, and wall/idle expiration timers. Sessions are **ephemeral**—they do not survive a service restart.
+- **Exec:** A single `argv` or `shell` process inside a `ready` session, with optional `cwd`, `env`, `timeout_ms`, and `tty`. Output is persisted sequentially so streams can resume cleanly after disconnects.
+- **Snapshot & Fork:** An immutable copy of a session's writable overlay layer (native) or committed image (Docker). Snapshots form a parent-child tree and persist independently of the source session.
+- **Audit & Egress Logs:** Every `session.create`, `session.ready`, `exec.start`, `exec.end`, `file.write`, `file.read`, `snapshot.create`, `limit.breach`, `egress.allow`, and `egress.deny` is recorded in SQLite for inspection and replay.
+
+## Section Guides
+
+<Cards>
+  <Card
+    title="Sessions, Warm Pool & Lifecycle"
+    description="State machine transitions, TTL reaping, warm-pool claiming, and POST idempotency."
+    href="/docs/concepts/sessions-and-lifecycle"
+  />
+  <Card
+    title="Execs, SSE Resume & PTY"
+    description="argv vs shell, Last-Event-ID byte-cursor streaming, POSIX signals, and WebSocket terminals."
+    href="/docs/concepts/exec-streaming-and-tty"
+  />
+  <Card
+    title="Files & Tar Archives"
+    description="cellbox-init openat2 confinement, 256 MiB file transfers, octal modes, and 512 MiB archives."
+    href="/docs/concepts/files-and-archives"
+  />
+  <Card
+    title="Snapshots, Forking & Replay"
+    description="OverlayFS layer copy, automatic flattening at depth 7, session replay, and asciicast v2."
+    href="/docs/concepts/snapshots-and-forks"
+  />
+</Cards>

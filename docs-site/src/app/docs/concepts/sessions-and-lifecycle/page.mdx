@@ -1,0 +1,67 @@
+---
+title: "Sessions & Lifecycle"
+description: "Session state machine, TTL and idle reaping, warm pool claiming, capacity admission, and idempotency keys."
+order: 1
+---
+
+# Sessions & Lifecycle
+
+Each CellBox session is managed by a dedicated **session actor** that serializes state transitions and persists them to SQLite before reporting side effects.
+
+## Session State Machine
+
+```txt
+creating ──▶ ready ──▶ stopping ──▶ stopped   (explicit DELETE or TTL/idle expiry)
+   │           │
+   │           ├──▶ expired                  (wall-clock ttl_s or idle_ttl_s elapsed)
+   │           ├──▶ failed                   (runtime failure / limit termination)
+   └───────────┴──▶ lost                     (orphaned across cellbox serve restart)
+```
+
+- **Terminal states:** `stopped`, `expired`, `failed`, `lost`.
+- **Non-persistent sessions:** Active sessions do not survive a daemon restart. On startup, `reconcile.Startup` destroys leftover cgroups/sandboxes and marks any non-terminal sessions in SQLite as `lost`.
+
+## Resource Limits & TTLs
+
+Every session enforces six resource limits (with server defaults and hard maximums from `cellbox.yaml`):
+
+| Field | Default | Maximum | Enforcement Mechanism |
+| --- | --- | --- | --- |
+| `cpu_millicores` | `1000` (1 vCPU) | `4000` | Cgroup v2 `cpu.max` (`native`) / daemon (`docker`) |
+| `memory_mb` | `512` | `4096` | Cgroup v2 `memory.max` + `memory.swap.max=0` |
+| `pids` | `256` | `2048` | Cgroup v2 `pids.max` |
+| `disk_mb` | `1024` | `10240` | Soft 2s overlay watcher (`native`); unsupported (`docker`) |
+| `idle_ttl_s` | `600` (10m) | — | Background reaper sweeps every 5s |
+| `ttl_s` | `3600` (1h) | `86400` (24h) | Background reaper sweeps every 5s |
+
+<Callout type="warn" title="Native Soft Disk Quota">
+On the native backend, `disk_mb` is enforced by scanning the session's writable overlay directory every **2 seconds**. A fast writer can briefly overshoot `disk_mb` before the watcher detects the breach, logs a `limit.breach` (`kind: "disk"`) event, and kills the session. On Docker, `limits.disk_mb` is rejected because quota support depends on the host storage driver.
+</Callout>
+
+## Warm Pool (`pool`)
+
+When `pool.enabled` is `true` (the default), CellBox maintains a bounded pool of pre-initialized, pristine sandboxes per image:
+
+1. **Startup priming:** On boot, CellBox asynchronously pulls and warms up to `pool.per_image` (default `2`) idle sandboxes for each curated image (`python:3.12-slim`, `node:22-slim`, `golang:1.23`, `debian:bookworm-slim`), capped by `pool.memory_budget_mb` (default `1024` MB).
+2. **Standby footprint:** Each warm sandbox holds `32 MB` memory, `100` millicores CPU, and `32` PIDs while idle, and is recycled after **10 minutes** (`warmMaxAge`).
+3. **Atomic claiming:** When `POST /v1/sessions` matches a cached image, CellBox atomically claims a warm sandbox, applies the requested cgroup limits via `UpdateLimits`, and schedules asynchronous pool refill.
+4. **Eligibility:** Warm pool claims apply only to sessions with `network_policy.mode: "none"` and no snapshot layers (`SnapshotLayers` empty). Requests using `allowlist`, `internet`, or `fork` fall back cleanly to cold creation.
+
+## Capacity Admission
+
+Before creating or forking a session, CellBox checks two admission gates:
+
+1. **Per-key quotas** (`session`-scoped keys only; `admin` keys are unmetered):
+   - Maximum **20** active sessions
+   - Maximum **8,192 MB** aggregate committed memory
+   - Maximum **20** API requests per second (`429 rate_limited`)
+2. **Host capacity:** Checks active committed CPU, memory, and PIDs against host (or enclosing cgroup) capacity multiplied by `capacity.cpu_overcommit` (default `4`) and `capacity.memory_overcommit` (default `1`), plus `capacity.min_free_disk_mb` (default `1024`). When exhausted, CellBox immediately returns `503 capacity_exceeded` with a `Retry-After` header set to `capacity.queue_wait_s` (default `5`).
+
+## Idempotent `POST` Requests
+
+Mutating `POST` routes accept an `Idempotency-Key` header (up to **255 bytes**):
+
+- Successful `2xx` responses are cached per authenticated API key for **24 hours**.
+- Replaying the exact same method, path, query string, key, and body returns the stored status, headers, and body without re-executing the operation.
+- Reusing an `Idempotency-Key` with a different request payload returns **`422 idempotency_key_reused`**.
+- Failed responses (`4xx`/`5xx`) are never cached so clients can safely retry after fixing errors.
