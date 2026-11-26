@@ -116,12 +116,12 @@ func runWorkloadWithCallbacks(payload json.RawMessage, emit func(runtime.OutputC
 	}
 	var master, slave *os.File
 	if request.TTY {
-		if onTerminal == nil {
+		if onTerminal == nil && emit == nil {
 			configRead.Close()
 			configWrite.Close()
 			execErrorRead.Close()
 			execErrorWrite.Close()
-			return nil, errors.New("terminal workload has no master descriptor receiver")
+			return nil, errors.New("terminal workload has no output receiver")
 		}
 		master, slave, err = openNativePTY(request.Rows, request.Columns)
 		if err != nil {
@@ -199,14 +199,33 @@ func runWorkloadWithCallbacks(payload json.RawMessage, emit func(runtime.OutputC
 		}
 		return nil, fmt.Errorf("exec workload: %s", strings.TrimSpace(string(execError)))
 	}
+	var ttyPumpDone chan struct{}
 	if master != nil {
-		if err := onTerminal(master); err != nil {
-			_ = syscall.Kill(-command.Process.Pid, syscall.SIGKILL)
-			_ = waitTrackedHelper(command)
+		if onTerminal != nil {
+			if err := onTerminal(master); err != nil {
+				_ = syscall.Kill(-command.Process.Pid, syscall.SIGKILL)
+				_ = waitTrackedHelper(command)
+				_ = master.Close()
+				return nil, fmt.Errorf("send PTY master descriptor: %w", err)
+			}
 			_ = master.Close()
-			return nil, fmt.Errorf("send PTY master descriptor: %w", err)
+		} else {
+			ttyPumpDone = make(chan struct{})
+			ttyOut := outputStream{collector: collector, stream: "tty", emit: emit}
+			go func(ptyMaster *os.File) {
+				defer close(ttyPumpDone)
+				buf := make([]byte, workloadChunkSize)
+				for {
+					n, readErr := ptyMaster.Read(buf)
+					if n > 0 {
+						_, _ = ttyOut.Write(buf[:n])
+					}
+					if readErr != nil {
+						return
+					}
+				}
+			}(master)
 		}
-		_ = master.Close()
 	}
 	signalDone := make(chan struct{})
 	signalStopped := make(chan struct{})
@@ -257,6 +276,10 @@ func runWorkloadWithCallbacks(payload json.RawMessage, emit func(runtime.OutputC
 	close(signalDone)
 	if signals != nil {
 		<-signalStopped
+	}
+	if ttyPumpDone != nil {
+		<-ttyPumpDone
+		_ = master.Close()
 	}
 	response := workloadResponse{DurationMS: time.Since(started).Milliseconds(), OutputBytes: collector.total, Truncated: collector.truncated}
 	if emit == nil {

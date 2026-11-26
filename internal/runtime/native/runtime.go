@@ -49,7 +49,7 @@ func NewRuntime(dataDir string, cgroups *CgroupRoot) (*Runtime, error) {
 func (*Runtime) Name() string { return "native" }
 
 func (*Runtime) Capabilities() cellruntime.Capabilities {
-	return cellruntime.Capabilities{Snapshots: true, CPULimits: true, DiskLimits: true, TTY: true, EgressPolicy: true}
+	return cellruntime.Capabilities{Snapshots: true, CPULimits: true, DiskLimits: true, TTY: true, TTYExec: true, EgressPolicy: true}
 }
 
 func (r *Runtime) EnsureImage(ctx context.Context, reference string) (cellruntime.ImageInfo, error) {
@@ -85,7 +85,7 @@ func (r *Runtime) Create(ctx context.Context, spec cellruntime.SandboxSpec) (cel
 	if limits.DiskMB < 0 || int64(limits.DiskMB) > (1<<63-1)/(1<<20) {
 		return nil, errors.New("native session disk limit is invalid")
 	}
-	policy := egress.Policy{Mode: spec.NetworkPolicy.Mode, Allow: make([]egress.Rule, 0, len(spec.NetworkPolicy.Allow)), ExtraBlockedCIDRs: spec.NetworkPolicy.ExtraBlockedCIDRs}
+	policy := egress.Policy{Mode: spec.NetworkPolicy.Mode, Allow: make([]egress.Rule, 0, len(spec.NetworkPolicy.Allow)), ExtraBlockedCIDRs: spec.NetworkPolicy.ExtraBlockedCIDRs, BandwidthBytesPerSec: spec.NetworkPolicy.BandwidthBytesPerSec}
 	for _, rule := range spec.NetworkPolicy.Allow {
 		policy.Allow = append(policy.Allow, egress.Rule{Host: rule.Host, Ports: rule.Ports})
 	}
@@ -478,9 +478,6 @@ func (s *sandbox) Exec(ctx context.Context, request cellruntime.ExecRequest) (ce
 		return nil, errors.New("native sandbox is no longer running")
 	}
 	s.mu.Unlock()
-	if request.TTY {
-		return nil, cellruntime.ErrUnsupported
-	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}

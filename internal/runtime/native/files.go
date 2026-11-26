@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -14,6 +15,7 @@ import (
 	"path"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	cellruntime "github.com/senasphy/cellbox/internal/runtime"
@@ -38,18 +40,6 @@ func sandboxPath(value string) (string, string, error) {
 	return clean, relative, nil
 }
 
-func (s *sandbox) openRoot() (int, error) {
-	if s.init == nil || s.init.cmd == nil || s.init.cmd.Process == nil {
-		return -1, errors.New("native sandbox init process is unavailable")
-	}
-	root := fmt.Sprintf("/proc/%d/root", s.init.cmd.Process.Pid)
-	fd, err := unix.Open(root, unix.O_PATH|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
-	if err != nil {
-		return -1, fmt.Errorf("open native sandbox root: %w", err)
-	}
-	return fd, nil
-}
-
 func openSandboxPath(rootFD int, relative string, flags int, mode uint32) (int, error) {
 	fd, err := unix.Openat2(rootFD, relative, &unix.OpenHow{
 		Flags:   uint64(flags | unix.O_CLOEXEC),
@@ -66,22 +56,35 @@ func (s *sandbox) ReadFile(ctx context.Context, value string) (io.ReadCloser, ce
 	if err := ctx.Err(); err != nil {
 		return nil, cellruntime.FileInfo{}, err
 	}
-	clean, relative, err := sandboxPath(value)
+	clean, _, err := sandboxPath(value)
 	if err != nil {
 		return nil, cellruntime.FileInfo{}, err
 	}
-	rootFD, err := s.openRoot()
+	if s.init == nil {
+		return nil, cellruntime.FileInfo{}, errors.New("native sandbox init process is unavailable")
+	}
+	return s.init.fsOpenRead(ctx, clean)
+}
+
+func (p *InitProcess) fsOpenRead(ctx context.Context, cleanPath string) (io.ReadCloser, cellruntime.FileInfo, error) {
+	payload, err := json.Marshal(fsPathRequest{Path: cleanPath})
 	if err != nil {
 		return nil, cellruntime.FileInfo{}, err
 	}
-	defer unix.Close(rootFD)
-	fd, stat, err := openSandboxRegularRead(rootFD, relative)
+	msg, files, err := p.controlCall(ctx, "fs_open_read", "fs", payload)
 	if err != nil {
-		return nil, cellruntime.FileInfo{}, fmt.Errorf("open sandbox file %s: %w", clean, err)
+		return nil, cellruntime.FileInfo{}, err
 	}
-	file := os.NewFile(uintptr(fd), clean)
-	mode := nativeFileMode(stat.Mode)
-	return file, cellruntime.FileInfo{Path: clean, Size: stat.Size, Mode: mode, IsDir: mode.IsDir()}, nil
+	if msg.Type != "fs_read_ready" || len(files) != 1 {
+		closeFiles(files)
+		return nil, cellruntime.FileInfo{}, fmt.Errorf("unexpected native fs_open_read response %q with %d descriptors", msg.Type, len(files))
+	}
+	var info cellruntime.FileInfo
+	if err := json.Unmarshal(msg.Payload, &info); err != nil {
+		closeFiles(files)
+		return nil, cellruntime.FileInfo{}, err
+	}
+	return files[0], info, nil
 }
 
 func openSandboxRegularRead(rootFD int, relative string) (int, unix.Stat_t, error) {
@@ -135,22 +138,73 @@ func (s *sandbox) WriteFile(ctx context.Context, value string, source io.Reader,
 	if relative == "." {
 		return errors.New("cannot write the sandbox root as a file")
 	}
-	rootFD, err := s.openRoot()
+	if s.init == nil {
+		return errors.New("native sandbox init process is unavailable")
+	}
+	return s.init.fsWrite(ctx, clean, source, mode)
+}
+
+func (p *InitProcess) fsWrite(ctx context.Context, cleanPath string, source io.Reader, mode os.FileMode) error {
+	openPayload, err := json.Marshal(fsPathRequest{Path: cleanPath})
 	if err != nil {
 		return err
 	}
-	defer unix.Close(rootFD)
-	parent := path.Dir(relative)
-	if parent == "" {
-		parent = "."
-	}
-	parentFD, err := openSandboxPath(rootFD, parent, unix.O_PATH|unix.O_DIRECTORY, 0)
+	msg, files, err := p.controlCall(ctx, "fs_open_write", "fs", openPayload)
 	if err != nil {
-		return fmt.Errorf("open parent directory for %s: %w", clean, err)
+		return err
 	}
-	defer unix.Close(parentFD)
-	if err := writeSandboxFileAtomic(parentFD, path.Base(relative), source, mode); err != nil {
-		return fmt.Errorf("write sandbox file %s: %w", clean, err)
+	if msg.Type != "fs_write_opened" || len(files) != 1 {
+		closeFiles(files)
+		return fmt.Errorf("unexpected native fs_open_write response %q with %d descriptors", msg.Type, len(files))
+	}
+	var opened fsWriteOpenedResponse
+	if err := json.Unmarshal(msg.Payload, &opened); err != nil {
+		closeFiles(files)
+		return err
+	}
+	file := files[0]
+	abort := func() {
+		abortPayload, _ := json.Marshal(fsWriteCommitRequest{Path: cleanPath, TempName: opened.TempName})
+		_, abortFiles, _ := p.controlCall(context.Background(), "fs_abort_write", "fs", abortPayload)
+		closeFiles(abortFiles)
+	}
+	written, copyErr := io.Copy(file, io.LimitReader(source, maxNativeFileBytes+1))
+	if copyErr != nil {
+		_ = file.Close()
+		abort()
+		return fmt.Errorf("write sandbox file %s: %w", cleanPath, copyErr)
+	}
+	if written > maxNativeFileBytes {
+		_ = file.Close()
+		abort()
+		return fmt.Errorf("write sandbox file %s: file exceeds %d byte transfer limit", cleanPath, maxNativeFileBytes)
+	}
+	if err := file.Chmod(mode.Perm() & 0777); err != nil {
+		_ = file.Close()
+		abort()
+		return fmt.Errorf("write sandbox file %s: %w", cleanPath, err)
+	}
+	if err := file.Sync(); err != nil {
+		_ = file.Close()
+		abort()
+		return fmt.Errorf("write sandbox file %s: %w", cleanPath, err)
+	}
+	if err := file.Close(); err != nil {
+		abort()
+		return fmt.Errorf("write sandbox file %s: %w", cleanPath, err)
+	}
+	commitPayload, err := json.Marshal(fsWriteCommitRequest{Path: cleanPath, TempName: opened.TempName})
+	if err != nil {
+		abort()
+		return err
+	}
+	commitMsg, commitFiles, err := p.controlCall(ctx, "fs_commit_write", "fs", commitPayload)
+	closeFiles(commitFiles)
+	if err != nil {
+		return err
+	}
+	if commitMsg.Type != "fs_done" {
+		return fmt.Errorf("unexpected native fs_commit_write response %q", commitMsg.Type)
 	}
 	return nil
 }
@@ -230,27 +284,24 @@ func (s *sandbox) DeleteFile(ctx context.Context, value string) error {
 	if relative == "." {
 		return errors.New("cannot delete the sandbox root")
 	}
-	rootFD, err := s.openRoot()
+	if s.init == nil {
+		return errors.New("native sandbox init process is unavailable")
+	}
+	return s.init.fsDelete(ctx, clean)
+}
+
+func (p *InitProcess) fsDelete(ctx context.Context, cleanPath string) error {
+	payload, err := json.Marshal(fsPathRequest{Path: cleanPath})
 	if err != nil {
 		return err
 	}
-	defer unix.Close(rootFD)
-	parent := path.Dir(relative)
-	if parent == "" {
-		parent = "."
-	}
-	parentFD, err := openSandboxPath(rootFD, parent, unix.O_PATH|unix.O_DIRECTORY, 0)
+	msg, files, err := p.controlCall(ctx, "fs_delete", "fs", payload)
+	closeFiles(files)
 	if err != nil {
-		return fmt.Errorf("open parent directory for %s: %w", clean, err)
+		return err
 	}
-	defer unix.Close(parentFD)
-	if err := unix.Unlinkat(parentFD, path.Base(relative), 0); err != nil {
-		if errors.Is(err, unix.EISDIR) || errors.Is(err, unix.EPERM) {
-			err = unix.Unlinkat(parentFD, path.Base(relative), unix.AT_REMOVEDIR)
-		}
-		if err != nil {
-			return fmt.Errorf("delete sandbox path %s: %w", clean, err)
-		}
+	if msg.Type != "fs_done" {
+		return fmt.Errorf("unexpected native fs_delete response %q", msg.Type)
 	}
 	return nil
 }
@@ -259,86 +310,189 @@ func (s *sandbox) ListDir(ctx context.Context, value string) ([]cellruntime.File
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	clean, relative, err := sandboxPath(value)
+	clean, _, err := sandboxPath(value)
 	if err != nil {
 		return nil, err
 	}
-	rootFD, err := s.openRoot()
+	if s.init == nil {
+		return nil, errors.New("native sandbox init process is unavailable")
+	}
+	return s.init.fsList(ctx, clean)
+}
+
+func (p *InitProcess) fsList(ctx context.Context, cleanPath string) ([]cellruntime.FileInfo, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	payload, err := json.Marshal(fsPathRequest{Path: cleanPath})
 	if err != nil {
 		return nil, err
 	}
-	defer unix.Close(rootFD)
-	fd, err := openSandboxPath(rootFD, relative, unix.O_RDONLY|unix.O_DIRECTORY, 0)
+	pr, pw, err := os.Pipe()
 	if err != nil {
-		return nil, fmt.Errorf("open sandbox directory %s: %w", clean, err)
+		return nil, err
 	}
-	directory := os.NewFile(uintptr(fd), clean)
-	defer directory.Close()
-	entries, err := directory.ReadDir(maxNativeDirectoryEntries + 1)
+	id, req, err := p.registerRequest("fs", 4)
 	if err != nil {
-		return nil, fmt.Errorf("read sandbox directory %s: %w", clean, err)
+		_ = pr.Close()
+		_ = pw.Close()
+		return nil, err
 	}
-	if len(entries) > maxNativeDirectoryEntries {
-		return nil, fmt.Errorf("sandbox directory %s exceeds %d entries", clean, maxNativeDirectoryEntries)
+	defer p.unregisterRequest(id, req)
+	if err := p.sendRequest(ControlMessage{Type: "fs_list", ID: id, Payload: payload}, pw); err != nil {
+		_ = pr.Close()
+		_ = pw.Close()
+		return nil, err
 	}
-	result := make([]cellruntime.FileInfo, 0, len(entries))
-	for _, entry := range entries {
-		if err := ctx.Err(); err != nil {
-			return nil, err
+	_ = pw.Close()
+	type listResult struct {
+		entries []cellruntime.FileInfo
+		err     error
+	}
+	decoded := make(chan listResult, 1)
+	go func() {
+		defer pr.Close()
+		var entries []cellruntime.FileInfo
+		decodeErr := json.NewDecoder(pr).Decode(&entries)
+		decoded <- listResult{entries: entries, err: decodeErr}
+	}()
+	select {
+	case <-ctx.Done():
+		_ = pr.Close()
+		return nil, ctx.Err()
+	case pkt, ok := <-req.ch:
+		if !ok {
+			_ = pr.Close()
+			return nil, p.initExitError(fmt.Errorf("read native fs_list response: %w", p.lastReaderErr()))
 		}
-		var stat unix.Stat_t
-		if err := unix.Fstatat(fd, entry.Name(), &stat, unix.AT_SYMLINK_NOFOLLOW); err != nil {
-			return nil, fmt.Errorf("stat sandbox entry %s/%s: %w", clean, entry.Name(), err)
+		closeFiles(pkt.files)
+		if pkt.msg.Type == "error" {
+			_ = pr.Close()
+			<-decoded
+			return nil, errors.New(pkt.msg.Error)
 		}
-		entryPath := path.Join(clean, entry.Name())
-		mode := nativeFileMode(stat.Mode)
-		result = append(result, cellruntime.FileInfo{Path: entryPath, Size: stat.Size, Mode: mode, IsDir: mode.IsDir()})
+		if pkt.msg.Type != "fs_done" {
+			_ = pr.Close()
+			<-decoded
+			return nil, fmt.Errorf("unexpected native fs_list response %q", pkt.msg.Type)
+		}
+		res := <-decoded
+		if res.err != nil {
+			return nil, fmt.Errorf("decode directory listing %s: %w", cleanPath, res.err)
+		}
+		return res.entries, nil
 	}
-	return result, nil
 }
 
 func (s *sandbox) Archive(ctx context.Context, value string) (io.ReadCloser, error) {
-	clean, relative, err := sandboxPath(value)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	clean, _, err := sandboxPath(value)
 	if err != nil {
 		return nil, err
 	}
-	rootFD, err := s.openRoot()
+	if s.init == nil {
+		return nil, errors.New("native sandbox init process is unavailable")
+	}
+	return s.init.fsArchive(ctx, clean)
+}
+
+func (p *InitProcess) fsArchive(ctx context.Context, cleanPath string) (io.ReadCloser, error) {
+	payload, err := json.Marshal(fsPathRequest{Path: cleanPath})
 	if err != nil {
 		return nil, err
 	}
-	fd, err := openSandboxPath(rootFD, relative, unix.O_PATH|unix.O_NOFOLLOW, 0)
+	pr, pw, err := os.Pipe()
 	if err != nil {
-		unix.Close(rootFD)
-		return nil, fmt.Errorf("open sandbox archive path %s: %w", clean, err)
-	}
-	var stat unix.Stat_t
-	if err := unix.Fstat(fd, &stat); err != nil {
-		unix.Close(fd)
-		unix.Close(rootFD)
 		return nil, err
 	}
-	unix.Close(fd)
-	reader, writer := io.Pipe()
+	id, req, err := p.registerRequest("fs", 4)
+	if err != nil {
+		_ = pr.Close()
+		_ = pw.Close()
+		return nil, err
+	}
+	if err := p.sendRequest(ControlMessage{Type: "fs_tar_create", ID: id, Payload: payload}, pw); err != nil {
+		_ = pr.Close()
+		_ = pw.Close()
+		p.unregisterRequest(id, req)
+		return nil, err
+	}
+	_ = pw.Close()
+	select {
+	case <-ctx.Done():
+		_ = pr.Close()
+		p.unregisterRequest(id, req)
+		return nil, ctx.Err()
+	case pkt, ok := <-req.ch:
+		if !ok {
+			_ = pr.Close()
+			p.unregisterRequest(id, req)
+			return nil, p.initExitError(fmt.Errorf("read native fs_tar_create response: %w", p.lastReaderErr()))
+		}
+		closeFiles(pkt.files)
+		if pkt.msg.Type == "error" {
+			_ = pr.Close()
+			p.unregisterRequest(id, req)
+			return nil, errors.New(pkt.msg.Error)
+		}
+		if pkt.msg.Type != "fs_tar_started" {
+			_ = pr.Close()
+			p.unregisterRequest(id, req)
+			return nil, fmt.Errorf("unexpected native fs_tar_create response %q", pkt.msg.Type)
+		}
+	}
+	done := make(chan error, 1)
 	go func() {
-		defer unix.Close(rootFD)
-		tarWriter := tar.NewWriter(writer)
-		var archived int64
-		var archiveErr error
-		if stat.Mode&unix.S_IFMT == unix.S_IFDIR {
-			archiveErr = archiveDirectory(ctx, rootFD, relative, "", tarWriter, &archived)
-		} else {
-			name := path.Base(clean)
-			if clean == "/" {
-				name = "."
-			}
-			archiveErr = archiveEntry(ctx, rootFD, relative, name, tarWriter, &archived)
+		defer p.unregisterRequest(id, req)
+		pkt, ok := <-req.ch
+		if !ok {
+			done <- p.initExitError(fmt.Errorf("read native fs_tar_create completion: %w", p.lastReaderErr()))
+			return
 		}
-		if closeErr := tarWriter.Close(); archiveErr == nil {
-			archiveErr = closeErr
+		closeFiles(pkt.files)
+		if pkt.msg.Type == "error" {
+			done <- errors.New(pkt.msg.Error)
+			return
 		}
-		_ = writer.CloseWithError(archiveErr)
+		if pkt.msg.Type != "fs_done" {
+			done <- fmt.Errorf("unexpected native fs_tar_create completion %q", pkt.msg.Type)
+			return
+		}
+		done <- nil
 	}()
-	return reader, nil
+	return &archiveStreamReader{pipe: pr, done: done}, nil
+}
+
+type archiveStreamReader struct {
+	pipe     *os.File
+	done     <-chan error
+	once     sync.Once
+	finalErr error
+}
+
+func (r *archiveStreamReader) waitFinal() error {
+	r.once.Do(func() {
+		r.finalErr = <-r.done
+	})
+	return r.finalErr
+}
+
+func (r *archiveStreamReader) Read(p []byte) (int, error) {
+	n, err := r.pipe.Read(p)
+	if errors.Is(err, io.EOF) {
+		if finalErr := r.waitFinal(); finalErr != nil {
+			return n, finalErr
+		}
+	}
+	return n, err
+}
+
+func (r *archiveStreamReader) Close() error {
+	err := r.pipe.Close()
+	_ = r.waitFinal()
+	return err
 }
 
 func archiveDirectory(ctx context.Context, rootFD int, relative, prefix string, writer *tar.Writer, total *int64) error {
@@ -457,20 +611,13 @@ func readSandboxLink(rootFD int, relative string) (string, error) {
 }
 
 func (s *sandbox) Extract(ctx context.Context, target string, source io.Reader) error {
-	clean, relative, err := sandboxPath(target)
+	clean, _, err := sandboxPath(target)
 	if err != nil {
 		return err
 	}
-	rootFD, err := s.openRoot()
-	if err != nil {
-		return err
+	if s.init == nil {
+		return errors.New("native sandbox init process is unavailable")
 	}
-	defer unix.Close(rootFD)
-	destinationFD, err := openSandboxPath(rootFD, relative, unix.O_RDONLY|unix.O_DIRECTORY, 0)
-	if err != nil {
-		return fmt.Errorf("open extraction directory %s: %w", clean, err)
-	}
-	defer unix.Close(destinationFD)
 	archive, err := os.CreateTemp("", "cellbox-native-archive-*")
 	if err != nil {
 		return err
@@ -492,7 +639,23 @@ func (s *sandbox) Extract(ctx context.Context, target string, source io.Reader) 
 	if _, err := archive.Seek(0, io.SeekStart); err != nil {
 		return err
 	}
-	return extractNativeArchive(ctx, destinationFD, archive)
+	return s.init.fsExtract(ctx, clean, archive)
+}
+
+func (p *InitProcess) fsExtract(ctx context.Context, cleanTarget string, archive *os.File) error {
+	payload, err := json.Marshal(fsPathRequest{Path: cleanTarget})
+	if err != nil {
+		return err
+	}
+	msg, files, err := p.controlCall(ctx, "fs_tar_extract", "fs", payload, archive)
+	closeFiles(files)
+	if err != nil {
+		return err
+	}
+	if msg.Type != "fs_done" {
+		return fmt.Errorf("unexpected native fs_tar_extract response %q", msg.Type)
+	}
+	return nil
 }
 
 func validateNativeArchive(archive io.Reader) error {

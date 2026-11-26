@@ -74,7 +74,7 @@ func RunInit(controlFD, configFD int) error {
 	if err := sendControlMessageFile(controlFile, ControlMessage{Type: "ready", ID: config.SessionID}); err != nil {
 		return err
 	}
-	return controlLoopFile(controlFile)
+	return controlLoopFile(controlFile, "/")
 }
 
 func validateInitConfig(config InitConfig) error {
@@ -350,10 +350,10 @@ func controlLoop(fd int) error {
 	}
 	controlFile := os.NewFile(uintptr(dupFD), "cellbox-control-loop")
 	defer controlFile.Close()
-	return controlLoopFile(controlFile)
+	return controlLoopFile(controlFile, "/")
 }
 
-func controlLoopFile(controlFile *os.File) error {
+func controlLoopFile(controlFile *os.File, rootPath string) error {
 	var sendMu sync.Mutex
 	send := func(message ControlMessage) error {
 		sendMu.Lock()
@@ -369,10 +369,15 @@ func controlLoopFile(controlFile *os.File) error {
 	active := make(map[string]chan int)
 	for {
 		message, files, err := receiveControlMessageFile(controlFile)
-		closeFiles(files)
 		if err != nil {
+			closeFiles(files)
 			return err
 		}
+		if strings.HasPrefix(message.Type, "fs_") {
+			handleFSRequest(rootPath, message, files, send, sendFiles)
+			continue
+		}
+		closeFiles(files)
 		switch message.Type {
 		case "shutdown":
 			return send(ControlMessage{Type: "stopped", ID: message.ID})
