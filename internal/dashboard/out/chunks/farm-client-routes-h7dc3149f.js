@@ -1,0 +1,1 @@
+var e=JSON.parse(`[{"pattern":"/","pageShouldHydrate":true,"islandStrategy":"load","loader":0}]`);export{e as default};

@@ -1,4 +1,4 @@
-// Package dashboard embeds the static Next.js export.
+// Package dashboard embeds the static Farm.js dashboard export.
 package dashboard
 
 import (
@@ -9,11 +9,31 @@ import (
 	"strings"
 )
 
-// The Next.js exporter places assets under _next, which Go's single-directory
-// embed pattern intentionally skips because the directory begins with '_'.
+// Embed all static assets including dot/underscore directories such as _farm.
 //
-//go:embed out out/_next
+//go:embed all:out
 var assets embed.FS
+
+func isStaticDashboardRequest(requestPath string) bool {
+	if requestPath == "/" ||
+		requestPath == "/favicon.svg" ||
+		requestPath == "/farm-client.js" ||
+		requestPath == "/farm-client.css" ||
+		requestPath == "/farm-client-manifest.json" {
+		return true
+	}
+	if strings.HasPrefix(requestPath, "/assets/") ||
+		strings.HasPrefix(requestPath, "/chunks/") ||
+		strings.HasPrefix(requestPath, "/fonts/") ||
+		strings.HasPrefix(requestPath, "/_farm/") {
+		return true
+	}
+	if strings.HasPrefix(requestPath, "/farm-client-") &&
+		(strings.HasSuffix(requestPath, ".js") || strings.HasSuffix(requestPath, ".css")) {
+		return true
+	}
+	return strings.HasSuffix(requestPath, ".html") || strings.HasSuffix(requestPath, ".txt")
+}
 
 func Wrap(api http.Handler) http.Handler {
 	sub, err := fs.Sub(assets, "out")
@@ -22,12 +42,12 @@ func Wrap(api http.Handler) http.Handler {
 	}
 	files := http.FileServer(http.FS(sub))
 	routes := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/" || strings.HasPrefix(r.URL.Path, "/_next/") || strings.HasSuffix(r.URL.Path, ".html") || strings.HasSuffix(r.URL.Path, ".txt") {
+		if isStaticDashboardRequest(r.URL.Path) {
 			p := path.Clean(strings.TrimPrefix(r.URL.Path, "/"))
 			if p == "." {
 				p = "index.html"
 			}
-			if _, e := fs.Stat(sub, p); e == nil {
+			if info, e := fs.Stat(sub, p); e == nil && !info.IsDir() {
 				files.ServeHTTP(w, r)
 				return
 			}

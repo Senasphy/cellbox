@@ -6,6 +6,8 @@
 coverage.out
 /web/node_modules/
 /web/.next/
+/web/.farm/
+/web/.output/
 /web/out/
 /docs-site/node_modules/
 /docs-site/.farm/

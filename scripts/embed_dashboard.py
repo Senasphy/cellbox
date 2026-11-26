@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Copy the Next.js static export into the Go dashboard embed directory."""
+"""Copy the Farm.js static export into the Go dashboard embed directory."""
 
 from pathlib import Path
 import shutil

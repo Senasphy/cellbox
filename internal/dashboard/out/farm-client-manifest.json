@@ -1,0 +1,72 @@
+{
+  "_virtual_farm-ssr-entry.js": {
+    "id": "_virtual_farm-ssr-entry.js",
+    "chunks": [
+      "_virtual_farm-ssr-entry.js"
+    ],
+    "name": "_virtual_farm-ssr-entry"
+  },
+  "assets/FileViewer-CmhOt2y1.js": {
+    "id": "assets/FileViewer-CmhOt2y1.js",
+    "chunks": [
+      "assets/FileViewer-CmhOt2y1.js"
+    ],
+    "name": "FileViewer"
+  },
+  "assets/Network-BRbbkS_t.js": {
+    "id": "assets/Network-BRbbkS_t.js",
+    "chunks": [
+      "assets/Network-BRbbkS_t.js"
+    ],
+    "name": "Network"
+  },
+  "assets/Replay-D-cCAche.js": {
+    "id": "assets/Replay-D-cCAche.js",
+    "chunks": [
+      "assets/Replay-D-cCAche.js"
+    ],
+    "name": "Replay"
+  },
+  "assets/Snapshots-B1iLLyql.js": {
+    "id": "assets/Snapshots-B1iLLyql.js",
+    "chunks": [
+      "assets/Snapshots-B1iLLyql.js"
+    ],
+    "name": "Snapshots"
+  },
+  "assets/Terminal-DDdqj3Aw.js": {
+    "id": "assets/Terminal-DDdqj3Aw.js",
+    "chunks": [
+      "assets/Terminal-DDdqj3Aw.js"
+    ],
+    "name": "Terminal"
+  },
+  "assets/Timeline-Di-ZFjtK.js": {
+    "id": "assets/Timeline-Di-ZFjtK.js",
+    "chunks": [
+      "assets/Timeline-Di-ZFjtK.js"
+    ],
+    "name": "Timeline"
+  },
+  "assets/copy-D0lWacYx.js": {
+    "id": "assets/copy-D0lWacYx.js",
+    "chunks": [
+      "assets/copy-D0lWacYx.js"
+    ],
+    "name": "copy"
+  },
+  "assets/jsx-runtime-DmoI8OxV.js": {
+    "id": "assets/jsx-runtime-DmoI8OxV.js",
+    "chunks": [
+      "assets/jsx-runtime-DmoI8OxV.js"
+    ],
+    "name": "jsx-runtime"
+  },
+  "assets/xterm-Bas-o9uz.js": {
+    "id": "assets/xterm-Bas-o9uz.js",
+    "chunks": [
+      "assets/xterm-Bas-o9uz.js"
+    ],
+    "name": "xterm"
+  }
+}

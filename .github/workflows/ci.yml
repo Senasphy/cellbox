@@ -16,7 +16,7 @@ jobs:
           node-version: '22'
       - run: npm install
         working-directory: web
-      - run: npm run generate:api && git diff --exit-code -- app/api/schema.d.ts
+      - run: npm run generate:api && git diff --exit-code -- src/api/schema.d.ts
         working-directory: web
       - run: npm run build
         working-directory: web

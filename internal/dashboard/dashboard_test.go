@@ -30,7 +30,7 @@ func TestEmbeddedDashboardAndAPIFallback(t *testing.T) {
 	hasActionableLoginError := false
 	hasTerminalClipboard := false
 	hasTerminalOutputMirror := false
-	if err := fs.WalkDir(sub, "_next/static/chunks", func(name string, entry fs.DirEntry, err error) error {
+	if err := fs.WalkDir(sub, "chunks", func(name string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -51,9 +51,9 @@ func TestEmbeddedDashboardAndAPIFallback(t *testing.T) {
 	if !hasActionableLoginError || !hasTerminalClipboard || !hasTerminalOutputMirror {
 		t.Fatal("embedded dashboard bundle is stale: expected actionable login errors, terminal clipboard controls, and an accessible output transcript")
 	}
-	assetReferences := regexp.MustCompile(`(?:src|href)="(/_next/[^\"]+)"`).FindAllSubmatch(document, -1)
-	if len(assetReferences) < 5 {
-		t.Fatalf("embedded dashboard HTML has only %d Next.js asset references", len(assetReferences))
+	assetReferences := regexp.MustCompile(`(?:src|href)="(/(?:assets|chunks|farm-client)[^\"]+)"`).FindAllSubmatch(document, -1)
+	if len(assetReferences) < 3 {
+		t.Fatalf("embedded dashboard HTML has only %d Farm.js asset references", len(assetReferences))
 	}
 	for _, reference := range assetReferences {
 		asset := strings.TrimPrefix(string(reference[1]), "/")
@@ -62,7 +62,7 @@ func TestEmbeddedDashboardAndAPIFallback(t *testing.T) {
 		}
 	}
 	var scriptPath string
-	if err := fs.WalkDir(sub, "_next/static/chunks", func(name string, entry fs.DirEntry, err error) error {
+	if err := fs.WalkDir(sub, "chunks", func(name string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
