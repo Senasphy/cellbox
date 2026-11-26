@@ -1,0 +1,45 @@
+---
+title: "Observability & Dashboard"
+description: "Prometheus /metrics catalog, HTTP route-template histograms, and features of the embedded Next.js web dashboard."
+order: 1
+---
+
+# Observability & Dashboard
+
+CellBox embeds both a Prometheus metrics exporter (`/metrics`) and a full static Next.js operator dashboard served directly from the Go binary at `/`.
+
+## Prometheus Metrics (`GET /metrics`)
+
+Scrape `GET /metrics` in Prometheus text exposition format (`0.0.4`):
+
+| Metric | Type | Labels | Description |
+| --- | --- | --- | --- |
+| `cellbox_sessions` | Gauge | `state` | Sessions by lifecycle state (`creating`, `ready`, `stopping`, `stopped`, `expired`, `failed`, `lost`) |
+| `cellbox_capacity_committed` | Gauge | `resource` | Reserved `cpu_millicores`, `memory_mb`, `pool_memory_mb`, `pids` |
+| `cellbox_capacity_total` | Gauge | `resource` | Effective host/cgroup capacity after configured overcommit ratios |
+| `cellbox_pool_ready` | Gauge | `image` | Idle warm sandboxes ready per curated image |
+| `cellbox_exec_total` | Counter | `result` | Completed execs (`ok`, `nonzero`, `timed_out`, `oom_killed`, `pids_limited`, `failed`) |
+| `cellbox_limit_breach_total` | Counter | `kind` | Recorded breaches (`memory`, `pids`, `disk`, `output`, `timeout`) |
+| `cellbox_session_create_seconds` | Histogram | `source` | Session creation latency split by `cold` vs `warm` |
+| `cellbox_exec_seconds` | Histogram | — | Duration of completed execs |
+| `cellbox_output_bytes_total` | Counter | — | Total exec output bytes persisted |
+| `cellbox_session_create_total` | Counter | — | Total persisted session creation attempts |
+| `cellbox_error_total` | Counter | — | Failed sessions and failed/timed-out/OOM/PID-limited execs |
+| `cellbox_http_requests_in_flight` | Gauge | — | Current active HTTP requests |
+| `cellbox_http_requests_total` | Counter | `method`, `route`, `status` | HTTP requests keyed strictly by Go `ServeMux` route template (low cardinality) |
+| `cellbox_http_request_duration_seconds` | Histogram | `method`, `route` | HTTP latency histogram keyed by route template |
+
+## Embedded Web Dashboard (`/`)
+
+Built from `web/` and embedded via `go:embed` (`make web`), the dashboard provides:
+
+- **Overview:** Active session counts, CPU/memory/PID capacity gauges, warm pool idle counts, create/error rate sparklines, recent limit breaches, and asynchronous `cellbox doctor` host diagnostics (for `admin` keys).
+- **Sessions Table:** Live SSE updates (`/v1/sessions/stream`), filtering by state/labels/age, bulk destroy, and 5-second runtime CPU/memory sparklines.
+- **Session Detail Tabs:**
+  - **Terminal:** `xterm.js` (WebGL-accelerated when available) over authenticated WebSocket with reconnect backoff, 256 KiB scrollback replay, and resize handling.
+  - **Timeline:** Paginated exec history with command filter, duration bar, exit state, sampled peak session memory, and lazy virtualized SSE output viewer (`Last-Event-ID` resume).
+  - **Files:** Lazy paginated directory tree, drag-and-drop file upload, tar archive download, and read-only CodeMirror 6 viewer with syntax highlighting.
+  - **Metrics:** Live `uPlot` time-series charts for CPU, memory, PIDs, and disk I/O with configured limit lines drawn.
+  - **Network:** Native egress proxy allow/deny audit log with filtering and cursor pagination.
+  - **Snapshots & Replay:** Create/inspect/fork/delete snapshots, replay recorded output with playback speed and scrubber, and download asciicast v2 `.cast` files.
+- **Command Palette & Theme:** Open quick navigation anytime with `Ctrl+K` / `⌘K`, and toggle light/dark mode.

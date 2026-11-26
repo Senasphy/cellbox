@@ -1,0 +1,97 @@
+---
+title: "Endpoints & Recipes"
+description: "Complete route index and copy-pasteable curl walkthroughs for sessions, execs, terminals, files, snapshots, and observability."
+order: 1
+---
+
+# Endpoints & Recipes
+
+Every route exposed by `cellbox serve` (see the interactive [OpenAPI Reference](/api-reference) for full JSON schemas).
+
+## Route Index
+
+### Health, System & Keys
+
+| Method & Path | Scope | Purpose |
+| --- | --- | --- |
+| `GET /healthz` | Public | Liveness check (`200 OK`) |
+| `GET /readyz` | Public | Store readiness check |
+| `GET /metrics` | Public | Prometheus exposition text format |
+| `GET /v1/system` | Auth (`admin` for config) | Backend capabilities, `doctor_status`, `doctor_checks`, redacted `effective_config` |
+| `GET /v1/images` | `admin` | List cached images (Docker) |
+| `POST /v1/images` | `admin` | Pull an OCI image (`{"reference": "..."}`) |
+| `DELETE /v1/images?reference=...` | `admin` | Remove cached image |
+| `POST /v1/keys` | `admin` | Mint a new `admin` or `session` key (returns secret once) |
+| `GET /v1/keys` | `admin` | List API key metadata |
+| `DELETE /v1/keys/{id}` | `admin` | Revoke an API key |
+| `GET /v1/limit-breaches` | Auth | Recent owner-scoped `limit.breach` audit events |
+
+### Sessions, Execs & Terminals
+
+| Method & Path | Purpose |
+| --- | --- |
+| `POST /v1/sessions` | Create a sandbox session (supports warm pool, limits, env, labels, network policy) |
+| `GET /v1/sessions` | Paginated session list (`limit`, `cursor`) |
+| `GET /v1/sessions/stream` | Authenticated SSE stream of live session snapshots |
+| `GET /v1/sessions/{id}` | Inspect a single session |
+| `DELETE /v1/sessions/{id}` | Destroy a session and its cgroup/overlay |
+| `POST /v1/sessions/{id}/execs` | Start an exec (`?wait=true` for synchronous completion, omit for async + `stream_url`) |
+| `GET /v1/sessions/{id}/execs` | Paginated exec history |
+| `GET /v1/sessions/{id}/execs/{execID}` | Get exec status, exit code, duration, peak memory |
+| `GET /v1/sessions/{id}/execs/{execID}/stream` | Resumable SSE output stream (`Last-Event-ID`) |
+| `POST /v1/sessions/{id}/execs/{execID}/signal` | Send POSIX signal (`1..64`) to active exec (native only) |
+| `GET /v1/sessions/{id}/execs/{execID}/asciicast` | Export TTY exec recording in asciicast v2 format |
+| `GET /v1/sessions/{id}/terminal` | Interactive PTY WebSocket (binary data + JSON resize frames) |
+
+### Files, Snapshots & Audit
+
+| Method & Path | Purpose |
+| --- | --- |
+| `GET /v1/sessions/{id}/files?path=...` | Download file (max 256 MiB, `X-Cellbox-File-Mode`) |
+| `PUT /v1/sessions/{id}/files?path=...` | Upload file (max 256 MiB, optional `X-Cellbox-Mode`) |
+| `DELETE /v1/sessions/{id}/files?path=...` | Delete file inside sandbox |
+| `GET /v1/sessions/{id}/files/list?path=...` | Paginated directory listing (`limit`, `cursor`) |
+| `GET /v1/sessions/{id}/archive?path=...` | Download tar archive (max 512 MiB) |
+| `PUT /v1/sessions/{id}/archive?path=...` | Extract tar archive into sandbox path (max 512 MiB) |
+| `POST /v1/sessions/{id}/snapshots` | Capture immutable snapshot (`snp_...`) |
+| `GET /v1/sessions/{id}/snapshots` | List snapshots created from session |
+| `GET /v1/snapshots/{snapshotID}` | Inspect snapshot metadata |
+| `DELETE /v1/snapshots/{snapshotID}` | Delete snapshot (`409` if children/forks exist) |
+| `POST /v1/sessions/{id}/fork` | Fork child session from `snapshot_id` or snapshot+fork |
+| `GET /v1/sessions/{id}/events` | Paginated session audit events |
+| `GET /v1/sessions/{id}/egress-log` | Paginated allow/deny egress proxy decisions |
+| `GET /v1/sessions/{id}/replay` | Paginated timestamped exec boundaries + output chunks |
+| `GET /v1/sessions/{id}/metrics` | Point-in-time cgroup CPU, memory, PID, I/O, OOM stats |
+| `GET /v1/sessions/{id}/metrics/stream` | Live SSE resource metrics stream |
+
+## End-to-End `curl` Walkthrough
+
+```bash
+export CELLBOX_URL=http://127.0.0.1:8080
+export CELLBOX_KEY="cbx_..."
+
+# 1. Create a session with strict no-network policy
+session_id=$(curl -fsS -X POST "$CELLBOX_URL/v1/sessions" \
+  -H "Authorization: Bearer $CELLBOX_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"image":"python:3.12-slim","network_policy":{"mode":"none"}}' | jq -r .id)
+
+# 2. Upload a script, list /tmp, and run it via SSE
+printf 'print(42)\n' > app.py
+curl -fsS -X PUT "$CELLBOX_URL/v1/sessions/$session_id/files?path=%2Ftmp%2Fapp.py" \
+  -H "Authorization: Bearer $CELLBOX_KEY" \
+  -H 'Content-Type: application/octet-stream' \
+  --data-binary @app.py
+
+exec_id=$(curl -fsS -X POST "$CELLBOX_URL/v1/sessions/$session_id/execs" \
+  -H "Authorization: Bearer $CELLBOX_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"argv":["python","/tmp/app.py"]}' | jq -r .id)
+
+curl -N "$CELLBOX_URL/v1/sessions/$session_id/execs/$exec_id/stream" \
+  -H "Authorization: Bearer $CELLBOX_KEY"
+
+# 3. Clean up
+curl -fsS -X DELETE "$CELLBOX_URL/v1/sessions/$session_id" \
+  -H "Authorization: Bearer $CELLBOX_KEY"
+```

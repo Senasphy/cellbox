@@ -1,0 +1,61 @@
+---
+title: "Benchmarks & Release Status"
+description: "Measured local native and Docker latency numbers, concurrent load-test results, test suites, and current v1.0 release gaps."
+order: 2
+---
+
+# Benchmarks & Release Status
+
+CellBox publishes real measured host results (`docs/BENCHMARKS.md`) and transparently tracks remaining v1.0 release gaps (`docs/DEFERRED.md`).
+
+## Measured Session Creation Latency
+
+Measured locally on **2026-11-23** (`alpine:latest`, 10 sequential samples per path, Linux `7.3.4-arch1-2`, 8 CPUs, 15,828 MiB RAM, no cgroup CPU/RAM cap). The warm path was verified via `cellbox_session_create_seconds_count{source="warm"}` after every sample:
+
+| Backend & Revision | Path | p50 | p95 | Target |
+| --- | --- | ---: | ---: | --- |
+| Docker (before native cache change) | Cold | 813 ms | 832 ms | under 400 ms |
+| Docker (before native cache change) | Warm | 374 ms | 487 ms | under 60 ms |
+| Native (before native cache change) | Cold | 2,844 ms | 3,823 ms | under 400 ms |
+| Native (before native cache change) | Warm | 1,464 ms | 1,746 ms | under 60 ms |
+| **Native (with resolved-image cache)** | **Cold** | **42 ms** | 1,955 ms | **under 400 ms** |
+| **Native (with resolved-image cache)** | **Warm** | **8.6 ms** | **9.9 ms** | **under 60 ms** |
+
+Memoizing up to 128 resolved image references per service process eliminates repeated registry manifest lookups while keeping the content-addressed rootfs. The first uncached sample accounts for the cold `p95`.
+
+## Concurrent Load Check (`test/load`)
+
+Measured on **2026-11-25** against the native backend (`pool.enabled: false`, `alpine:latest`, concurrency `4`, `15s` duration inside a delegated systemd user scope):
+
+- **Completed cycles:** `272` (`errors: 0`, `leaked_cgroups: 0`)
+- **Create latency:** p50 `95.35 ms`, p95 `151.09 ms`, p99 `188.74 ms`
+- **Exec latency:** p50 `86.81 ms`, p95 `146.37 ms`, p99 `182.19 ms`
+- **Server process footprint:** RSS `26,492 KiB` → `37,368 KiB`, open FDs `84` → `86`
+
+## Running Verification Suites
+
+```bash
+# Unit & race tests
+make test
+
+# Native security attack-matrix, chaos/cleanup, and live terminal reconnect tests
+make test-security
+
+# Five Go fuzz targets (5s each)
+make fuzz
+
+# Docker runtime contract & egress integration (requires running Docker daemon)
+make test-integration
+
+# Cold vs warm pool benchmark (port 8081 cold, port 8080 warm)
+CELLBOX_COLD_KEY=... CELLBOX_WARM_KEY=... make bench
+```
+
+## Current Pre-v1.0 Gaps (`docs/DEFERRED.md`)
+
+CellBox has not yet tagged a stable `v1.0` release. Known open items:
+
+- **1-hour soak & external security review:** The 15s load check passes cleanly; a full 1-hour soak test and independent external security audit have not been run.
+- **Admission wait queue:** `capacity.queue_wait_s` currently sets the `Retry-After` header on immediate `503 capacity_exceeded` responses rather than holding requests in a blocking FIFO queue.
+- **Static analyzers & release signing:** `staticcheck`, `golangci-lint`, `govulncheck`, `goreleaser`, `syft`, and `cosign` release pipelines have not been executed locally.
+- **Multi-node cluster mode (Phase 8):** Deferred until single-node v1.0 gates are closed.

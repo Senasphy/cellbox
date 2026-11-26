@@ -1,0 +1,84 @@
+---
+title: "Operations & Deployment"
+description: "Systemd units with Delegate=yes, user-mode laptop services, TLS/remote binds, and troubleshooting cellbox doctor failures."
+icon: "server"
+order: 9
+---
+
+# Operations & Deployment
+
+CellBox is designed to run directly on a Linux host or VM so the native backend has clean access to cgroup v2 delegation and Linux namespaces.
+
+## Production System Service (`systemd`)
+
+Install the binary at `/usr/bin/cellbox`, create a dedicated unprivileged `cellbox` system user, and deploy `deploy/cellbox.service`:
+
+```bash
+sudo install -Dm755 ./bin/cellbox /usr/bin/cellbox
+sudo useradd --system --create-home --home-dir /var/lib/cellbox --shell /usr/bin/nologin cellbox
+sudo install -Dm644 deploy/cellbox.service /etc/systemd/system/cellbox.service
+sudo systemctl daemon-reload
+
+# Verify prerequisites as the cellbox service account inside a delegated scope
+sudo systemd-run --scope --uid=cellbox --property=Delegate=yes /usr/bin/cellbox doctor
+
+sudo systemctl enable --now cellbox.service
+sudo journalctl -u cellbox.service -f
+```
+
+`deploy/cellbox.service` configures:
+
+- `User=cellbox`, `Group=cellbox`, `StateDirectory=cellbox`, `StateDirectoryMode=0700`
+- `Delegate=yes` (delegates cgroup v2 `cpu`, `memory`, `pids` subtrees)
+- `ProtectSystem=strict`, `ReadWritePaths=/var/lib/cellbox`, `PrivateTmp=yes`, `NoNewPrivileges=yes`
+- `RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6`
+
+Capture the **one-time bootstrap admin key** from `journalctl -u cellbox.service` on first startup.
+
+## User Service for Development / Laptops
+
+For unprivileged user-level execution (`deploy/cellbox-user.service`):
+
+```bash
+install -Dm755 ./bin/cellbox ~/.local/bin/cellbox
+mkdir -p ~/.config/systemd/user
+install -m644 deploy/cellbox-user.service ~/.config/systemd/user/cellbox.service
+systemctl --user daemon-reload
+systemd-run --user --scope --property=Delegate=yes ~/.local/bin/cellbox doctor
+systemctl --user enable --now cellbox.service
+systemctl --user status cellbox.service
+```
+
+To keep the user service alive after logout, enable lingering (`loginctl enable-linger <user>`).
+
+## Remote Binds & TLS
+
+By default `cellbox serve` binds to `127.0.0.1:8080`. Binding to a non-loopback address requires **`--allow-remote`**:
+
+```yaml
+# /etc/cellbox/cellbox.yaml
+listen: "0.0.0.0:8443"
+tls:
+  cert: "/etc/cellbox/tls/server.crt"
+  key: "/etc/cellbox/tls/server.key"
+```
+
+```bash
+cellbox serve --config /etc/cellbox/cellbox.yaml --allow-remote
+```
+
+If terminating TLS behind a reverse proxy (Caddy/Nginx/Envoy), ensure the proxy forwards `Upgrade` / `Connection` headers for WebSocket `/v1/sessions/{id}/terminal` and disables response buffering for SSE streams (`/stream`).
+
+## Troubleshooting `cellbox doctor`
+
+| Symptom | Cause & Fix |
+| --- | --- |
+| `cgroup delegation: unusable` | CellBox is not in a dedicated delegated cgroup. Run via `systemd-run --user --scope -p Delegate=yes ...` or the provided systemd unit. |
+| `cgroup v2 controllers: missing cpu, memory, pids` | Enable controller delegation in the user slice (`Delegate=cpu memory pids`) or use system service `deploy/cellbox.service`. |
+| `AppArmor restricts unprivileged user namespaces` | On Ubuntu 24.04+, `kernel.apparmor_restrict_unprivileged_userns=1` blocks unprivileged userns. Add a local AppArmor profile for `cellbox` (recommended) or adjust the sysctl if policy permits. |
+| `rootless overlayfs userxattr: unavailable` | Underlying filesystem or kernel (`< 5.11`) lacks `userxattr` overlay support. Move `data_dir` to ext4/xfs/btrfs on kernel `>= 5.14`. |
+| `private devpts newinstance: unavailable` | Kernel or container profile blocks `devpts` mounts in user namespaces. Run directly on a Linux host or VM rather than inside a restricted container. |
+
+<Callout type="warn" title="Running CellBox Inside Docker">
+Nested user namespaces and cgroup delegation inside Docker are commonly blocked by default AppArmor/seccomp profiles. Weakening those container profiles undermines isolation. Deploy directly on a Linux host or dedicated VM instead.
+</Callout>

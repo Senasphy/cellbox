@@ -1,0 +1,58 @@
+---
+title: "HTTP API Overview"
+description: "Conventions, authentication, cursor pagination, idempotency, and RFC 9457 problem+json error codes for the CellBox /v1 API."
+icon: "webhook"
+order: 8
+---
+
+# HTTP API Overview
+
+CellBox exposes a REST, SSE, and WebSocket API defined in `api/openapi.yaml`. You can also browse every schema and endpoint interactively in the [OpenAPI Reference](/api-reference).
+
+## Conventions
+
+- **Base path:** `/v1` for control-plane resources (`/healthz`, `/readyz`, and `/metrics` sit at the root).
+- **Encoding:** `application/json` with `snake_case` field names for control payloads; `application/octet-stream` for raw file uploads/downloads.
+- **Authentication:** `Authorization: Bearer <api_key>` on all `/v1/*` routes (or `cellbox_session` + `X-CSRF-Token` cookies for browser dashboard sessions).
+- **Idempotency:** Mutating `POST` endpoints accept `Idempotency-Key` (up to `255` bytes). Successful `2xx` responses are retained per key for **24 hours**; reusing the key with a different request returns `422 idempotency_key_reused`.
+
+## Cursor Pagination
+
+List endpoints (`GET /v1/sessions`, `GET /v1/sessions/{id}/execs`, `GET /v1/sessions/{id}/files/list`, `GET /v1/sessions/{id}/events`, `GET /v1/sessions/{id}/egress-log`, `GET /v1/sessions/{id}/replay`) accept:
+
+- `limit`: integer `1..200` (default `50`)
+- `cursor`: opaque cursor string from the previous response's `next_cursor`
+
+`next_cursor` is included **only** when another page is available. Ordering is deterministic: sessions newest-first, execs oldest-first, and directory entries lexicographically by `path`.
+
+## Error Format (`application/problem+json`)
+
+All API errors follow **RFC 9457** with a stable machine-readable `code` field:
+
+```json
+{
+  "title": "Unprocessable request",
+  "status": 422,
+  "code": "idempotency_key_reused",
+  "detail": "this Idempotency-Key was already used with a different request"
+}
+```
+
+### Common Problem Codes
+
+| Status | Code | Cause |
+| --- | --- | --- |
+| `400` | `request_invalid` / `request_body_invalid` | Malformed JSON or oversized payload |
+| `400` | `idempotency_key_invalid` | `Idempotency-Key` exceeds 255 bytes |
+| `401` | `unauthorized` | Missing, malformed, or revoked bearer key |
+| `403` | `insufficient_scope` | `session`-scoped key attempted an `admin`-only endpoint |
+| `404` | `session_not_found` / `snapshot_not_found` / `key_not_found` | Missing resource or outside key ownership |
+| `409` | `session_not_ready` | Session is not in `ready` state |
+| `409` | `snapshot_in_use` | Snapshot has dependent child snapshots or live forks |
+| `413` | `request_too_large` | Request body exceeded endpoint size limit |
+| `422` | `idempotency_key_reused` | Same `Idempotency-Key` sent with different method/path/query/body |
+| `422` | `capability_unsupported` / `snapshot_unsupported` | Operation unsupported on current backend (e.g. `signal` or `disk_mb` on Docker) |
+| `422` | `path_outside_sandbox` / `file_mode_invalid` | Invalid path traversal or invalid octal file mode |
+| `429` | `rate_limited` | Session key exceeded 20 req/s rate quota |
+| `503` | `capacity_exceeded` | Host/cgroup CPU, memory, PID, or disk admission limit reached (check `Retry-After`) |
+| `503` | `runtime_unavailable` / `not_ready` | Backend or SQLite store unavailable |
