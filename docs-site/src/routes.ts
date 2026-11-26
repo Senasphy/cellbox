@@ -108,6 +108,89 @@ const CELLBOX_API_REF_STYLES = `
 .fl-api-nav-links a:hover {
   color: var(--fl-fg);
 }
+html, body {
+  max-width: 100%;
+  overflow-x: clip;
+}
+.fl-api-shell,
+.fl-api-layout,
+.fl-api-content,
+.fl-api-hero,
+.fl-api-hero-copy,
+.fl-api-operations,
+.fl-api-operation,
+.fl-api-operation-grid,
+.fl-api-operation-details,
+.fl-api-section,
+.fl-api-code-panel,
+.fl-api-schema {
+  min-width: 0;
+  max-width: 100%;
+}
+.fl-api-table-wrap {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.fl-api-operation h2,
+.fl-api-hero h1 {
+  overflow-wrap: anywhere;
+}
+@media (max-width: 980px) {
+  .fl-api-operation-grid {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+}
+@media (max-width: 720px) {
+  .fl-api-topbar {
+    flex-wrap: wrap;
+    gap: 8px 12px !important;
+    padding: 10px 14px !important;
+  }
+  .fl-api-brand > span:last-child {
+    display: inline !important;
+    font-size: 13px;
+    white-space: nowrap;
+  }
+  .fl-api-topbar-actions {
+    flex-wrap: wrap;
+    gap: 6px !important;
+  }
+  .fl-api-nav-links {
+    gap: 10px;
+    margin-right: 4px;
+    font-size: 11px;
+  }
+  .fl-api-sidebar {
+    max-height: 220px !important;
+    padding: 14px !important;
+  }
+  .fl-api-hero {
+    padding: 24px 16px !important;
+  }
+  .fl-api-summary div {
+    min-width: 0 !important;
+    flex: 1 1 92px;
+    padding: 10px 12px !important;
+  }
+  .fl-api-operations {
+    padding: 0 16px 56px !important;
+  }
+  .fl-api-operation {
+    padding: 28px 0 !important;
+  }
+  .fl-api-code-panel pre,
+  .fl-api-schema pre {
+    padding: 12px !important;
+    font-size: 11px !important;
+  }
+}
+@media (max-width: 480px) {
+  .fl-api-nav-links a[href="/docs/api"] {
+    display: none;
+  }
+}
 `;
 
 const CELLBOX_API_THEME_SYNC = `<script>(function(){try{var t=localStorage.getItem("theme");if(t==="light"||t==="dark"){document.documentElement.dataset.theme=t;}else{document.documentElement.dataset.theme="dark";}}catch(e){document.documentElement.dataset.theme="dark";}})();</script>`;
