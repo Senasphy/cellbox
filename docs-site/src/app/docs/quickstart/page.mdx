@@ -1,0 +1,177 @@
+---
+title: "Quickstart"
+description: "Install CellBox, verify host prerequisites with cellbox doctor, start the daemon, and run your first isolated session."
+icon: "rocket"
+order: 2
+---
+
+# Quickstart
+
+Get a single-node CellBox instance running on Linux in under five minutes.
+
+## Host Prerequisites
+
+For the default **`native`** backend:
+
+- **OS:** Linux only (`amd64` or `arm64`). macOS and Windows users must run CellBox inside a Linux VM.
+- **Kernel:** Linux **5.14** minimum (`overlayfs` `userxattr` needs 5.11, `CLONE_INTO_CGROUP` needs 5.7, `cgroup.kill` needs 5.14). Linux **6.1+** is recommended.
+- **Cgroups:** Unified **cgroup v2** hierarchy with delegated `cpu`, `memory`, and `pids` controllers.
+- **Unprivileged User Namespaces:** Enabled (`user.max_user_namespaces > 0`). On Ubuntu 24.04+, check whether AppArmor restricts unprivileged user namespaces.
+- **Go (source builds only):** Go **1.23+**.
+
+## 1. Install or Build CellBox
+
+<Tabs items={["Build from Source", "Release Installer (Linux)", "Docker Demo"]}>
+  <Tab value="Build from Source">
+```bash
+git clone https://github.com/Senasphy/cellbox.git
+cd cellbox
+make build
+./bin/cellbox version
+```
+This builds a static `CGO_ENABLED=0` binary at `./bin/cellbox` with the web dashboard embedded.
+  </Tab>
+  <Tab value="Release Installer (Linux)">
+The release installer downloads the `amd64` or `arm64` archive, verifies SHA-256 against `cellbox_checksums.txt`, and installs to `~/.local/bin` without `sudo`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Senasphy/cellbox/main/install.sh | bash
+
+# Or pin a specific release version:
+curl -fsSL https://raw.githubusercontent.com/Senasphy/cellbox/main/install.sh | bash -s -- 1.2.3
+```
+
+Set `CELLBOX_INSTALL_DIR` to customize the target binary path, or `GH_TOKEN` if installing from a private mirror.
+  </Tab>
+  <Tab value="Docker Demo">
+For local evaluation on hosts with Docker Engine (uses the **`docker`** backend, not the rootless native backend):
+
+```bash
+docker compose -f deploy/compose.demo.yaml up --build
+```
+
+<Callout type="warn" title="Demo Boundary Warning">
+The Compose demo mounts `/var/run/docker.sock` into the CellBox container. Anyone who can access that socket can instruct Docker to launch privileged containers on the host. Use it only for local loopback testing.
+</Callout>
+  </Tab>
+</Tabs>
+
+## 2. Verify Host Prerequisites (`cellbox doctor`)
+
+Run `cellbox doctor` inside the **same delegated cgroup scope** that will run `cellbox serve`:
+
+```bash
+systemd-run --user --scope -p Delegate=yes ./bin/cellbox doctor
+```
+
+Expected healthy output:
+
+```txt
+platform: linux/amd64
+kernel version: 6.x.y
+cgroup v2 controllers: cpu, memory, pids available
+cgroup delegation: usable
+user namespaces: enabled
+rootless overlayfs userxattr: works
+seccomp: available
+private devpts newinstance: works
+free disk space: ... bytes
+/dev/kvm: absent (informational; no fix required)
+```
+
+If any check reports `(fix: ...)`, see the [Operations Troubleshooting Matrix](/docs/operations#troubleshooting-cellbox-doctor) before starting the service.
+
+## 3. Start the Service
+
+Start `cellbox serve` inside a delegated cgroup scope (binds to `127.0.0.1:8080` by default):
+
+```bash
+systemd-run --user --scope -p Delegate=yes ./bin/cellbox serve
+```
+
+On the very first startup, CellBox initializes `~/.local/share/cellbox/cellbox.db` (SQLite WAL mode) and prints a **one-time bootstrap administrator key** to stdout:
+
+```txt
+admin key (shown once): cbx_01J...
+```
+
+Save that key immediately. CellBox only stores a SHA-256 hash of the secret and cannot retrieve it again.
+
+## 4. Create a Session-Scoped API Key
+
+While the bootstrap key has `admin` scope (unmetered), best practice for agents is to mint a **`session`**-scoped key (subject to active-session, memory, and rate quotas):
+
+```bash
+export CELLBOX_URL="http://127.0.0.1:8080"
+export CELLBOX_ADMIN_KEY="cbx_..."
+
+created=$(curl -fsS -X POST "$CELLBOX_URL/v1/keys" \
+  -H "Authorization: Bearer $CELLBOX_ADMIN_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"agent-worker","scope":"session"}')
+
+export CELLBOX_KEY=$(printf '%s' "$created" | jq -r .secret)
+```
+
+You can also create admin keys offline via `./bin/cellbox keys create my-admin`.
+
+## 5. Run a Disposable Sandbox Command
+
+Use `cellbox run` to create a session with `network_policy.mode: none`, stream command output, preserve the remote exit code, and automatically destroy the session afterward:
+
+```bash
+./bin/cellbox run --image alpine:latest -- sh -c 'id && uname -a'
+```
+
+Or drive the session lifecycle directly with `curl` or any SDK:
+
+<Tabs items={["curl", "Python", "TypeScript"]}>
+  <Tab value="curl">
+```bash
+# 1. Create isolated session
+session_id=$(curl -fsS -X POST "$CELLBOX_URL/v1/sessions" \
+  -H "Authorization: Bearer $CELLBOX_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"image":"python:3.12-slim","network_policy":{"mode":"none"}}' | jq -r .id)
+
+# 2. Execute command synchronously (?wait=true)
+curl -fsS -X POST "$CELLBOX_URL/v1/sessions/$session_id/execs?wait=true" \
+  -H "Authorization: Bearer $CELLBOX_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"argv":["python","-c","print(6 * 7)"]}' | jq .
+
+# 3. Destroy session
+curl -fsS -X DELETE "$CELLBOX_URL/v1/sessions/$session_id" \
+  -H "Authorization: Bearer $CELLBOX_KEY"
+```
+  </Tab>
+  <Tab value="Python">
+```python
+from cellbox import Client
+
+with Client("http://127.0.0.1:8080", api_key="cbx_...") as client:
+    with client.sessions.create("python:3.12-slim", memory_mb=512) as box:
+        box.write_file("/work/main.py", "print(6 * 7)\n")
+        result = box.exec(["python", "/work/main.py"])
+        print(result.stdout, result.exit_code)
+```
+  </Tab>
+  <Tab value="TypeScript">
+```ts
+import { Client } from "@cellbox/sdk";
+
+const client = new Client("http://127.0.0.1:8080", process.env.CELLBOX_KEY!);
+const box = await client.sessions.create("alpine:latest", { memory_mb: 512 });
+
+await box.using(async (session) => {
+  await session.writeFile("/tmp/hello.txt", "hello from cellbox\n");
+  const res = await session.exec(["cat", "/tmp/hello.txt"]);
+  console.log(res.stdout);
+});
+```
+  </Tab>
+</Tabs>
+
+## 6. Open the Embedded Web Dashboard
+
+Visit `http://127.0.0.1:8080/` in your browser and sign in with your API key (`POST /v1/auth/session`). The UI gives you live session capacity gauges, an `xterm.js` WebGL terminal, a file browser, `uPlot` resource graphs, an egress decision log, snapshot trees, and session replay.

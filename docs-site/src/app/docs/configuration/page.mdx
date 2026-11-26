@@ -1,0 +1,153 @@
+---
+title: "Configuration Reference"
+description: "Complete cellbox.yaml schema, precedence order, validation bounds, and CELLBOX_* environment variable overrides."
+icon: "settings"
+order: 4
+---
+
+# Configuration Reference
+
+CellBox loads configuration in strict YAML mode (`KnownFields(true)`—unknown keys fail fast on startup) with predictable overrides.
+
+## Precedence Order (Lowest to Highest)
+
+1. Built-in defaults (`config.Defaults()`)
+2. Auto-discovered config file (if `--config` and `CELLBOX_CONFIG` are unset):
+   - `~/.config/cellbox/cellbox.yaml`
+   - `/etc/cellbox/cellbox.yaml`
+3. Explicit config file (`--config <path>` or `CELLBOX_CONFIG=<path>`)
+4. `CELLBOX_*` environment variables
+5. `cellbox serve` CLI flags (`--listen`, `--data-dir`, `--backend`, `--log-level`, `--log-format`)
+
+## Annotated `cellbox.yaml`
+
+Below is the complete configuration file showing all built-in defaults from `internal/config/config.go`:
+
+```yaml
+listen: "127.0.0.1:8080"
+data_dir: "~/.local/share/cellbox"
+backend: "native" # "native" or "docker"
+docker_socket: "/var/run/docker.sock"
+
+limits:
+  default:
+    cpu_millicores: 1000   # 1 vCPU
+    memory_mb: 512
+    pids: 256
+    disk_mb: 1024
+    idle_ttl_s: 600        # 10 minutes
+    ttl_s: 3600            # 1 hour
+  max:
+    cpu_millicores: 4000   # 4 vCPUs
+    memory_mb: 4096
+    pids: 2048
+    disk_mb: 10240
+    idle_ttl_s: 0
+    ttl_s: 86400           # Hard ceiling: 86400s (24h)
+
+capacity:
+  memory_overcommit: 1.0
+  cpu_overcommit: 4.0
+  queue_wait_s: 5          # Returned as Retry-After on 503 capacity_exceeded
+  min_free_disk_mb: 1024
+
+pool:
+  enabled: true
+  per_image: 2
+  memory_budget_mb: 1024
+  images:
+    - "python:3.12-slim"
+    - "node:22-slim"
+    - "golang:1.23"
+    - "debian:bookworm-slim"
+
+egress:
+  allow_internet_mode: false
+  extra_blocked_cidrs: []
+  bandwidth_bytes_per_sec: 0 # 0 = unlimited
+
+retention:
+  output_days: 7
+  audit_days: 30
+
+terminal:
+  grace_s: 30              # 1..3600 seconds
+
+log:
+  level: "info"            # debug | info | warn | error
+  format: "json"           # json | text
+
+tls:
+  cert: ""
+  key: ""
+```
+
+## Field-by-Field Reference & Validation Rules
+
+### Core Service & TLS
+
+| Key | Default | Validation / Notes |
+| --- | --- | --- |
+| `listen` | `127.0.0.1:8080` | Must be `host:port` with port `1..65535`. Non-loopback addresses require `--allow-remote` on `cellbox serve`. |
+| `data_dir` | `~/.local/share/cellbox` | Must be non-empty (`~/` expands via `$HOME`). Stores `cellbox.db`, image cache, overlays, snapshots, and logs. |
+| `backend` | `native` | Must be `native` or `docker`. |
+| `docker_socket` | `/var/run/docker.sock` | Required non-empty when `backend: docker`. |
+| `log.level` | `info` | `debug`, `info`, `warn`, or `error`. |
+| `log.format` | `json` | `json` or `text`. |
+| `tls.cert` / `tls.key` | `""` | Must be configured together when enabling TLS. |
+
+### Resource Limits (`limits.default` & `limits.max`)
+
+- All `limits.default.*` fields must be strictly positive (`> 0`).
+- Every `limits.max.*` field (`cpu_millicores`, `memory_mb`, `pids`, `disk_mb`, `ttl_s`) must be `>=` its corresponding `limits.default` value.
+- `limits.max.ttl_s` cannot exceed **`86400`** (24 hours).
+
+### Capacity, Warm Pool & Retention
+
+| Key | Default | Validation / Notes |
+| --- | --- | --- |
+| `capacity.memory_overcommit` | `1` | Must be `> 0`. Multiplies detected host/cgroup RAM for admission checks. |
+| `capacity.cpu_overcommit` | `4` | Must be `> 0`. Multiplies detected CPU millicores for admission checks. |
+| `capacity.queue_wait_s` | `5` | Must be `>= 0`. Emitted in `Retry-After` on `503 capacity_exceeded`. |
+| `capacity.min_free_disk_mb` | `1024` | Must be `> 0`. Rejects new sessions when host filesystem free space drops below threshold. |
+| `pool.enabled` | `true` | Primes `pool.images` at startup. |
+| `pool.per_image` | `2` | Must be `>= 0`. |
+| `pool.memory_budget_mb` | `1024` | Must be `>= 0`. Each warm sandbox reserves `32` MB while idle. |
+| `pool.images` | 4 curated images | 1–512 chars each, no whitespace, no duplicates. |
+| `retention.output_days` | `7` | Must be `>= 0`. Swept periodically by background retention worker. |
+| `retention.audit_days` | `30` | Must be `>= 0`. |
+
+### Egress & Terminal
+
+| Key | Default | Validation / Notes |
+| --- | --- | --- |
+| `egress.allow_internet_mode` | `false` | When `false`, sessions requesting `network_policy.mode: "internet"` are rejected. |
+| `egress.extra_blocked_cidrs` | `[]` | List of valid IPv4/IPv6 CIDR strings appended to the built-in SSRF blocklist. |
+| `egress.bandwidth_bytes_per_sec` | `0` | Must be `>= 0`. `0` means unlimited; positive values enforce a shared per-session token bucket across HTTP and CONNECT tunnels. |
+| `terminal.grace_s` | `30` | Must be between `1` and `3600` seconds. Controls how long a detached WebSocket PTY stays alive. |
+
+## Environment Variable Reference
+
+### Server Environment Variables (`cellbox serve`, `cellbox keys`)
+
+| Variable | Overrides |
+| --- | --- |
+| `CELLBOX_CONFIG` | Config YAML path |
+| `CELLBOX_LISTEN` | `listen` |
+| `CELLBOX_DATA_DIR` | `data_dir` |
+| `CELLBOX_BACKEND` | `backend` |
+| `CELLBOX_DOCKER_SOCKET` | `docker_socket` |
+| `CELLBOX_LOG_LEVEL` | `log.level` |
+| `CELLBOX_LOG_FORMAT` | `log.format` |
+| `CELLBOX_TLS_CERT` | `tls.cert` |
+| `CELLBOX_TLS_KEY` | `tls.key` |
+| `CELLBOX_TERMINAL_GRACE_S` | `terminal.grace_s` |
+| `CELLBOX_EGRESS_BANDWIDTH_BPS` | `egress.bandwidth_bytes_per_sec` |
+
+### Client, CLI & MCP Environment Variables
+
+| Variable | Purpose |
+| --- | --- |
+| `CELLBOX_URL` | Base URL for `cellbox run`, `shell`, `sessions`, `snapshot`, `fork`, `images`, and `mcp` (default `http://127.0.0.1:8080`) |
+| `CELLBOX_KEY` | Bearer API key (`cbx_...`) used by CLI client subcommands and `cellbox mcp` |
+| `CELLBOX_COLD_KEY` / `CELLBOX_WARM_KEY` | Admin keys used by `scripts/benchmark-create.py` (`make bench`) |

@@ -1,0 +1,93 @@
+---
+title: "Introduction"
+description: "Architecture, isolation model, and backend selection for CellBox—self-hostable disposable Linux sandboxes for AI agents."
+icon: "book"
+order: 1
+---
+
+# Introduction
+
+**CellBox** is a self-hostable single-binary Go service that provisions isolated, disposable Linux sandboxes for AI agents, evaluation harnesses, and code-execution workflows.
+
+A client (an agent, SDK, CLI, or MCP host) creates a **session** with an OCI image, resource limits, and a network policy. Inside that session, the client runs commands with resumable output streaming, reads and writes files, attaches interactive PTY terminals, captures immutable filesystem snapshots, and forks parallel child sessions.
+
+<Callout type="info" title="Agent Loop Boundary">
+The language model, prompt orchestration, and model API keys stay **outside** CellBox. CellBox never holds LLM credentials and never calls a model API—it is a pure execution primitive.
+</Callout>
+
+## Architecture
+
+```txt
+Clients: Python SDK · TypeScript SDK · Go Client · CLI · MCP · Dashboard · curl
+   │
+   │  REST (/v1/*) · SSE (/stream) · WebSocket (/terminal)
+   ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│ cellbox serve (single Go binary, CGO_ENABLED=0)                         │
+│                                                                         │
+│  API Layer       Bearer auth, key quotas, rate limits, idempotency      │
+│  Session Manager One actor goroutine per session, persisted state       │
+│  Warm Pool       Pre-warmed per-image sandboxes (32 MB / 100m / 32 PID) │
+│  Runtime Driver  native (Linux namespaces/cgroups) | docker (bootstrap) │
+│  Egress Proxy    Per-session host HTTP/CONNECT proxy + SSRF blocklist   │
+│  Store & Logs    SQLite (WAL mode) + append-only replay & output logs   │
+│  Dashboard       Embedded Next.js static UI served at /                 │
+└─────────────────────────────────────────────────────────────────────────┘
+   │
+   │  clone(CLONE_INTO_CGROUP) + PR_SET_PDEATHSIG + SOCK_SEQPACKET
+   ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│ Sandbox: cellbox-init (PID 1) + workload processes                      │
+│  user · mount · PID · net · IPC · UTS · cgroup v2 · overlayfs · seccomp │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+Every native sandbox is launched by re-executing the `cellbox` binary itself inside new Linux namespaces and directly inside its own cgroup (`CLONE_INTO_CGROUP`). The parent supervisor communicates with `cellbox-init` over a private `SOCK_SEQPACKET` Unix socket using `SCM_RIGHTS` descriptor passing. If the service exits, `PR_SET_PDEATHSIG` tears down child sandboxes, and startup reconciliation cleans up any orphaned cgroups and marks leftover sessions as `lost`.
+
+## Choosing a Backend: `native` vs `docker`
+
+CellBox provides two runtime backends configured via `backend: native` (default) or `backend: docker`:
+
+| Capability | `native` (Default) | `docker` (Bootstrap / Compatibility) |
+| --- | --- | --- |
+| **Daemon Dependency** | None (rootless Linux syscalls) | Requires reachable Docker Engine socket |
+| **Root Requirement** | Unprivileged user (`user` namespaces) | Daemon-managed (Docker socket = host root) |
+| **Filesystem Isolation** | Rootless `overlayfs` (`userxattr`) + `pivot_root` | Docker container rootfs |
+| **File API Mediation** | `cellbox-init` + `openat2` confinement | Docker Engine archive/exec APIs |
+| **CPU / Memory / PIDs** | Delegated cgroup v2 (`cpu`, `memory`, `pids`) | Daemon-managed container cgroups |
+| **Writable Disk Cap** | Soft cap (2s overlay scan watcher) | Unsupported (`disk_limits: false`) |
+| **Network Egress Policy** | `none`, `allowlist` (proxy), `internet` (opt-in) | `none` only (`NetworkMode=none`) |
+| **Interactive PTY (`/terminal`)** | Yes (grace period + 256 KiB scrollback) | Yes (grace period + 256 KiB scrollback) |
+| **TTY Exec (`tty: true`)** | Yes + asciicast v2 export | Yes + asciicast v2 export |
+| **Signal Active Exec** | Yes (`POST .../execs/{id}/signal`) | Unsupported (`capability_unsupported`) |
+| **Snapshots & Forking** | `cgroup.freeze` + overlay layer copy (auto-flatten at depth 7) | Docker image commits |
+| **Image Management (`GET/DELETE /v1/images`)** | Pull supported; list/remove unimplemented | Full list, pull, and remove |
+
+<Callout type="warn" title="Security Boundary">
+The native backend isolates workloads using Linux user, mount, PID, network, IPC, UTS, and cgroup namespaces, cgroup v2 resource limits, a seccomp filter, and capability dropping. It shares the host kernel, so a kernel vulnerability can allow escape. For hostile multi-tenant workloads, run CellBox inside a dedicated virtual machine. Never expose the service to untrusted networks without TLS and the quotas and egress policy described in this documentation.
+</Callout>
+
+## Next Steps
+
+<Cards>
+  <Card
+    title="Quickstart"
+    description="Build CellBox, run cellbox doctor, start the server, and execute your first disposable sandbox."
+    href="/docs/quickstart"
+  />
+  <Card
+    title="Configuration Reference"
+    description="Every YAML key, CELLBOX_* environment override, limit bound, and warm pool setting."
+    href="/docs/configuration"
+  />
+  <Card
+    title="SDKs & MCP Server"
+    description="Connect Python, TypeScript, Go, OpenAI/Anthropic tool callers, or MCP clients."
+    href="/docs/sdks"
+  />
+  <Card
+    title="OpenAPI Reference"
+    description="Browse every /v1 endpoint, request schema, and RFC 9457 error payload interactively."
+    href="/api-reference"
+  />
+</Cards>
