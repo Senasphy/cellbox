@@ -1,0 +1,372 @@
+@import "@fontsource-variable/geist/wght.css";
+@import "@fontsource-variable/geist-mono/wght.css";
+@import "tailwindcss";
+@import "@farming-labs/theme/darksharp/css";
+
+/* ─── Typography tokens (override shared-framework.css defaults) ────────────── */
+:root,
+:host,
+html,
+body,
+#farm-docs-root,
+#nd-docs-layout {
+  --font-sans: "Geist Variable", ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-mono: "Geist Mono Variable", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --default-font-family: var(--font-sans);
+  --default-mono-font-family: var(--font-mono);
+  --fd-font-sans: var(--font-sans);
+  --fd-font-mono: var(--font-mono);
+}
+
+html,
+body,
+#farm-docs-root,
+#nd-docs-layout {
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+code,
+pre,
+kbd,
+samp,
+.font-mono {
+  font-family: var(--font-mono) !important;
+}
+
+/* ─── Light Mode Palette (clean technical paper) ──────────────────────────── */
+:root,
+html.light {
+  --color-fd-background: #ffffff;
+  --color-fd-foreground: #09090b;
+  --color-fd-card: #fafafa;
+  --color-fd-card-foreground: #09090b;
+  --color-fd-popover: #ffffff;
+  --color-fd-popover-foreground: #09090b;
+  --color-fd-primary: #18181b;
+  --color-fd-primary-foreground: #fafafa;
+  --color-fd-secondary: #f4f4f5;
+  --color-fd-secondary-foreground: #18181b;
+  --color-fd-muted: #f4f4f5;
+  --color-fd-muted-foreground: #52525b;
+  --color-fd-accent: #f4f4f5;
+  --color-fd-accent-foreground: #09090b;
+  --color-fd-border: #e4e4e7;
+  --color-fd-ring: #18181b;
+  --color-fd-info: #2563eb;
+  --color-fd-warning: #d97706;
+  --color-fd-error: #dc2626;
+  --color-fd-success: #16a34a;
+}
+
+/* ─── Dark Mode Palette (pure black + sharp graphite) ─────────────────────── */
+html.dark,
+.dark {
+  --color-fd-background: #000000;
+  --color-fd-foreground: #fafafa;
+  --color-fd-card: #050507;
+  --color-fd-card-foreground: #fafafa;
+  --color-fd-popover: #09090b;
+  --color-fd-popover-foreground: #fafafa;
+  --color-fd-primary: #fafafa;
+  --color-fd-primary-foreground: #09090b;
+  --color-fd-secondary: #111114;
+  --color-fd-secondary-foreground: #fafafa;
+  --color-fd-muted: #111114;
+  --color-fd-muted-foreground: #a1a1aa;
+  --color-fd-accent: #18181b;
+  --color-fd-accent-foreground: #fafafa;
+  --color-fd-border: #222228;
+  --color-fd-ring: #d4d4d8;
+  --color-fd-info: #60a5fa;
+  --color-fd-warning: #fbbf24;
+  --color-fd-error: #f87171;
+  --color-fd-success: #4ade80;
+}
+
+/* ─── Docs Layout Polish (both Light & Dark) ──────────────────────────────── */
+#nd-docs-layout {
+  background-color: var(--color-fd-background);
+  color: var(--color-fd-foreground);
+}
+
+#nd-docs-layout h1,
+#nd-docs-layout h2,
+#nd-docs-layout h3,
+#nd-docs-layout h4 {
+  font-family: var(--font-sans);
+  letter-spacing: -0.025em;
+}
+
+/* Light-mode refinements (darksharp.css only styled .dark) */
+:root:not(.dark) #nd-docs-layout aside.bg-fd-card {
+  background: #fafafa;
+  border-color: #e4e4e7;
+}
+
+:root:not(.dark) #nd-docs-layout aside a[data-active],
+:root:not(.dark) #nd-docs-layout aside button[aria-controls][aria-expanded] {
+  border-radius: 0.2rem !important;
+  padding: 0.4rem 0.5rem;
+  font-size: 0.8125rem;
+}
+
+:root:not(.dark) #nd-docs-layout aside a[data-active="true"] {
+  background: #ececef !important;
+  color: #09090b !important;
+  font-weight: 500;
+}
+
+:root:not(.dark) #nd-docs-layout aside a[data-active]:hover {
+  background: #f4f4f5;
+  color: #09090b;
+}
+
+:root:not(.dark) #nd-docs-layout th {
+  background: #f4f4f5;
+  color: #18181b;
+  font-weight: 600;
+}
+
+:root:not(.dark) #nd-docs-layout td {
+  background: #ffffff;
+  color: #27272a;
+}
+
+:root:not(.dark) #nd-docs-layout th,
+:root:not(.dark) #nd-docs-layout td,
+:root:not(.dark) #nd-docs-layout tr {
+  border-color: #e4e4e7;
+}
+
+:root:not(.dark) #nd-docs-layout code:not(pre code) {
+  background: #f4f4f5;
+  border: 1px solid #e4e4e7;
+  color: #18181b;
+  padding: 0.125rem 0.35rem;
+  font-size: 0.84em;
+}
+
+:root:not(.dark) #nd-docs-layout figure[data-rehype-pretty-code-figure],
+:root:not(.dark) #nd-docs-layout .fd-codeblock,
+:root:not(.dark) #nd-docs-layout pre {
+  background: #fafafa !important;
+  border-color: #e4e4e7 !important;
+  color: #18181b;
+}
+
+:root:not(.dark) #nd-docs-layout .fd-page-action-btn,
+:root:not(.dark) #nd-docs-layout article a[class*="border"] {
+  border-color: #e4e4e7;
+  background: #ffffff;
+}
+
+:root:not(.dark) #nd-docs-layout article a[class*="border"]:hover {
+  background: #fafafa;
+  border-color: #d4d4d8;
+}
+
+/* Dark-mode code block and inline code consistency */
+html.dark #nd-docs-layout figure[data-rehype-pretty-code-figure],
+html.dark #nd-docs-layout .fd-codeblock,
+html.dark #nd-docs-layout pre {
+  background: #070709 !important;
+  border-color: #222228 !important;
+}
+
+/* Prevent double border/background inside Shiki <figure><pre> code blocks */
+#nd-docs-layout figure pre,
+#nd-docs-layout .fd-codeblock figure pre {
+  background: transparent !important;
+  border: 0 !important;
+  margin: 0 !important;
+}
+
+/* Clean sidebar footer theme toggle when it is the only control */
+#nd-sidebar div:has(> [data-theme-toggle]:only-child) {
+  width: fit-content;
+  margin-inline-start: auto;
+  border: 0 !important;
+  background: transparent !important;
+  padding: 0 !important;
+}
+
+#nd-sidebar [data-theme-toggle] {
+  border: 1px solid var(--color-fd-border) !important;
+  border-radius: 0.2rem !important;
+  background: var(--color-fd-background);
+}
+
+html.dark #nd-docs-layout code:not(pre code) {
+  padding: 0.125rem 0.35rem;
+  font-size: 0.84em;
+}
+
+/* Crisp table sizing inside docs */
+#nd-docs-layout table {
+  width: 100%;
+  font-size: 0.875rem;
+}
+
+/* ─── Landing Page Tokens & Grid (Light + Dark) ─────────────────────────── */
+:root,
+html.light {
+  --cb-paper: #ffffff;
+  --cb-header: rgb(255 255 255 / 0.88);
+  --cb-panel: #fafafa;
+  --cb-surface: #f4f4f5;
+  --cb-ink: #09090b;
+  --cb-muted: #52525b;
+  --cb-faint: #71717a;
+  --cb-line: #e4e4e7;
+  --cb-line-strong: #a1a1aa;
+  --cb-grid: rgb(9 9 11 / 0.04);
+  --cb-hover: rgb(9 9 11 / 0.025);
+  --cb-btn-primary-bg: #09090b;
+  --cb-btn-primary-fg: #fafafa;
+  --cb-btn-primary-hover: #27272a;
+  --cb-terminal-bg: #fafafa;
+  --cb-terminal-ink: #18181b;
+  --cb-code-bg: #f4f4f5;
+}
+
+html.dark,
+.dark {
+  --cb-paper: #000000;
+  --cb-header: rgb(0 0 0 / 0.88);
+  --cb-panel: #050507;
+  --cb-surface: #0a0a0d;
+  --cb-ink: #fafafa;
+  --cb-muted: #a1a1aa;
+  --cb-faint: #71717a;
+  --cb-line: rgb(255 255 255 / 0.12);
+  --cb-line-strong: rgb(255 255 255 / 0.28);
+  --cb-grid: rgb(255 255 255 / 0.035);
+  --cb-hover: rgb(255 255 255 / 0.03);
+  --cb-btn-primary-bg: #fafafa;
+  --cb-btn-primary-fg: #09090b;
+  --cb-btn-primary-hover: #e4e4e7;
+  --cb-terminal-bg: #050507;
+  --cb-terminal-ink: #e4e4e7;
+  --cb-code-bg: #0c0c10;
+}
+
+.cb-landing {
+  min-height: 100vh;
+  background: var(--cb-paper);
+  color: var(--cb-ink);
+  font-family: var(--font-sans);
+  position: relative;
+  overflow-x: hidden;
+  transition: background-color 180ms ease, color 180ms ease;
+}
+
+.cb-grid-bg {
+  background-image:
+    linear-gradient(to right, var(--cb-grid) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--cb-grid) 1px, transparent 1px);
+  background-size: 48px 48px;
+}
+
+.cb-frame {
+  max-width: 1180px;
+  margin-inline: auto;
+  border-inline: 1px solid var(--cb-line);
+}
+
+.cb-rule-b {
+  border-bottom: 1px solid var(--cb-line);
+}
+
+.cb-mono {
+  font-family: var(--font-mono);
+}
+
+.cb-corner {
+  position: relative;
+}
+
+.cb-corner::before,
+.cb-corner::after {
+  content: "";
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  border-color: var(--cb-line-strong);
+  pointer-events: none;
+}
+
+.cb-corner::before {
+  top: -1px;
+  left: -1px;
+  border-top: 1px solid;
+  border-left: 1px solid;
+}
+
+.cb-corner::after {
+  right: -1px;
+  bottom: -1px;
+  border-right: 1px solid;
+  border-bottom: 1px solid;
+}
+
+/* ─── CellBox Modular Logo Choreography ─────────────────────────────────── */
+@keyframes cb-cell-wave {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  45% {
+    opacity: 0.28;
+    transform: scale(0.9);
+  }
+}
+
+.cb-logo-cell {
+  transform-box: fill-box;
+  transform-origin: center;
+  transition: opacity 200ms ease, transform 200ms ease;
+}
+
+.cb-logo-core {
+  transform-box: fill-box;
+  transform-origin: center;
+  transition: transform 220ms ease;
+}
+
+.cb-brand-trigger:hover .cb-logo-core,
+.cb-logo-mark:hover .cb-logo-core {
+  transform: scale(0.92);
+}
+
+.cb-brand-trigger:hover .cb-logo-cell,
+.cb-logo-mark:hover .cb-logo-cell {
+  animation: cb-cell-wave 760ms cubic-bezier(0.22, 1, 0.36, 1) 1;
+}
+
+.cb-brand-trigger:hover .cb-cell-1,
+.cb-logo-mark:hover .cb-cell-1 { animation-delay: 0ms; }
+.cb-brand-trigger:hover .cb-cell-2,
+.cb-logo-mark:hover .cb-cell-2 { animation-delay: 55ms; }
+.cb-brand-trigger:hover .cb-cell-3,
+.cb-logo-mark:hover .cb-cell-3 { animation-delay: 110ms; }
+.cb-brand-trigger:hover .cb-cell-4,
+.cb-logo-mark:hover .cb-cell-4 { animation-delay: 165ms; }
+.cb-brand-trigger:hover .cb-cell-5,
+.cb-logo-mark:hover .cb-cell-5 { animation-delay: 220ms; }
+.cb-brand-trigger:hover .cb-cell-6,
+.cb-logo-mark:hover .cb-cell-6 { animation-delay: 275ms; }
+.cb-brand-trigger:hover .cb-cell-7,
+.cb-logo-mark:hover .cb-cell-7 { animation-delay: 330ms; }
+
+@media (prefers-reduced-motion: reduce) {
+  .cb-brand-trigger:hover .cb-logo-cell,
+  .cb-logo-mark:hover .cb-logo-cell {
+    animation: none;
+  }
+  .cb-brand-trigger:hover .cb-logo-core,
+  .cb-logo-mark:hover .cb-logo-core {
+    transform: none;
+  }
+}

@@ -1,0 +1,36 @@
+{
+  "$schema": "https://docs.farming-labs.dev/schema/docs.json",
+  "version": 1,
+  "entry": "docs",
+  "docsPath": "/docs",
+  "docs": {
+    "mode": "framework",
+    "runtime": "farm",
+    "root": "."
+  },
+  "content": {
+    "docsRoot": "src/app/docs"
+  },
+  "site": {
+    "name": "CellBox Documentation"
+  },
+  "metadata": {
+    "description": "Self-hostable service for giving AI agents safe, isolated, disposable Linux sandboxes."
+  },
+  "nav": {
+    "title": "cellbox",
+    "url": "/"
+  },
+  "search": {
+    "provider": "simple",
+    "enabled": true,
+    "maxResults": 15
+  },
+  "llmsTxt": {
+    "enabled": true,
+    "siteTitle": "CellBox Documentation",
+    "siteDescription": "Self-hostable service for giving AI agents safe, isolated, disposable Linux sandboxes."
+  },
+  "sitemap": true,
+  "robots": true
+}
