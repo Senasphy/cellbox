@@ -1,0 +1,87 @@
+---
+title: "Python SDK"
+description: "Synchronous Client and asynchronous AsyncClient for Python, with context managers, idempotent retries, and SSE stream resume."
+order: 1
+---
+
+# Python SDK
+
+The Python SDK (`sdk/python`, backed by `httpx`) provides both synchronous `Client` and asynchronous `AsyncClient` interfaces with identical methods, automatic `Idempotency-Key` generation on `POST` requests (reused across one transport retry), and typed `ProblemError` exceptions.
+
+## Installation
+
+```bash
+python -m pip install cellbox-sdk
+
+# Or editable install from a repository checkout:
+pip install -e 'sdk/python[test]'
+```
+
+## Synchronous Usage (`Client`)
+
+Using `Client` and `client.sessions.create(...)` as context managers guarantees the session is destroyed (`DELETE /v1/sessions/{id}`) even if an exception occurs:
+
+```python
+from cellbox import Client
+
+with Client("http://127.0.0.1:8080", api_key="cbx_...") as client:
+    with client.sessions.create(
+        "python:3.12-slim",
+        cpu_millicores=1000,
+        memory_mb=512,
+        pids=256,
+        ttl_s=600,
+        network_policy={"mode": "none"},
+    ) as box:
+        box.write_file("/work/main.py", "print(2 + 2)\n")
+        result = box.exec(["python", "/work/main.py"], cwd="/work", timeout_s=30)
+        print(result.stdout, result.exit_code)
+```
+
+## Asynchronous Usage (`AsyncClient`)
+
+```python
+import asyncio
+from cellbox import AsyncClient
+
+async def main() -> None:
+    async with AsyncClient("http://127.0.0.1:8080", api_key="cbx_...") as client:
+        async with await client.sessions.create("alpine:latest", memory_mb=256) as box:
+            await box.write_file("/tmp/hello.txt", "async hello\n")
+            res = await box.exec("cat /tmp/hello.txt")
+            print(res.stdout)
+
+asyncio.run(main())
+```
+
+## Streaming & Resuming Exec Output
+
+`exec_stream` yields `OutputChunk` objects (`stream`, `data`, `text`, `sequence`, `cursor`, `exec_id`). Save `chunk.exec_id` and `chunk.cursor` so you can reconnect with `resume_exec_stream(exec_id, after=cursor)` if the network drops:
+
+```python
+last_exec_id = ""
+last_cursor = 0
+
+try:
+    for chunk in box.exec_stream(["sh", "-c", "for i in 1 2 3; do echo $i; sleep 1; done"]):
+        last_exec_id = chunk.exec_id
+        last_cursor = chunk.cursor
+        print(chunk.text, end="", flush=True)
+except Exception:
+    for chunk in box.resume_exec_stream(last_exec_id, after=last_cursor):
+        print(chunk.text, end="", flush=True)
+```
+
+## API Surface Summary
+
+- **SessionManager:** `create(image, *, cpu_millicores, memory_mb, pids, disk_mb, ttl_s, idle_ttl_s, env, labels, network_policy)`, `get(session_id)`, `list(*, limit=50)`
+- **Session / AsyncSession:**
+  - `exec(command, *, timeout_s=60, cwd=None, env=None) -> ExecResult` (accepts `list[str]` for `argv` or `str` for `shell`)
+  - `exec_stream(...)` / `resume_exec_stream(exec_id, *, after=0)`
+  - `read_file(path) -> bytes`, `write_file(path, contents: str | bytes)`, `list_files(path="/", *, limit=50)` (auto-paginates all `next_cursor` pages)
+  - `snapshot(*, labels=None) -> dict`, `fork(snapshot_id=None) -> Session`
+  - `destroy()`
+
+## Error Handling
+
+All `4xx`/`5xx` API responses raise `ProblemError` (subclass of `CellboxError`) exposing `.status`, `.code`, `.title`, and `.detail`.

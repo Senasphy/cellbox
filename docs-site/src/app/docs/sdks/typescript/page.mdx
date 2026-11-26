@@ -1,0 +1,78 @@
+---
+title: "TypeScript SDK"
+description: "Zero-dependency fetch-based TypeScript/JavaScript client with ESM/CJS bundles, session.using(), and AsyncIterable SSE streaming."
+order: 2
+---
+
+# TypeScript SDK
+
+The TypeScript SDK (`sdk/typescript`, `@cellbox/sdk`) uses standard `fetch` and `crypto.randomUUID()`, emits both ESM and CommonJS bundles with `.d.ts` declarations, and validates stream URLs against the configured service origin.
+
+## Build & Import
+
+```bash
+cd sdk/typescript
+npm install
+npm run build
+```
+
+## Quick Example with `using()`
+
+`session.using(async (session) => ...)` runs your callback and guarantees `session.destroy()` in a `finally` block:
+
+```ts
+import { Client, ProblemError } from "@cellbox/sdk";
+
+const client = new Client("http://127.0.0.1:8080", process.env.CELLBOX_KEY!);
+
+const box = await client.sessions.create("alpine:latest", {
+  cpu_millicores: 1000,
+  memory_mb: 512,
+  pids: 128,
+  ttl_s: 600,
+  network_policy: { mode: "none" },
+});
+
+await box.using(async (session) => {
+  await session.writeFile("/tmp/hello.txt", "hello from ts\n");
+  const result = await session.exec(["cat", "/tmp/hello.txt"]);
+  console.log(result.stdout, result.exit_code);
+});
+```
+
+## Streaming & Resuming Execs
+
+`execStream` returns an `AsyncIterable<OutputChunk>` where each chunk carries `stream`, `data` (`Uint8Array`), `text`, `sequence`, `cursor`, and `execId`:
+
+```ts
+let execId = "";
+let cursor = 0;
+
+try {
+  for await (const chunk of session.execStream("npm test", { cwd: "/work", timeout_s: 120 })) {
+    execId = chunk.execId;
+    cursor = chunk.cursor;
+    process.stdout.write(chunk.text);
+  }
+} catch (err) {
+  if (execId) {
+    for await (const chunk of session.resumeExecStream(execId, cursor)) {
+      process.stdout.write(chunk.text);
+    }
+  } else {
+    throw err;
+  }
+}
+```
+
+## Snapshots, Forks & Files
+
+- `await session.snapshot({ stage: "deps-installed" })`
+- `const child = await session.fork()` (or `await session.fork(snapshotId)`)
+- `await session.writeFile("/work/data.bin", new Uint8Array([1, 2, 3]))`
+- `const bytes = await session.readFile("/work/data.bin")`
+- `const entries = await session.listFiles("/work")` (automatically iterates `next_cursor`)
+
+## Error Handling
+
+Non-2xx responses throw `ProblemError` with `.status`, `.code`, `.title`, and `.detail`. On `POST` requests, the client attaches a fresh `Idempotency-Key` and automatically retries once on transport-level failures (never on `ProblemError`).

@@ -1,0 +1,91 @@
+---
+title: "MCP Server & LLM Tool Calling"
+description: "Expose CellBox to Claude, Cursor, and custom agents via cellbox mcp (stdio/HTTP) or OpenAI/Anthropic function schemas."
+order: 4
+---
+
+# MCP Server & LLM Tool Calling
+
+CellBox includes both a built-in **Model Context Protocol (MCP)** server (`cellbox mcp`) and ready-to-use OpenAI/Anthropic JSON tool schemas (`sdk/tools/`).
+
+## Running the MCP Server
+
+Set `CELLBOX_KEY` and `CELLBOX_URL` (defaults to `http://127.0.0.1:8080`), then choose `stdio` or Streamable `http`:
+
+<Tabs items={["stdio (Claude Desktop / Cursor)", "Streamable HTTP"]}>
+  <Tab value="stdio (Claude Desktop / Cursor)">
+Add CellBox to your MCP client configuration (`claude_desktop_config.json` or `.cursor/mcp.json`):
+
+```json
+{
+  "mcpServers": {
+    "cellbox": {
+      "command": "/path/to/bin/cellbox",
+      "args": [
+        "mcp",
+        "--transport", "stdio",
+        "--image", "python:3.12-slim",
+        "--memory-mb", "512"
+      ],
+      "env": {
+        "CELLBOX_URL": "http://127.0.0.1:8080",
+        "CELLBOX_KEY": "cbx_your_session_key"
+      }
+    }
+  }
+}
+```
+  </Tab>
+  <Tab value="Streamable HTTP">
+```bash
+CELLBOX_KEY="cbx_..." cellbox mcp \
+  --transport http \
+  --listen 127.0.0.1:8081 \
+  --image alpine:latest \
+  --memory-mb 512
+```
+When the MCP client disconnects (or the stdio process exits), CellBox automatically destroys every session created during that MCP session.
+  </Tab>
+</Tabs>
+
+## MCP Tool Catalog (7 Tools)
+
+On the first tool call, `cellbox mcp` lazily creates a `network_policy.mode: "none"` sandbox (`1000` millicores, `128` PIDs, `3600s` TTL, `--memory-mb` RAM):
+
+| Tool | Arguments | Behavior |
+| --- | --- | --- |
+| `run_command` | `command: string[]`, `timeout_s?: number` (default `60`) | Executes `argv` with `?wait=true`. Clips `stdout` and `stderr` independently to **16 KiB** (retaining head + tail with omitted-bytes marker) and reports `timeout` / `oom` reason. |
+| `write_file` | `path: string`, `contents: string` | Writes UTF-8 contents to `path`. |
+| `read_file` | `path: string` | Reads file contents (clipped to 16 KiB in `cellbox_tools.py`). |
+| `list_files` | `path?: string` (default `/`), `limit?: number` (default `50`) | Lists directory entries. |
+| `snapshot` | `labels?: Record<string, string>` | Creates an immutable filesystem snapshot (`snp_...`). |
+| `fork` | `snapshot_id?: string` | Forks the active session (or snapshots & forks if `snapshot_id` omitted) and switches the MCP session pointer to the new child. |
+| `reset` | *(none)* | Destroys the current sandbox and spins up a fresh session. |
+
+## OpenAI & Anthropic Tool Schemas (`sdk/tools/`)
+
+For custom agent loops without MCP, import the equivalent function schemas and bounded dispatcher from `sdk/tools/`:
+
+- **`sdk/tools/openai.json`** — OpenAI `tools` array for `run_command`, `write_file`, `read_file`, `list_files`, `snapshot`, `fork`.
+- **`sdk/tools/anthropic.json`** — Anthropic tool definitions.
+- **`sdk/tools/cellbox_tools.py`** — Dispatches tool calls to a Python `Session` and clips `stdout`, `stderr`, and `read_file` output independently to **16 KiB** (`16 * 1024` bytes) preserving head and tail with `\n... <omitted N bytes> ...\n`.
+
+```python
+import json
+from cellbox import Client
+from sdk.tools.cellbox_tools import dispatch_json
+
+with Client("http://127.0.0.1:8080", api_key="cbx_...") as client:
+    with client.sessions.create("python:3.12-slim") as box:
+        tool_output = dispatch_json(box, "run_command", {"command": ["python", "-V"]})
+        print(json.loads(tool_output))
+```
+
+## Runnable Examples (`examples/`)
+
+The repository includes four end-to-end agent examples with deterministic `--fake-model` modes for offline verification:
+
+- `examples/fix-loop.py` — Iterative test-repair loop (uses `OPENAI_API_KEY` or `--fake-model`).
+- `examples/hosted-model.py` — OpenAI-compatible tool-calling agent (`OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_MODEL`).
+- `examples/ollama.py` — Local Ollama tool-calling agent (`OLLAMA_URL`, `OLLAMA_MODEL`).
+- `examples/eval-runner.py` — Parallel, reproducible benchmark evaluator writing JSON results across isolated sessions.

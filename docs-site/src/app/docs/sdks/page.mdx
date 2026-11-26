@@ -1,0 +1,41 @@
+---
+title: "SDKs & Agent Tools"
+description: "Choose between the Python SDK, TypeScript SDK, Go client, MCP server, or OpenAI/Anthropic tool schemas."
+icon: "code"
+order: 7
+---
+
+# SDKs & Agent Tools
+
+CellBox ships lightweight, zero-bloat clients and agent integrations directly in the repository under `sdk/` and `cmd/cellbox`.
+
+| Integration | Package / Location | Best For |
+| --- | --- | --- |
+| **Python SDK** | `sdk/python` (`cellbox-sdk`) | Sync & `asyncio` agent loops, evaluation runners, Jupyter/data tasks |
+| **TypeScript SDK** | `sdk/typescript` (`@cellbox/sdk`) | Node.js / browser / agent workers using native `fetch` + `AsyncIterable` |
+| **Go Client** | `github.com/senasphy/cellbox/sdk/go` | Go services with zero external transport dependencies (`net/http`) |
+| **MCP Server** | `cellbox mcp` (`stdio` / Streamable `http`) | Plug-and-play coding agents (Claude Desktop, Cursor, custom MCP hosts) |
+| **Model Tool Schemas** | `sdk/tools/openai.json`, `anthropic.json` | Direct LLM function calling with bounded 16 KiB head/tail output clipping |
+
+<Cards>
+  <Card
+    title="Python SDK"
+    description="Client & AsyncClient, context-managed session cleanup, and resumable SSE streams."
+    href="/docs/sdks/python"
+  />
+  <Card
+    title="TypeScript SDK"
+    description="ESM/CJS fetch client, session.using() guard, and AsyncIterable output chunks."
+    href="/docs/sdks/typescript"
+  />
+  <Card
+    title="Go Client"
+    description="Minimal stdlib net/http wrapper with ExecStream and ResumeExecStream."
+    href="/docs/sdks/go"
+  />
+  <Card
+    title="MCP & LLM Tool Calling"
+    description="All 7 MCP tools, OpenAI/Anthropic schemas, and bounded 16 KiB output clipping."
+    href="/docs/sdks/mcp-and-tools"
+  />
+</Cards>

@@ -1,0 +1,68 @@
+---
+title: "Go Client"
+description: "Lightweight net/http Go client for sessions, execs, resumable SSE streaming, file operations, snapshots, and forks."
+order: 3
+---
+
+# Go Client
+
+`github.com/senasphy/cellbox/sdk/go` is a minimal, standard-library `net/http` client with no external transport dependencies.
+
+## Usage
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"time"
+
+	cellbox "github.com/senasphy/cellbox/sdk/go"
+)
+
+func main() {
+	ctx := context.Background()
+	client := &cellbox.Client{
+		BaseURL: "http://127.0.0.1:8080",
+		APIKey:  os.Getenv("CELLBOX_KEY"),
+	}
+
+	sess, err := client.CreateSession(ctx, "alpine:latest", map[string]int{
+		"memory_mb":      512,
+		"cpu_millicores": 1000,
+		"pids":           128,
+		"ttl_s":          600,
+	})
+	if err != nil {
+		panic(err)
+	}
+	defer client.DeleteSession(ctx, sess.ID)
+
+	var lastCursor int64
+	res, err := client.ExecStream(ctx, sess.ID, []string{"sh", "-c", "echo hello"}, 30*time.Second, func(chunk cellbox.OutputChunk) error {
+		lastCursor = chunk.Cursor
+		fmt.Printf("[%s] %s", chunk.Stream, chunk.Data)
+		return nil
+	})
+	if err != nil && res.ID != "" {
+		res, err = client.ResumeExecStream(ctx, sess.ID, res.ID, lastCursor, func(chunk cellbox.OutputChunk) error {
+			fmt.Printf("[%s] %s", chunk.Stream, chunk.Data)
+			return nil
+		})
+	}
+	if err != nil {
+		panic(err)
+	}
+	fmt.Printf("state=%s duration=%dms\n", res.State, res.DurationMS)
+}
+```
+
+## Available Methods
+
+- **Sessions:** `CreateSession(ctx, image, limits)`, `GetSession(ctx, id)`, `DeleteSession(ctx, id)`
+- **Execution:** `Exec(ctx, id, argv, timeout)`, `ExecStream(ctx, id, argv, timeout, onOutput)`, `ResumeExecStream(ctx, sessionID, execID, after, onOutput)`
+- **Snapshots & Forking:** `CreateSnapshot(ctx, id, labels)`, `Fork(ctx, id, snapshotID)`
+- **Files:** Read, write, and paginated directory listing helpers returning `[]FileInfo`
+- **Errors:** Returns `*ProblemError` implementing `error` with `Status`, `Code`, `Title`, and `Detail`

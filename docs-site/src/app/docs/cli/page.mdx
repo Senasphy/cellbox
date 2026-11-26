@@ -1,0 +1,131 @@
+---
+title: "CLI Reference"
+description: "Complete command, flag, and environment variable reference for the cellbox binary."
+icon: "terminal"
+order: 6
+---
+
+# CLI Reference
+
+The `cellbox` binary (`./bin/cellbox`) bundles the daemon, host prerequisite checker, client utilities, interactive shell client, MCP server, and shell completions.
+
+Client commands (`run`, `shell`, `sessions`, `snapshot`, `fork`, `images`, `mcp`) read `CELLBOX_KEY` (required) and `CELLBOX_URL` (defaults to `http://127.0.0.1:8080`, overridable with `--url` where supported).
+
+## `cellbox serve`
+
+Start the CellBox HTTP API, warm pool, session reaper, retention worker, and embedded web dashboard.
+
+```bash
+cellbox serve [flags]
+```
+
+| Flag | Default | Description |
+| --- | --- | --- |
+| `--config <path>` | auto-discovered | Path to `cellbox.yaml` |
+| `--listen <host:port>` | `127.0.0.1:8080` | HTTP listen address |
+| `--data-dir <dir>` | `~/.local/share/cellbox` | State, SQLite DB, images, overlays, snapshots, logs |
+| `--backend <name>` | `native` | Runtime backend: `native` or `docker` |
+| `--log-level <level>` | `info` | `debug`, `info`, `warn`, or `error` |
+| `--log-format <fmt>` | `json` | `json` or `text` |
+| `--allow-remote` | `false` | Required to bind to a non-loopback address |
+
+<Callout type="warn" title="Remote Binds">
+`cellbox serve` refuses any non-loopback `--listen` address unless `--allow-remote` is passed. Always configure `tls.cert` and `tls.key` (or terminate TLS in front of a private bind) before exposing CellBox over a network.
+</Callout>
+
+## `cellbox doctor`
+
+Inspect kernel version, unified cgroup v2 delegation (`cpu`, `memory`, `pids`), user namespaces, AppArmor userns restrictions, rootless `overlayfs` `userxattr`, seccomp, private `devpts newinstance`, and free disk space (`>= 1 GiB`).
+
+```bash
+systemd-run --user --scope -p Delegate=yes cellbox doctor
+```
+
+## `cellbox run`
+
+Create a disposable session (`network_policy.mode: "none"`), run a command, stream stdout/stderr via SSE, propagate the command's exit status (or `128 + signal`), and destroy the session automatically on exit.
+
+```bash
+cellbox run --image alpine:latest -- sh -c 'echo hello && exit 0'
+cellbox run --url https://sandbox.internal --image python:3.12-slim -- python -c 'print(42)'
+```
+
+| Flag | Description |
+| --- | --- |
+| `--image <ref>` | Required OCI image reference |
+| `--url <url>` | CellBox service URL (defaults to `CELLBOX_URL` or `http://127.0.0.1:8080`) |
+
+## `cellbox shell`
+
+Attach an interactive raw PTY terminal to an existing `ready` session over WebSocket, forwarding `SIGWINCH` terminal resize events and cleanly handling EOF.
+
+```bash
+cellbox shell ses_01JD9...
+```
+
+## `cellbox sessions`
+
+List or destroy active/recent sessions:
+
+```bash
+cellbox sessions ls [--limit 50] [--cursor <token>] [--json] [--url <url>]
+cellbox sessions rm <SESSION_ID> [--url <url>]
+```
+
+## `cellbox snapshot` & `cellbox fork`
+
+Capture immutable filesystem snapshots and spawn forked child sessions:
+
+```bash
+# Create snapshot of a session
+cellbox snapshot <SESSION_ID> [--json] [--url <url>]
+
+# Snapshot and fork in one step
+cellbox fork <SESSION_ID> [--json] [--url <url>]
+
+# Fork from an existing snapshot ID
+cellbox fork <SESSION_ID> --snapshot <SNAPSHOT_ID> [--json] [--url <url>]
+```
+
+## `cellbox images`
+
+Manage the runtime image cache (requires an `admin` `CELLBOX_KEY`; note `ls` and `rm` require a backend with image-management listing/removal such as `docker`, while `pull` works on both `native` and `docker`):
+
+```bash
+cellbox images ls [--json] [--url <url>]
+cellbox images pull <IMAGE> [--url <url>]
+cellbox images rm <IMAGE> [--url <url>]
+```
+
+## `cellbox keys`
+
+Manage local API keys directly against SQLite (`cellbox.db`):
+
+```bash
+cellbox keys create [NAME] [--data-dir <dir>]   # Creates admin key, prints secret once
+cellbox keys ls [--data-dir <dir>]              # Lists ID, name, prefix, scope, active/revoked
+cellbox keys revoke <KEY_ID> [--data-dir <dir>] # Revokes key immediately
+```
+
+## `cellbox mcp`
+
+Run the CellBox Model Context Protocol server over `stdio` or Streamable `http`:
+
+```bash
+cellbox mcp --transport stdio --image python:3.12-slim --memory-mb 512
+cellbox mcp --transport http --listen 127.0.0.1:8081 --image alpine:latest
+```
+
+| Flag | Default | Description |
+| --- | --- | --- |
+| `--transport` | `stdio` | `stdio` or `http` |
+| `--listen` | `127.0.0.1:8081` | Listen address when `--transport http` |
+| `--image` | `alpine:latest` | Default OCI image for the MCP sandbox session |
+| `--memory-mb` | `512` | Memory limit in MB for the MCP sandbox session |
+
+## `cellbox completion` & `cellbox version`
+
+```bash
+cellbox version
+cellbox completion bash | zsh | fish | powershell
+```
