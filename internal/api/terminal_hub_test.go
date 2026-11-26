@@ -38,7 +38,7 @@ func (t *hubTestTerminal) Close() error {
 
 func TestTerminalHubReattachesWithBoundedScrollback(t *testing.T) {
 	term := newHubTestTerminal()
-	hub := &terminalHub{term: term, ring: make([]byte, 0, terminalScrollbackSize)}
+	hub := &terminalHub{term: term, grace: 5 * time.Second, ring: make([]byte, 0, terminalScrollbackSize)}
 	go hub.readLoop()
 	first, _, err := hub.attach()
 	if err != nil {
@@ -95,5 +95,25 @@ func TestAppendTerminalRingKeepsNewestBytes(t *testing.T) {
 	ring = appendTerminalRing(ring, []byte("tail"))
 	if len(ring) != terminalScrollbackSize || string(ring[len(ring)-4:]) != "tail" {
 		t.Fatalf("ring length=%d tail=%q", len(ring), ring[len(ring)-4:])
+	}
+}
+
+func TestTerminalHubExpiresAfterConfiguredGracePeriod(t *testing.T) {
+	term := newHubTestTerminal()
+	closed := make(chan struct{})
+	hub := &terminalHub{term: term, grace: 25 * time.Millisecond, ring: make([]byte, 0, terminalScrollbackSize), onClose: func() { close(closed) }}
+	go hub.readLoop()
+	client, _, err := hub.attach()
+	if err != nil {
+		t.Fatal(err)
+	}
+	hub.detach(client)
+	select {
+	case <-closed:
+	case <-time.After(time.Second):
+		t.Fatal("expected terminal hub to close after configured grace period")
+	}
+	if _, _, err := hub.attach(); err == nil {
+		t.Fatal("expected reattach after grace expiry to fail")
 	}
 }

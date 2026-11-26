@@ -1,16 +1,122 @@
 package api
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
+	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/senasphy/cellbox/internal/api/problem"
 	"github.com/senasphy/cellbox/internal/store"
 )
+
+type httpMetricKey struct {
+	method string
+	route  string
+	status int
+}
+
+type httpRouteKey struct {
+	method string
+	route  string
+}
+
+var httpDurationBuckets = []float64{0.005, 0.01, 0.05, 0.1, 0.5, 1, 5, 30}
+
+type httpDurationHist struct {
+	buckets [8]uint64
+	count   uint64
+	sum     float64
+}
+
+type metricsResponseRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (r *metricsResponseRecorder) WriteHeader(status int) {
+	if r.status == 0 {
+		r.status = status
+	}
+	r.ResponseWriter.WriteHeader(status)
+}
+
+func (r *metricsResponseRecorder) Write(p []byte) (int, error) {
+	if r.status == 0 {
+		r.status = http.StatusOK
+	}
+	return r.ResponseWriter.Write(p)
+}
+
+func (r *metricsResponseRecorder) Flush() {
+	if flusher, ok := r.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	}
+}
+
+func (r *metricsResponseRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	hijacker, ok := r.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, fmt.Errorf("response writer does not support hijacking")
+	}
+	if r.status == 0 {
+		r.status = http.StatusSwitchingProtocols
+	}
+	return hijacker.Hijack()
+}
+
+func (r *metricsResponseRecorder) Unwrap() http.ResponseWriter {
+	return r.ResponseWriter
+}
+
+func (s *server) httpMetricsMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.httpInFlight.Add(1)
+		defer s.httpInFlight.Add(-1)
+		started := time.Now()
+		rec := &metricsResponseRecorder{ResponseWriter: w}
+		next.ServeHTTP(rec, r)
+		status := rec.status
+		if status == 0 {
+			status = http.StatusOK
+		}
+		route := normalizeRouteLabel(r.Pattern)
+		elapsed := time.Since(started).Seconds()
+		s.httpMetricsMu.Lock()
+		s.httpRequests[httpMetricKey{method: r.Method, route: route, status: status}]++
+		rk := httpRouteKey{method: r.Method, route: route}
+		hist := s.httpDurations[rk]
+		if hist == nil {
+			hist = &httpDurationHist{}
+			s.httpDurations[rk] = hist
+		}
+		hist.count++
+		hist.sum += elapsed
+		for i, bound := range httpDurationBuckets {
+			if elapsed <= bound {
+				hist.buckets[i]++
+			}
+		}
+		s.httpMetricsMu.Unlock()
+	})
+}
+
+func normalizeRouteLabel(pattern string) string {
+	pattern = strings.TrimSpace(pattern)
+	if pattern == "" {
+		return "unmatched"
+	}
+	if _, after, ok := strings.Cut(pattern, " "); ok && after != "" {
+		return after
+	}
+	return pattern
+}
 
 type metricsStore interface {
 	ListSessions(context.Context, string, bool) ([]store.SessionRecord, error)
@@ -190,6 +296,61 @@ func (s *server) metrics(w http.ResponseWriter, r *http.Request) {
 	f("# HELP cellbox_output_bytes_total Exec output bytes persisted.\n# TYPE cellbox_output_bytes_total counter\ncellbox_output_bytes_total %d\n", outputBytes)
 	f("# HELP cellbox_session_create_total Persisted session creation attempts.\n# TYPE cellbox_session_create_total counter\ncellbox_session_create_total %d\n", len(sessions))
 	f("# HELP cellbox_error_total Failed sessions and exec operations.\n# TYPE cellbox_error_total counter\ncellbox_error_total %d\n", sessionErrors)
+	s.renderHTTPMetrics(f)
+}
+
+func (s *server) renderHTTPMetrics(f func(string, ...any)) {
+	f("# HELP cellbox_http_requests_in_flight Current in-flight HTTP requests.\n# TYPE cellbox_http_requests_in_flight gauge\ncellbox_http_requests_in_flight %d\n", s.httpInFlight.Load())
+	s.httpMetricsMu.Lock()
+	reqKeys := make([]httpMetricKey, 0, len(s.httpRequests))
+	for k := range s.httpRequests {
+		reqKeys = append(reqKeys, k)
+	}
+	sort.Slice(reqKeys, func(i, j int) bool {
+		if reqKeys[i].route != reqKeys[j].route {
+			return reqKeys[i].route < reqKeys[j].route
+		}
+		if reqKeys[i].method != reqKeys[j].method {
+			return reqKeys[i].method < reqKeys[j].method
+		}
+		return reqKeys[i].status < reqKeys[j].status
+	})
+	reqCounts := make([]uint64, len(reqKeys))
+	for i, k := range reqKeys {
+		reqCounts[i] = s.httpRequests[k]
+	}
+	histKeys := make([]httpRouteKey, 0, len(s.httpDurations))
+	for k := range s.httpDurations {
+		histKeys = append(histKeys, k)
+	}
+	sort.Slice(histKeys, func(i, j int) bool {
+		if histKeys[i].route != histKeys[j].route {
+			return histKeys[i].route < histKeys[j].route
+		}
+		return histKeys[i].method < histKeys[j].method
+	})
+	histCopies := make([]httpDurationHist, len(histKeys))
+	for i, k := range histKeys {
+		histCopies[i] = *s.httpDurations[k]
+	}
+	s.httpMetricsMu.Unlock()
+	if len(reqKeys) > 0 {
+		f("# HELP cellbox_http_requests_total Completed HTTP requests by method, route template, and status.\n# TYPE cellbox_http_requests_total counter\n")
+		for i, k := range reqKeys {
+			f("cellbox_http_requests_total{method=%q,route=%q,status=%q} %d\n", k.method, k.route, strconv.Itoa(k.status), reqCounts[i])
+		}
+	}
+	if len(histKeys) > 0 {
+		f("# HELP cellbox_http_request_duration_seconds HTTP request duration by method and route template.\n# TYPE cellbox_http_request_duration_seconds histogram\n")
+		for i, k := range histKeys {
+			hist := histCopies[i]
+			for b, bound := range httpDurationBuckets {
+				f("cellbox_http_request_duration_seconds_bucket{method=%q,route=%q,le=%q} %d\n", k.method, k.route, strconv.FormatFloat(bound, 'f', -1, 64), hist.buckets[b])
+			}
+			f("cellbox_http_request_duration_seconds_bucket{method=%q,route=%q,le=\"+Inf\"} %d\n", k.method, k.route, hist.count)
+			f("cellbox_http_request_duration_seconds_sum{method=%q,route=%q} %s\ncellbox_http_request_duration_seconds_count{method=%q,route=%q} %d\n", k.method, k.route, strconv.FormatFloat(hist.sum, 'f', -1, 64), k.method, k.route, hist.count)
+		}
+	}
 }
 
 func renderHistogram(write func(string, ...any), name, labels string, bounds []float64, values []float64) {

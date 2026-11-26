@@ -771,14 +771,39 @@ func TestPrometheusMetricsReportSessionsExecsAndCapacity(t *testing.T) {
 	if breaches.Code != http.StatusOK || !strings.Contains(breaches.Body.String(), `"kind":"output"`) || !strings.Contains(breaches.Body.String(), session.ID) {
 		t.Fatalf("limit breaches status=%d body=%s", breaches.Code, breaches.Body.String())
 	}
+	sessionReq := httptest.NewRequest(http.MethodGet, "/v1/sessions/"+session.ID, nil)
+	sessionReq.Header.Set("Authorization", "Bearer "+admin.Secret)
+	sessionRes := httptest.NewRecorder()
+	handler.ServeHTTP(sessionRes, sessionReq)
+	if sessionRes.Code != http.StatusOK {
+		t.Fatalf("get session status=%d body=%s", sessionRes.Code, sessionRes.Body.String())
+	}
 	handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/metrics", nil))
 	if w.Code != http.StatusOK || !strings.Contains(w.Header().Get("Content-Type"), "text/plain") {
 		t.Fatalf("metrics status=%d content-type=%q body=%s", w.Code, w.Header().Get("Content-Type"), w.Body.String())
 	}
-	for _, metric := range []string{"cellbox_sessions{state=\"ready\"} 1", "cellbox_capacity_committed{resource=\"memory_mb\"} 256", "cellbox_exec_total{result=\"ok\"} 1", "cellbox_exec_total{result=\"pids_limited\"} 0", "cellbox_output_bytes_total 12", "cellbox_limit_breach_total{kind=\"output\"} 1", "cellbox_limit_breach_total{kind=\"timeout\"} 1", "cellbox_exec_seconds_count 2", "cellbox_session_create_seconds_count{source=\"cold\"} 1", "cellbox_session_create_total 1", "cellbox_error_total 1"} {
+	for _, metric := range []string{
+		"cellbox_sessions{state=\"ready\"} 1",
+		"cellbox_capacity_committed{resource=\"memory_mb\"} 256",
+		"cellbox_exec_total{result=\"ok\"} 1",
+		"cellbox_exec_total{result=\"pids_limited\"} 0",
+		"cellbox_output_bytes_total 12",
+		"cellbox_limit_breach_total{kind=\"output\"} 1",
+		"cellbox_limit_breach_total{kind=\"timeout\"} 1",
+		"cellbox_exec_seconds_count 2",
+		"cellbox_session_create_seconds_count{source=\"cold\"} 1",
+		"cellbox_session_create_total 1",
+		"cellbox_error_total 1",
+		"cellbox_http_requests_in_flight 1",
+		"cellbox_http_requests_total{method=\"GET\",route=\"/v1/sessions/{id}\",status=\"200\"} 1",
+		"cellbox_http_request_duration_seconds_count{method=\"GET\",route=\"/v1/sessions/{id}\"} 1",
+	} {
 		if !strings.Contains(w.Body.String(), metric) {
 			t.Errorf("metrics output missing %q:\n%s", metric, w.Body.String())
 		}
+	}
+	if strings.Contains(w.Body.String(), `route="/v1/sessions/`+session.ID) {
+		t.Fatalf("metrics leaked raw session id in route label:\n%s", w.Body.String())
 	}
 }
 

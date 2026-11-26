@@ -90,7 +90,7 @@ func (s *server) createSession(w http.ResponseWriter, r *http.Request) {
 	if req.NetworkPolicy.Mode == "" {
 		req.NetworkPolicy.Mode = "none"
 	}
-	policy := egress.Policy{Mode: req.NetworkPolicy.Mode, Allow: make([]egress.Rule, 0, len(req.NetworkPolicy.Allow)), ExtraBlockedCIDRs: s.cfg.Egress.ExtraBlockedCIDRs}
+	policy := egress.Policy{Mode: req.NetworkPolicy.Mode, Allow: make([]egress.Rule, 0, len(req.NetworkPolicy.Allow)), ExtraBlockedCIDRs: s.cfg.Egress.ExtraBlockedCIDRs, BandwidthBytesPerSec: s.cfg.Egress.BandwidthBytesPerSec}
 	for _, rule := range req.NetworkPolicy.Allow {
 		policy.Allow = append(policy.Allow, egress.Rule{Host: rule.Host, Ports: rule.Ports})
 	}
@@ -152,6 +152,7 @@ func (s *server) createSession(w http.ResponseWriter, r *http.Request) {
 		record.ImageDigest = image.Digest
 		networkPolicy := req.NetworkPolicy
 		networkPolicy.ExtraBlockedCIDRs = append([]string(nil), s.cfg.Egress.ExtraBlockedCIDRs...)
+		networkPolicy.BandwidthBytesPerSec = s.cfg.Egress.BandwidthBytesPerSec
 		spec := runtime.SandboxSpec{ID: sessionID, Image: image, Limits: limits, Env: nonNilMap(req.Env), NetworkMode: "none", NetworkPolicy: networkPolicy}
 		if s.pool != nil {
 			createdSandbox, claimedWarm = s.pool.Claim(r.Context(), spec)

@@ -17,6 +17,7 @@ const (
 type terminalHub struct {
 	mu      sync.Mutex
 	term    runtime.Terminal
+	grace   time.Duration
 	ring    []byte
 	client  *terminalClient
 	timer   *time.Timer
@@ -39,7 +40,11 @@ func (s *server) terminalForSession(id string, box runtime.Sandbox, ctx context.
 	if err != nil {
 		return nil, err
 	}
-	hub := &terminalHub{term: term, ring: make([]byte, 0, terminalScrollbackSize)}
+	grace := time.Duration(s.cfg.Terminal.GraceS) * time.Second
+	if grace <= 0 {
+		grace = terminalReattachGrace
+	}
+	hub := &terminalHub{term: term, grace: grace, ring: make([]byte, 0, terminalScrollbackSize)}
 	hub.onClose = func() {
 		s.terminalMu.Lock()
 		if s.terminals[id] == hub {
@@ -79,7 +84,11 @@ func (h *terminalHub) detach(client *terminalClient) {
 	h.client = nil
 	close(client.done)
 	if !h.ended {
-		h.timer = time.AfterFunc(terminalReattachGrace, func() { h.finish(false) })
+		grace := h.grace
+		if grace <= 0 {
+			grace = terminalReattachGrace
+		}
+		h.timer = time.AfterFunc(grace, func() { h.finish(false) })
 	}
 	h.mu.Unlock()
 }

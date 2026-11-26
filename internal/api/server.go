@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -52,6 +53,10 @@ type server struct {
 	doctorState      string
 	doctorInfo       []string
 	terminalUpgrader websocket.Upgrader
+	httpInFlight     atomic.Int64
+	httpMetricsMu    sync.Mutex
+	httpRequests     map[httpMetricKey]uint64
+	httpDurations    map[httpRouteKey]*httpDurationHist
 }
 
 type warmSessionPool interface {
@@ -77,7 +82,7 @@ func NewHandlerWithPool(store KeyStore, backend runtime.Runtime, backendName str
 }
 
 func newHandlerWithConfig(store KeyStore, backend runtime.Runtime, backendName string, cfg config.Config, warmPool warmSessionPool) http.Handler {
-	s := &server{store: store, backend: backend, pool: warmPool, backendName: backendName, mux: http.NewServeMux(), cfg: cfg, activeExecs: map[string]runtime.ExecHandle{}, terminals: map[string]*terminalHub{}, idemLocks: map[string]*idemLock{}, rateCounts: map[string]rateWindow{}, terminalUpgrader: websocket.Upgrader{ReadBufferSize: 4096, WriteBufferSize: 4096}}
+	s := &server{store: store, backend: backend, pool: warmPool, backendName: backendName, mux: http.NewServeMux(), cfg: cfg, activeExecs: map[string]runtime.ExecHandle{}, terminals: map[string]*terminalHub{}, idemLocks: map[string]*idemLock{}, rateCounts: map[string]rateWindow{}, terminalUpgrader: websocket.Upgrader{ReadBufferSize: 4096, WriteBufferSize: 4096}, httpRequests: map[httpMetricKey]uint64{}, httpDurations: map[httpRouteKey]*httpDurationHist{}}
 	s.mux.Handle("GET /healthz", withTimeout(5*time.Second, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
@@ -121,7 +126,7 @@ func newHandlerWithConfig(store KeyStore, backend runtime.Runtime, backendName s
 	s.mux.Handle("GET /v1/sessions/{id}/files/list", withTimeout(10*time.Minute, http.HandlerFunc(s.listFiles)))
 	s.mux.Handle("GET /v1/sessions/{id}/archive", withTimeout(20*time.Minute, http.HandlerFunc(s.downloadArchive)))
 	s.mux.Handle("PUT /v1/sessions/{id}/archive", withTimeout(20*time.Minute, http.HandlerFunc(s.uploadArchive)))
-	return s.idempotencyMiddleware(s.mux)
+	return s.httpMetricsMiddleware(s.idempotencyMiddleware(s.mux))
 }
 
 func withTimeout(timeout time.Duration, next http.Handler) http.Handler {
@@ -179,8 +184,9 @@ func effectiveConfig(cfg config.Config) map[string]any {
 		},
 		"capacity":  map[string]any{"memory_overcommit": cfg.Capacity.MemoryOvercommit, "cpu_overcommit": cfg.Capacity.CPUOvercommit, "queue_wait_s": cfg.Capacity.QueueWaitS, "min_free_disk_mb": cfg.Capacity.MinFreeDiskMB},
 		"pool":      map[string]any{"enabled": cfg.Pool.Enabled, "per_image": cfg.Pool.PerImage, "memory_budget_mb": cfg.Pool.MemoryBudgetMB, "images": cfg.Pool.Images},
-		"egress":    map[string]any{"allow_internet_mode": cfg.Egress.AllowInternetMode, "extra_blocked_cidrs": cfg.Egress.ExtraBlockedCIDRs},
+		"egress":    map[string]any{"allow_internet_mode": cfg.Egress.AllowInternetMode, "extra_blocked_cidrs": cfg.Egress.ExtraBlockedCIDRs, "bandwidth_bytes_per_sec": cfg.Egress.BandwidthBytesPerSec},
 		"retention": map[string]int{"output_days": cfg.Retention.OutputDays, "audit_days": cfg.Retention.AuditDays},
+		"terminal":  map[string]int{"grace_s": cfg.Terminal.GraceS},
 		"log":       map[string]string{"level": cfg.Log.Level, "format": cfg.Log.Format},
 		"tls":       map[string]any{"cert": cfg.TLS.Cert, "key_configured": cfg.TLS.Key != ""},
 	}

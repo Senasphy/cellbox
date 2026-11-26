@@ -134,3 +134,22 @@ func TestRunPreservesRemoteCommandExitStatus(t *testing.T) {
 		})
 	}
 }
+
+func TestShellCompletions(t *testing.T) {
+	for _, tc := range []struct {
+		shell string
+		want  string
+	}{
+		{"bash", "__start_cellbox"},
+		{"zsh", "#compdef cellbox"},
+		{"fish", "complete -c cellbox"},
+		{"powershell", "Register-ArgumentCompleter"},
+	} {
+		t.Run(tc.shell, func(t *testing.T) {
+			output := runCLI(t, "completion", tc.shell)
+			if !strings.Contains(output, tc.want) {
+				t.Fatalf("completion %s missing %q", tc.shell, tc.want)
+			}
+		})
+	}
+}
