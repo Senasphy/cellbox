@@ -126,9 +126,6 @@ func (s *server) createSession(w http.ResponseWriter, r *http.Request) {
 	if !caps.DiskLimits {
 		limits.DiskMB = 0
 	}
-	if !s.enforceKeyQuota(w, r, key, limits) || !s.enforceCapacity(w, r, limits) {
-		return
-	}
 	now := time.Now().UTC()
 	sessionID, err := id.New("ses")
 	if err != nil {
@@ -140,8 +137,7 @@ func (s *server) createSession(w http.ResponseWriter, r *http.Request) {
 	envJSON, _ := json.Marshal(nonNilMap(req.Env))
 	labelsJSON, _ := json.Marshal(nonNilMap(req.Labels))
 	record := store.SessionRecord{ID: sessionID, OwnerKeyID: key.ID, ImageReference: req.Image, State: "creating", LimitsJSON: limitsJSON, NetworkPolicyJSON: networkJSON, EnvJSON: envJSON, LabelsJSON: labelsJSON, CreatedAt: now, LastActivityAt: now, ExpiresAt: now.Add(time.Duration(limits.TTLSeconds) * time.Second)}
-	if err = persist.CreateSession(r.Context(), record); err != nil {
-		problem.Write(w, problem.Problem{Title: "Internal error", Status: http.StatusInternalServerError, Code: "session_persist_failed", Detail: "could not persist session"})
+	if !s.admitAndCreateSession(w, r, persist, key, limits, record) {
 		return
 	}
 	image, err := s.backend.EnsureImage(r.Context(), req.Image)

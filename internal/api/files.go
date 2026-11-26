@@ -187,7 +187,12 @@ func (s *server) fileSandbox(w http.ResponseWriter, r *http.Request) (runtime.Sa
 		problem.Write(w, problem.Problem{Title: "Unavailable", Status: http.StatusServiceUnavailable, Code: "runtime_unavailable"})
 		return nil, false
 	}
-	return resolver.SandboxByID(session.RuntimeID), true
+	box := resolver.SandboxByID(session.RuntimeID)
+	if box == nil {
+		problem.Write(w, problem.Problem{Title: "Unavailable", Status: http.StatusServiceUnavailable, Code: "runtime_unavailable", Detail: "the runtime session is no longer available"})
+		return nil, false
+	}
+	return box, true
 }
 
 func fileTarget(w http.ResponseWriter, r *http.Request) (string, bool) {

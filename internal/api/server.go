@@ -16,6 +16,7 @@ import (
 	"github.com/senasphy/cellbox/internal/doctor"
 	"github.com/senasphy/cellbox/internal/runtime"
 	"github.com/senasphy/cellbox/internal/store"
+	"golang.org/x/sync/singleflight"
 )
 
 // KeyStore provides authentication lookups and readiness checks.
@@ -57,6 +58,8 @@ type server struct {
 	httpMetricsMu    sync.Mutex
 	httpRequests     map[httpMetricKey]uint64
 	httpDurations    map[httpRouteKey]*httpDurationHist
+	admissionMu      sync.Mutex
+	metricsGroup     singleflight.Group
 }
 
 type warmSessionPool interface {

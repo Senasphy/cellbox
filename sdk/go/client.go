@@ -310,7 +310,10 @@ func (c *Client) handleExecEvent(name, data string, result *ExecStreamResult, on
 }
 func (c *Client) ReadFile(ctx context.Context, id, path string) ([]byte, error) {
 	u := strings.TrimRight(c.BaseURL, "/") + "/v1/sessions/" + url.PathEscape(id) + "/files?path=" + url.QueryEscape(path)
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return nil, err
+	}
 	req.Header.Set("Authorization", "Bearer "+c.APIKey)
 	h := c.HTTP
 	if h == nil {

@@ -178,3 +178,28 @@ func TestDashboardLoginUsesHttpOnlyCookieAndCSRF(t *testing.T) {
 	}
 	loggedOut.Body.Close()
 }
+
+func TestDashboardSetsSecureCookiesBehindHTTPSProxy(t *testing.T) {
+	api := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"items":[]}`)
+	})
+	handler := Wrap(api)
+	req := httptest.NewRequest(http.MethodPost, "/v1/auth/session", strings.NewReader(`{"api_key":"cbx_test-secret"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Forwarded-Proto", "https")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("login status %d body=%s", w.Code, w.Body.String())
+	}
+	cookies := w.Result().Cookies()
+	if len(cookies) < 2 {
+		t.Fatalf("expected 2 cookies, got %d", len(cookies))
+	}
+	for _, cookie := range cookies {
+		if !cookie.Secure {
+			t.Errorf("cookie %s did not set Secure under X-Forwarded-Proto: https", cookie.Name)
+		}
+	}
+}

@@ -58,3 +58,10 @@ func TestExecStreamRejectsForeignStreamURL(t *testing.T) {
 		t.Fatal("accepted stream URL outside configured origin")
 	}
 }
+
+func TestReadFileRejectsInvalidBaseURL(t *testing.T) {
+	client := &Client{BaseURL: "http://[::1]:namedport", APIKey: "cbx_test"}
+	if _, err := client.ReadFile(context.Background(), "ses_test", "/tmp/a"); err == nil {
+		t.Fatal("expected error for malformed BaseURL")
+	}
+}

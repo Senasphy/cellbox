@@ -28,6 +28,19 @@ func activeSession(state string) bool {
 	return state == "creating" || state == "ready" || state == "stopping"
 }
 
+func (s *server) admitAndCreateSession(w http.ResponseWriter, r *http.Request, persist sessionPersistence, key store.KeyRecord, limits runtime.Limits, record store.SessionRecord) bool {
+	s.admissionMu.Lock()
+	defer s.admissionMu.Unlock()
+	if !s.enforceKeyQuota(w, r, key, limits) || !s.enforceCapacity(w, r, limits) {
+		return false
+	}
+	if err := persist.CreateSession(r.Context(), record); err != nil {
+		problem.Write(w, problem.Problem{Title: "Internal error", Status: http.StatusInternalServerError, Code: "session_persist_failed", Detail: "could not persist session"})
+		return false
+	}
+	return true
+}
+
 func sessionResources(item store.SessionRecord) runtime.Limits {
 	var limits runtime.Limits
 	_ = json.Unmarshal(item.LimitsJSON, &limits)

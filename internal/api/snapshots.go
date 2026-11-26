@@ -199,9 +199,6 @@ func (s *server) forkSession(w http.ResponseWriter, r *http.Request) {
 	_ = json.Unmarshal(source.NetworkPolicyJSON, &policy)
 	_ = json.Unmarshal(source.EnvJSON, &env)
 	_ = json.Unmarshal(source.LabelsJSON, &labels)
-	if !s.enforceKeyQuota(w, r, key, limits) || !s.enforceCapacity(w, r, limits) {
-		return
-	}
 	if !s.backend.Capabilities().DiskLimits {
 		limits.DiskMB = 0
 	}
@@ -220,8 +217,7 @@ func (s *server) forkSession(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := sessionStore.CreateSession(r.Context(), child); err != nil {
-		problem.Write(w, problem.Problem{Title: "Internal error", Status: http.StatusInternalServerError, Code: "session_persist_failed"})
+	if !s.admitAndCreateSession(w, r, sessionStore, key, limits, child) {
 		return
 	}
 	image := runtime.ImageInfo{Reference: source.ImageReference, Digest: source.ImageDigest}
@@ -252,6 +248,7 @@ func (s *server) forkSession(w http.ResponseWriter, r *http.Request) {
 		}
 		if err == nil {
 			policy.ExtraBlockedCIDRs = append([]string(nil), s.cfg.Egress.ExtraBlockedCIDRs...)
+			policy.BandwidthBytesPerSec = s.cfg.Egress.BandwidthBytesPerSec
 			box, err = s.backend.Create(r.Context(), runtime.SandboxSpec{ID: sessionID, Image: image, SnapshotLayers: layers, Limits: limits, Env: nonNilMap(env), NetworkMode: "none", NetworkPolicy: policy})
 		}
 	}

@@ -145,6 +145,14 @@ func (s *server) createExec(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	box := resolver.SandboxByID(session.RuntimeID)
+	if box == nil {
+		record.State = "failed"
+		ended := time.Now().UTC()
+		record.EndedAt = &ended
+		_ = persist.UpdateExec(r.Context(), record)
+		problem.Write(w, problem.Problem{Title: "Unavailable", Status: http.StatusServiceUnavailable, Code: "runtime_unavailable", Detail: "the runtime session is no longer available"})
+		return
+	}
 	handle, err := box.Exec(r.Context(), runtime.ExecRequest{Argv: req.Argv, Shell: req.Shell, Cwd: req.Cwd, Env: effectiveEnv, TTY: req.TTY, TimeoutMS: req.TimeoutMS, OutputLimit: maxExecOutputBytes})
 	if err != nil {
 		record.State = "failed"

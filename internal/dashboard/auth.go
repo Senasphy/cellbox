@@ -163,15 +163,19 @@ func (h *cookieAuth) validCSRF(r *http.Request, expected string) bool {
 		subtle.ConstantTimeCompare([]byte(expected), []byte(cookie.Value)) == 1
 }
 
+func isSecureRequest(r *http.Request) bool {
+	return r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
+}
+
 func (h *cookieAuth) setCookies(w http.ResponseWriter, r *http.Request, token, csrf string, maxAge time.Duration) {
 	expires := time.Now().Add(maxAge)
-	secure := r.TLS != nil
+	secure := isSecureRequest(r)
 	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: token, Path: "/", Expires: expires, MaxAge: int(maxAge.Seconds()), HttpOnly: true, Secure: secure, SameSite: http.SameSiteStrictMode})
 	http.SetCookie(w, &http.Cookie{Name: csrfCookie, Value: csrf, Path: "/", Expires: expires, MaxAge: int(maxAge.Seconds()), Secure: secure, SameSite: http.SameSiteStrictMode})
 }
 
 func (h *cookieAuth) clearCookies(w http.ResponseWriter, r *http.Request) {
-	secure := r.TLS != nil
+	secure := isSecureRequest(r)
 	for _, name := range []string{sessionCookie, csrfCookie} {
 		http.SetCookie(w, &http.Cookie{Name: name, Value: "", Path: "/", MaxAge: -1, Expires: time.Unix(1, 0), HttpOnly: name == sessionCookie, Secure: secure, SameSite: http.SameSiteStrictMode})
 	}

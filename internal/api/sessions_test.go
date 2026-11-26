@@ -984,3 +984,54 @@ func TestSessionReportsUnsupportedDiskLimitAndRejectsExplicitRequest(t *testing.
 		t.Fatalf("explicit disk request status=%d body=%s", explicit.Code, explicit.Body.String())
 	}
 }
+
+type nilSandboxRuntime struct{ *fakeRuntime }
+
+func (nilSandboxRuntime) SandboxByID(string) runtime.Sandbox { return nil }
+
+func TestNilSandboxReturnsUnavailableInsteadOfPanicking(t *testing.T) {
+	db, err := sqlite.Open(filepath.Join(t.TempDir(), "nil-box.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	key, err := auth.Generate("key_nilbox", "admin", "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = db.CreateKey(context.Background(), sqlite.KeyRecord{ID: key.ID, Name: key.Name, Prefix: key.Prefix, Hash: key.Hash, Scope: key.Scope, CreatedAt: time.Now().UTC()}); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	session := store.SessionRecord{
+		ID: "ses_missing_rt", OwnerKeyID: key.ID, ImageReference: "alpine:latest", State: "creating",
+		RuntimeID: "rt_missing", LimitsJSON: []byte(`{"cpu_millicores":1000,"memory_mb":256,"pids":64,"disk_mb":0,"idle_ttl_s":60,"ttl_s":300}`),
+		NetworkPolicyJSON: []byte(`{"mode":"none"}`), EnvJSON: []byte(`{}`), LabelsJSON: []byte(`{}`),
+		CreatedAt: now, LastActivityAt: now, ExpiresAt: now.Add(time.Hour),
+	}
+	if err = db.CreateSession(context.Background(), session); err != nil {
+		t.Fatal(err)
+	}
+	session.State = "ready"
+	if err = db.UpdateSession(context.Background(), session); err != nil {
+		t.Fatal(err)
+	}
+	handler := NewHandlerWithConfig(db, nilSandboxRuntime{&fakeRuntime{}}, "native", config.Defaults())
+
+	fileReq := httptest.NewRequest(http.MethodGet, "/v1/sessions/"+session.ID+"/files?path=/tmp/a", nil)
+	fileReq.Header.Set("Authorization", "Bearer "+key.Secret)
+	fileRes := httptest.NewRecorder()
+	handler.ServeHTTP(fileRes, fileReq)
+	if fileRes.Code != http.StatusServiceUnavailable || !strings.Contains(fileRes.Body.String(), "runtime_unavailable") {
+		t.Fatalf("nil file sandbox status=%d body=%s", fileRes.Code, fileRes.Body.String())
+	}
+
+	execReq := httptest.NewRequest(http.MethodPost, "/v1/sessions/"+session.ID+"/execs", strings.NewReader(`{"argv":["echo","hi"]}`))
+	execReq.Header.Set("Authorization", "Bearer "+key.Secret)
+	execReq.Header.Set("Content-Type", "application/json")
+	execRes := httptest.NewRecorder()
+	handler.ServeHTTP(execRes, execReq)
+	if execRes.Code != http.StatusServiceUnavailable || !strings.Contains(execRes.Body.String(), "runtime_unavailable") {
+		t.Fatalf("nil exec sandbox status=%d body=%s", execRes.Code, execRes.Body.String())
+	}
+}

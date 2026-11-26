@@ -2,6 +2,7 @@ package api
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -125,15 +126,28 @@ type metricsStore interface {
 }
 
 func (s *server) metrics(w http.ResponseWriter, r *http.Request) {
-	persist, ok := s.store.(metricsStore)
-	if !ok {
-		problem.Write(w, problem.Problem{Title: "Unavailable", Status: http.StatusServiceUnavailable, Code: "metrics_unavailable"})
-		return
-	}
-	sessions, err := persist.ListSessions(r.Context(), "", true)
+	v, err, _ := s.metricsGroup.Do("metrics", func() (any, error) {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		return s.buildMetricsPayload(ctx)
+	})
 	if err != nil {
 		problem.Write(w, problem.Problem{Title: "Unavailable", Status: http.StatusServiceUnavailable, Code: "metrics_unavailable"})
 		return
+	}
+	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(v.([]byte))
+}
+
+func (s *server) buildMetricsPayload(ctx context.Context) ([]byte, error) {
+	persist, ok := s.store.(metricsStore)
+	if !ok {
+		return nil, fmt.Errorf("metrics store unavailable")
+	}
+	sessions, err := persist.ListSessions(ctx, "", true)
+	if err != nil {
+		return nil, err
 	}
 	states := map[string]int{"creating": 0, "ready": 0, "stopping": 0, "stopped": 0, "expired": 0, "failed": 0, "lost": 0}
 	committed := committedResources{}
@@ -159,10 +173,9 @@ func (s *server) metrics(w http.ResponseWriter, r *http.Request) {
 			committed.memoryMB += int64(limits.MemoryMB)
 			committed.pids += int64(limits.PIDs)
 		}
-		events, auditErr := persist.ListAuditEvents(r.Context(), session.ID, 1000)
+		events, auditErr := persist.ListAuditEvents(ctx, session.ID, 1000)
 		if auditErr != nil {
-			problem.Write(w, problem.Problem{Title: "Unavailable", Status: http.StatusServiceUnavailable, Code: "metrics_unavailable"})
-			return
+			return nil, auditErr
 		}
 		var createdAt, readyAt time.Time
 		readySource := "cold"
@@ -193,10 +206,9 @@ func (s *server) metrics(w http.ResponseWriter, r *http.Request) {
 		if !createdAt.IsZero() && !readyAt.IsZero() && !readyAt.Before(createdAt) {
 			createDurations[readySource] = append(createDurations[readySource], readyAt.Sub(createdAt).Seconds())
 		}
-		execs, listErr := persist.ListExecs(r.Context(), session.ID)
+		execs, listErr := persist.ListExecs(ctx, session.ID)
 		if listErr != nil {
-			problem.Write(w, problem.Problem{Title: "Unavailable", Status: http.StatusServiceUnavailable, Code: "metrics_unavailable"})
-			return
+			return nil, listErr
 		}
 		for _, exec := range execs {
 			outputBytes += uint64(exec.OutputBytes)
@@ -241,12 +253,10 @@ func (s *server) metrics(w http.ResponseWriter, r *http.Request) {
 	}
 	host, err := readHostCapacity()
 	if err != nil {
-		problem.Write(w, problem.Problem{Title: "Unavailable", Status: http.StatusServiceUnavailable, Code: "metrics_unavailable"})
-		return
+		return nil, err
 	}
-	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
-	w.WriteHeader(http.StatusOK)
-	f := func(format string, args ...any) { _, _ = fmt.Fprintf(w, format, args...) }
+	var buf bytes.Buffer
+	f := func(format string, args ...any) { _, _ = fmt.Fprintf(&buf, format, args...) }
 	f("# HELP cellbox_sessions Current sessions by lifecycle state.\n# TYPE cellbox_sessions gauge\n")
 	for _, state := range []string{"creating", "ready", "stopping", "stopped", "expired", "failed", "lost"} {
 		f("cellbox_sessions{state=%q} %d\n", state, states[state])
@@ -297,6 +307,7 @@ func (s *server) metrics(w http.ResponseWriter, r *http.Request) {
 	f("# HELP cellbox_session_create_total Persisted session creation attempts.\n# TYPE cellbox_session_create_total counter\ncellbox_session_create_total %d\n", len(sessions))
 	f("# HELP cellbox_error_total Failed sessions and exec operations.\n# TYPE cellbox_error_total counter\ncellbox_error_total %d\n", sessionErrors)
 	s.renderHTTPMetrics(f)
+	return buf.Bytes(), nil
 }
 
 func (s *server) renderHTTPMetrics(f func(string, ...any)) {
