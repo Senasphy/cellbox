@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 100 100" fill="none" role="img" aria-labelledby="title desc">
+  <title id="title">CellBox</title>
+  <desc id="desc">CellBox 8-cell modular isolation mark.</desc>
+  <style>
+    .cb-stroke { stroke: #09090b; }
+    .cb-fill { fill: #09090b; }
+    @media (prefers-color-scheme: dark) {
+      .cb-stroke { stroke: #fafafa; }
+      .cb-fill { fill: #fafafa; }
+    }
+  </style>
+  <!-- Top row (top-right slot intentionally open) -->
+  <rect class="cb-stroke" x="6.75" y="6.75" width="20.5" height="20.5" rx="2.5" stroke-width="5.5" />
+  <rect class="cb-stroke" x="39.75" y="6.75" width="20.5" height="20.5" rx="2.5" stroke-width="5.5" />
+  <!-- Middle row (solid center core) -->
+  <rect class="cb-stroke" x="6.75" y="39.75" width="20.5" height="20.5" rx="2.5" stroke-width="5.5" />
+  <rect class="cb-fill" x="37" y="37" width="26" height="26" rx="5.25" />
+  <rect class="cb-stroke" x="72.75" y="39.75" width="20.5" height="20.5" rx="2.5" stroke-width="5.5" />
+  <!-- Bottom row -->
+  <rect class="cb-stroke" x="6.75" y="72.75" width="20.5" height="20.5" rx="2.5" stroke-width="5.5" />
+  <rect class="cb-stroke" x="39.75" y="72.75" width="20.5" height="20.5" rx="2.5" stroke-width="5.5" />
+  <rect class="cb-stroke" x="72.75" y="72.75" width="20.5" height="20.5" rx="2.5" stroke-width="5.5" />
+</svg>

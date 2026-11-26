@@ -1,0 +1,1265 @@
+openapi: 3.1.0
+info:
+  title: cellbox API
+  version: 1.0.0
+  description: Initial single-node session, exec, and file API surface.
+servers:
+  - url: http://127.0.0.1:8080
+paths:
+  /v1/images:
+    get:
+      summary: List cached container images
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Images available to the runtime
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [images]
+                properties:
+                  images:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ImageInfo'
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+    post:
+      summary: Pull an image into the runtime cache
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reference]
+              properties:
+                reference:
+                  type: string
+                  maxLength: 512
+      responses:
+        '201':
+          description: Pulled image metadata
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImageInfo'
+        '400':
+          $ref: '#/components/responses/Problem'
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+    delete:
+      summary: Remove an image from the runtime cache
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: reference
+          in: query
+          required: true
+          schema:
+            type: string
+            maxLength: 512
+      responses:
+        '204':
+          description: Image removed
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '409':
+          $ref: '#/components/responses/Problem'
+  /metrics:
+    get:
+      operationId: metrics
+      responses:
+        "200":
+          description: Prometheus metrics
+          content: { text/plain: { schema: { type: string } } }
+        default:
+          {
+            description: Problem response,
+            content:
+              {
+                application/problem+json:
+                  { schema: { $ref: "#/components/schemas/Problem" } },
+              },
+          }
+  /healthz:
+    get:
+      operationId: health
+      responses:
+        "200":
+          description: Service is alive
+          content: { text/plain: { schema: { type: string } } }
+        default:
+          {
+            description: Problem response,
+            content:
+              {
+                application/problem+json:
+                  { schema: { $ref: "#/components/schemas/Problem" } },
+              },
+          }
+  /readyz:
+    get:
+      operationId: readiness
+      responses:
+        "200":
+          description: Store is ready
+          content: { text/plain: { schema: { type: string } } }
+        default:
+          {
+            description: Problem response,
+            content:
+              {
+                application/problem+json:
+                  { schema: { $ref: "#/components/schemas/Problem" } },
+              },
+          }
+  /v1/system:
+    get:
+      operationId: systemInfo
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Backend and capabilities
+          content:
+            {
+              application/json:
+                { schema: { $ref: "#/components/schemas/System" } },
+            }
+        "401":
+          description: Missing or invalid API key
+          content:
+            {
+              application/problem+json:
+                { schema: { $ref: "#/components/schemas/Problem" } },
+            }
+        "403":
+          {
+            description: Insufficient scope,
+            content:
+              {
+                application/problem+json:
+                  { schema: { $ref: "#/components/schemas/Problem" } },
+              },
+          }
+        default:
+          {
+            description: Problem response,
+            content:
+              {
+                application/problem+json:
+                  { schema: { $ref: "#/components/schemas/Problem" } },
+              },
+          }
+  /v1/keys:
+    get:
+      operationId: listKeys
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          {
+            description: API key metadata without secrets,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/KeyList" } },
+              },
+          }
+        default:
+          {
+            description: Problem response,
+            content:
+              {
+                application/problem+json:
+                  { schema: { $ref: "#/components/schemas/Problem" } },
+              },
+          }
+    post:
+      operationId: createKey
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateKey" }
+      responses:
+        "201":
+          {
+            description: Created key; secret is returned only in this response,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/CreatedKey" } },
+              },
+          }
+        "422":
+          {
+            description: Invalid key request,
+            content:
+              {
+                application/problem+json:
+                  { schema: { $ref: "#/components/schemas/Problem" } },
+              },
+          }
+        default:
+          {
+            description: Problem response,
+            content:
+              {
+                application/problem+json:
+                  { schema: { $ref: "#/components/schemas/Problem" } },
+              },
+          }
+  /v1/keys/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    delete:
+      operationId: revokeKey
+      security: [{ bearerAuth: [] }]
+      responses:
+        "204": { description: Key revoked }
+        "404":
+          {
+            description: Key not found,
+            content:
+              {
+                application/problem+json:
+                  { schema: { $ref: "#/components/schemas/Problem" } },
+              },
+          }
+        default:
+          {
+            description: Problem response,
+            content:
+              {
+                application/problem+json:
+                  { schema: { $ref: "#/components/schemas/Problem" } },
+              },
+          }
+  /v1/sessions:
+    get:
+      operationId: listSessions
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - {
+            name: limit,
+            in: query,
+            schema: { type: integer, minimum: 1, maximum: 200, default: 50 },
+          }
+        - { name: cursor, in: query, schema: { type: string } }
+      responses:
+        "200":
+          {
+            description: Visible sessions,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/SessionList" } },
+              },
+          }
+        default:
+          {
+            description: Problem response,
+            content:
+              {
+                application/problem+json:
+                  { schema: { $ref: "#/components/schemas/Problem" } },
+              },
+          }
+    post:
+      operationId: createSession
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateSession" }
+      responses:
+        "201":
+          {
+            description: Session created,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/Session" } },
+              },
+          }
+        "422":
+          {
+            description: Invalid request,
+            content:
+              {
+                application/problem+json:
+                  { schema: { $ref: "#/components/schemas/Problem" } },
+              },
+          }
+        default:
+          {
+            description: Problem response,
+            content:
+              {
+                application/problem+json:
+                  { schema: { $ref: "#/components/schemas/Problem" } },
+              },
+          }
+  /v1/sessions/stream:
+    get:
+      operationId: streamSessions
+      security: [{ bearerAuth: [] }]
+      description: A current session list snapshot is emitted every two seconds until disconnect; CPU and memory resource samples are refreshed every five seconds for ready sessions.
+      responses:
+        "200":
+          description: Live session snapshots
+          content:
+            text/event-stream:
+              schema: { type: string, description: SSE sessions events carrying SessionSnapshotList JSON }
+        default:
+          {
+            description: Problem response,
+            content:
+              {
+                application/problem+json:
+                  { schema: { $ref: "#/components/schemas/Problem" } },
+              },
+          }
+  /v1/sessions/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    get:
+      operationId: getSession
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          {
+            description: Session details,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/Session" } },
+              },
+          }
+        "404":
+          {
+            description: Session not found,
+            content:
+              {
+                application/problem+json:
+                  { schema: { $ref: "#/components/schemas/Problem" } },
+              },
+          }
+        default:
+          {
+            description: Problem response,
+            content:
+              {
+                application/problem+json:
+                  { schema: { $ref: "#/components/schemas/Problem" } },
+              },
+          }
+    delete:
+      operationId: destroySession
+      security: [{ bearerAuth: [] }]
+      responses:
+        "204": { description: Session destroyed }
+        default:
+          {
+            description: Problem response,
+            content:
+              {
+                application/problem+json:
+                  { schema: { $ref: "#/components/schemas/Problem" } },
+              },
+          }
+  /v1/sessions/{id}/events:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    get:
+      operationId: listSessionEvents
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+        - { name: cursor, in: query, schema: { type: string } }
+      responses:
+        "200":
+          description: Audit events for the session
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      required: [id, session_id, key_id, type, timestamp, detail]
+                      properties:
+                        id: { type: string }
+                        session_id: { type: string }
+                        key_id: { type: string }
+                        type: { type: string }
+                        timestamp: { type: string, format: date-time }
+                        detail: { type: object }
+                  next_cursor: { type: string }
+        default:
+          {
+            description: Problem response,
+            content:
+              {
+                application/problem+json:
+                  { schema: { $ref: "#/components/schemas/Problem" } },
+              },
+          }
+  /v1/sessions/{id}/egress-log:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    get:
+      operationId: listSessionEgressLog
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+        - { name: cursor, in: query, schema: { type: string } }
+      responses:
+        "200": { description: Egress decisions for the session }
+        default:
+          {
+            description: Problem response,
+            content:
+              {
+                application/problem+json:
+                  { schema: { $ref: "#/components/schemas/Problem" } },
+              },
+          }
+  /v1/sessions/{id}/replay:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    get:
+      operationId: replaySession
+      security: [{ bearerAuth: [] }]
+      description: Paged, timestamp-ordered exec boundaries and base64 output records for a session.
+      parameters:
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+        - { name: cursor, in: query, schema: { type: string } }
+      responses:
+        "200":
+          description: Replay events ordered by timestamp
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      required: [type, exec_id, timestamp]
+                      properties:
+                        type: { type: string, enum: [exec.start, output, exec.end] }
+                        exec_id: { type: string }
+                        timestamp: { type: string, format: date-time }
+                        stream: { type: string, enum: [stdout, stderr, tty] }
+                        data: { type: string, format: byte }
+                        exec: { $ref: "#/components/schemas/Exec" }
+                  next_cursor: { type: string }
+        default:
+          {
+            description: Problem response,
+            content:
+              {
+                application/problem+json:
+                  { schema: { $ref: "#/components/schemas/Problem" } },
+              },
+          }
+  /v1/sessions/{id}/snapshots:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    get:
+      operationId: listSessionSnapshots
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Snapshots created from this session
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/Snapshot" }
+        default:
+          {
+            description: Problem response,
+            content:
+              {
+                application/problem+json:
+                  { schema: { $ref: "#/components/schemas/Problem" } },
+              },
+          }
+    post:
+      operationId: createSnapshot
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                labels: { type: object, additionalProperties: { type: string } }
+      responses:
+        "201":
+          description: Immutable filesystem snapshot created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Snapshot" }
+        default:
+          {
+            description: Problem response,
+            content:
+              {
+                application/problem+json:
+                  { schema: { $ref: "#/components/schemas/Problem" } },
+              },
+          }
+  /v1/sessions/{id}/fork:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    post:
+      operationId: forkSession
+      security: [{ bearerAuth: [] }]
+      description: Create a child session from an existing snapshot, or snapshot the current session and fork it in one call when snapshot_id is omitted.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                snapshot_id: { type: string }
+      responses:
+        "201":
+          description: Forked session created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Session" }
+        default:
+          {
+            description: Problem response,
+            content:
+              {
+                application/problem+json:
+                  { schema: { $ref: "#/components/schemas/Problem" } },
+              },
+          }
+  /v1/snapshots/{snapshotID}:
+    parameters:
+      - { name: snapshotID, in: path, required: true, schema: { type: string } }
+    get:
+      operationId: getSnapshot
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Snapshot metadata
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Snapshot" }
+        default:
+          {
+            description: Problem response,
+            content:
+              {
+                application/problem+json:
+                  { schema: { $ref: "#/components/schemas/Problem" } },
+              },
+          }
+    delete:
+      operationId: deleteSnapshot
+      security: [{ bearerAuth: [] }]
+      responses:
+        "204": { description: Snapshot deleted }
+        default:
+          {
+            description: Problem response,
+            content:
+              {
+                application/problem+json:
+                  { schema: { $ref: "#/components/schemas/Problem" } },
+              },
+          }
+  /v1/sessions/{id}/metrics:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    get:
+      operationId: getSessionMetrics
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Current resource usage and configured limits
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SessionMetrics" }
+        default:
+          {
+            description: Problem response,
+            content:
+              {
+                application/problem+json:
+                  { schema: { $ref: "#/components/schemas/Problem" } },
+              },
+          }
+  /v1/sessions/{id}/metrics/stream:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    get:
+      operationId: streamSessionMetrics
+      security: [{ bearerAuth: [] }]
+      description: Server-sent metrics samples emitted once per second until the client disconnects.
+      responses:
+        "200":
+          description: Live session usage samples
+          content:
+            text/event-stream:
+              schema: { type: string, description: SSE metrics events carrying SessionMetrics JSON }
+        default:
+          {
+            description: Problem response,
+            content:
+              {
+                application/problem+json:
+                  { schema: { $ref: "#/components/schemas/Problem" } },
+              },
+          }
+  /v1/sessions/{id}/execs:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    post:
+      operationId: startExec
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: wait, in: query, schema: { type: boolean, default: false } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ExecRequest" }
+      responses:
+        "202":
+          {
+            description: Exec started; stream_url points to output events,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/Exec" } },
+              },
+          }
+        "200":
+          {
+            description: Completed exec when wait=true,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/ExecWait" } },
+              },
+          }
+        default:
+          {
+            description: Problem response,
+            content:
+              {
+                application/problem+json:
+                  { schema: { $ref: "#/components/schemas/Problem" } },
+              },
+          }
+    get:
+      operationId: listExecs
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - {
+            name: limit,
+            in: query,
+            schema: { type: integer, minimum: 1, maximum: 200, default: 50 },
+          }
+        - { name: cursor, in: query, schema: { type: string } }
+      responses:
+        "200":
+          {
+            description: Execs for the session,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/ExecList" } },
+              },
+          }
+        default:
+          {
+            description: Problem response,
+            content:
+              {
+                application/problem+json:
+                  { schema: { $ref: "#/components/schemas/Problem" } },
+              },
+          }
+  /v1/sessions/{id}/execs/{execID}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+      - { name: execID, in: path, required: true, schema: { type: string } }
+    get:
+      operationId: getExec
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          {
+            description: Exec status,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/Exec" } },
+              },
+          }
+        "404":
+          {
+            description: Exec not found,
+            content:
+              {
+                application/problem+json:
+                  { schema: { $ref: "#/components/schemas/Problem" } },
+              },
+          }
+        default:
+          {
+            description: Problem response,
+            content:
+              {
+                application/problem+json:
+                  { schema: { $ref: "#/components/schemas/Problem" } },
+              },
+          }
+  /v1/sessions/{id}/execs/{execID}/asciicast:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+      - { name: execID, in: path, required: true, schema: { type: string } }
+    get:
+      operationId: exportAsciicast
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Asciicast v2 recording for a TTY exec
+          content:
+            application/x-asciicast:
+              schema: { type: string }
+        "404":
+          description: TTY exec not found
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        default:
+          description: Problem response
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+  /v1/sessions/{id}/execs/{execID}/signal:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+      - { name: execID, in: path, required: true, schema: { type: string } }
+    post:
+      operationId: signalExec
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ExecSignalRequest" }
+      responses:
+        "204": { description: Signal sent }
+        "404":
+          {
+            description: Exec not found,
+            content:
+              {
+                application/problem+json:
+                  { schema: { $ref: "#/components/schemas/Problem" } },
+              },
+          }
+        "409":
+          {
+            description: Exec is no longer running,
+            content:
+              {
+                application/problem+json:
+                  { schema: { $ref: "#/components/schemas/Problem" } },
+              },
+          }
+        "422":
+          {
+            description: Invalid or unsupported signal,
+            content:
+              {
+                application/problem+json:
+                  { schema: { $ref: "#/components/schemas/Problem" } },
+              },
+          }
+        default:
+          {
+            description: Problem response,
+            content:
+              {
+                application/problem+json:
+                  { schema: { $ref: "#/components/schemas/Problem" } },
+              },
+          }
+  /v1/sessions/{id}/execs/{execID}/stream:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+      - { name: execID, in: path, required: true, schema: { type: string } }
+      - { name: Last-Event-ID, in: header, schema: { type: string } }
+    get:
+      operationId: streamExec
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          {
+            description: Resumable server-sent exec output,
+            content: { text/event-stream: { schema: { type: string } } },
+          }
+        default:
+          {
+            description: Problem response,
+            content:
+              {
+                application/problem+json:
+                  { schema: { $ref: "#/components/schemas/Problem" } },
+              },
+          }
+  /v1/sessions/{id}/files:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+      - { name: path, in: query, required: true, schema: { type: string } }
+    get:
+      operationId: readFile
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          {
+            description: File bytes,
+            content:
+              {
+                application/octet-stream:
+                  { schema: { type: string, format: binary } },
+              },
+          }
+        default:
+          {
+            description: Problem response,
+            content:
+              {
+                application/problem+json:
+                  { schema: { $ref: "#/components/schemas/Problem" } },
+              },
+          }
+    put:
+      operationId: writeFile
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/octet-stream: { schema: { type: string, format: binary } }
+      responses:
+        "204": { description: File written }
+        default:
+          {
+            description: Problem response,
+            content:
+              {
+                application/problem+json:
+                  { schema: { $ref: "#/components/schemas/Problem" } },
+              },
+          }
+    delete:
+      operationId: deleteFile
+      security: [{ bearerAuth: [] }]
+      responses:
+        "204": { description: File deleted }
+        default:
+          {
+            description: Problem response,
+            content:
+              {
+                application/problem+json:
+                  { schema: { $ref: "#/components/schemas/Problem" } },
+              },
+          }
+  /v1/sessions/{id}/files/list:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+      - { name: path, in: query, required: false, schema: { type: string } }
+    get:
+      operationId: listFiles
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - {
+            name: limit,
+            in: query,
+            schema: { type: integer, minimum: 1, maximum: 200, default: 50 },
+          }
+        - { name: cursor, in: query, schema: { type: string } }
+      responses:
+        "200":
+          {
+            description: Directory entries,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/FileList" } },
+              },
+          }
+        default:
+          {
+            description: Problem response,
+            content:
+              {
+                application/problem+json:
+                  { schema: { $ref: "#/components/schemas/Problem" } },
+              },
+          }
+  /v1/sessions/{id}/archive:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+      - { name: path, in: query, required: true, schema: { type: string } }
+    get:
+      operationId: downloadArchive
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          {
+            description: Tar archive,
+            content:
+              {
+                application/x-tar: { schema: { type: string, format: binary } },
+              },
+          }
+        default:
+          {
+            description: Problem response,
+            content:
+              {
+                application/problem+json:
+                  { schema: { $ref: "#/components/schemas/Problem" } },
+              },
+          }
+    put:
+      operationId: uploadArchive
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/x-tar: { schema: { type: string, format: binary } }
+      responses:
+        "204": { description: Archive extracted }
+        default:
+          {
+            description: Problem response,
+            content:
+              {
+                application/problem+json:
+                  { schema: { $ref: "#/components/schemas/Problem" } },
+              },
+          }
+  /v1/limit-breaches:
+    get:
+      operationId: listRecentLimitBreaches
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Recent owner-scoped limit breach events
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      required: [id, session_id, key_id, type, timestamp, detail]
+                      properties:
+                        id: { type: string }
+                        session_id: { type: string }
+                        key_id: { type: string }
+                        type: { type: string, enum: [limit.breach] }
+                        timestamp: { type: string, format: date-time }
+                        detail: { type: object, additionalProperties: true }
+        "401":
+          description: Missing or invalid API key
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        default:
+          description: Problem response
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+components:
+  responses:
+    Problem:
+      description: API problem
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+  schemas:
+    ImageInfo:
+      type: object
+      required: [reference, digest, size]
+      properties:
+        reference: { type: string }
+        digest: { type: string }
+        size: { type: integer, format: int64 }
+    Snapshot:
+      type: object
+      required: [id, source_session_id, size_bytes, created_at, labels]
+      properties:
+        id: { type: string }
+        source_session_id: { type: string }
+        parent_snapshot_id: { type: string }
+        size_bytes: { type: integer, format: int64 }
+        flattened: { type: boolean }
+        created_at: { type: string, format: date-time }
+        labels: { type: object, additionalProperties: { type: string } }
+    Problem:
+      type: object
+      required: [title, status, code]
+      properties:
+        type: { type: string }
+        title: { type: string }
+        status: { type: integer }
+        detail: { type: string }
+        code: { type: string }
+    System:
+      type: object
+      required: [backend, capabilities, doctor_status, doctor_checks, effective_config]
+      properties:
+        backend: { type: string }
+        capabilities:
+          type: object
+          properties:
+            snapshots: { type: boolean }
+            tty: { type: boolean }
+            tty_exec: { type: boolean }
+            cpu_limits: { type: boolean }
+            disk_limits: { type: boolean }
+            timeout_kills_session: { type: boolean }
+            egress_policy: { type: boolean }
+            warm_pool: { type: boolean }
+        doctor_status: { type: string, enum: [checking, ready, degraded] }
+        doctor_checks: { type: array, items: { type: string } }
+        effective_config:
+          type: object
+          description: Effective service settings. TLS private key path is intentionally omitted; tls.key_configured reports only whether one is set.
+          additionalProperties: true
+    CreateKey:
+      type: object
+      required: [name, scope]
+      additionalProperties: false
+      properties:
+        name: { type: string, minLength: 1, maxLength: 128 }
+        scope: { type: string, enum: [admin, session] }
+    KeyMetadata:
+      type: object
+      required: [id, name, prefix, scope, created_at]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        prefix: { type: string }
+        scope: { type: string, enum: [admin, session] }
+        created_at: { type: string, format: date-time }
+        last_used_at: { type: string, format: date-time }
+        revoked_at: { type: string, format: date-time }
+    CreatedKey:
+      allOf:
+        - { $ref: "#/components/schemas/KeyMetadata" }
+        - type: object
+          required: [secret]
+          properties:
+            secret:
+              { type: string, description: Present only in the create response }
+    KeyList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          { type: array, items: { $ref: "#/components/schemas/KeyMetadata" } }
+    Session:
+      type: object
+      required:
+        [
+          id,
+          image,
+          state,
+          limits,
+          network_policy,
+          env,
+          labels,
+          created_at,
+          last_activity_at,
+          expires_at,
+        ]
+      properties:
+        id: { type: string }
+        image: { type: string }
+        image_digest: { type: string }
+        parent_snapshot_id: { type: string }
+        state: { type: string }
+        limits: { type: object }
+        network_policy: { type: object }
+        env: { type: object, additionalProperties: { type: string } }
+        labels: { type: object, additionalProperties: { type: string } }
+        created_at: { type: string, format: date-time }
+        last_activity_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+        failure_reason: { type: string }
+    SessionList:
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/Session" } }
+        next_cursor: { type: string }
+    SessionMetrics:
+      type: object
+      required: [sampled_at, cpu_usage_ns, memory_bytes, pids, io_read_bytes, io_write_bytes, oom_kills, limits]
+      properties:
+        sampled_at: { type: string, format: date-time }
+        cpu_usage_ns: { type: integer, format: uint64 }
+        memory_bytes: { type: integer, format: uint64 }
+        pids: { type: integer }
+        io_read_bytes: { type: integer, format: uint64 }
+        io_write_bytes: { type: integer, format: uint64 }
+        oom_kills: { type: integer, format: uint64 }
+        limits: { type: object }
+    SessionSnapshotList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+            required: [id, image, state, limits, labels, created_at]
+            properties:
+              id: { type: string }
+              image: { type: string }
+              state: { type: string }
+              limits: { type: object }
+              labels: { type: object, additionalProperties: { type: string } }
+              created_at: { type: string, format: date-time }
+              sampled_at: { type: string, format: date-time }
+              cpu_usage_ns: { type: integer, format: uint64 }
+              memory_bytes: { type: integer, format: uint64 }
+    Exec:
+      type: object
+      required: [id, session_id, state, started_at, output_bytes, truncated]
+      properties:
+        id: { type: string }
+        session_id: { type: string }
+        argv: { type: array, items: { type: string } }
+        shell: { type: string }
+        cwd: { type: string }
+        state: { type: string }
+        exit_code: { type: integer }
+        signal: { type: integer }
+        started_at: { type: string, format: date-time }
+        ended_at: { type: string, format: date-time }
+        output_bytes: { type: integer }
+        truncated: { type: boolean }
+        peak_memory_bytes: { type: integer, format: int64 }
+        stream_url: { type: string }
+    ExecList:
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/Exec" } }
+        next_cursor: { type: string }
+    OutputEvent:
+      type: object
+      required: [seq, ts, stream, data]
+      properties:
+        seq: { type: integer }
+        ts: { type: string, format: date-time }
+        stream: { type: string, enum: [stdout, stderr, tty] }
+        data: { type: string, description: Base64-encoded output bytes }
+    ExecWait:
+      type: object
+      required: [exec, output]
+      properties:
+        exec: { $ref: "#/components/schemas/Exec" }
+        output:
+          { type: array, items: { $ref: "#/components/schemas/OutputEvent" } }
+    FileInfo:
+      type: object
+      required: [path, size, mode, is_dir]
+      properties:
+        path: { type: string }
+        size: { type: integer }
+        mode: { type: integer }
+        is_dir: { type: boolean }
+    FileList:
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/FileInfo" } }
+        next_cursor: { type: string }
+    CreateSession:
+      type: object
+      required: [image]
+      properties:
+        image: { type: string }
+        limits: { type: object }
+        network_policy:
+          type: object
+          properties:
+            mode: { type: string, enum: [none, allowlist, internet] }
+            allow:
+              type: array
+              items:
+                type: object
+                required: [host, ports]
+                properties:
+                  host: { type: string }
+                  ports: { type: array, items: { type: integer, minimum: 1, maximum: 65535 } }
+        env: { type: object, additionalProperties: { type: string } }
+        labels: { type: object, additionalProperties: { type: string } }
+        ttl_s: { type: integer }
+    ExecRequest:
+      type: object
+      properties:
+        argv: { type: array, items: { type: string } }
+        shell: { type: string }
+        cwd: { type: string }
+        env: { type: object, additionalProperties: { type: string } }
+        timeout_ms: { type: integer }
+        tty: { type: boolean }
+    ExecSignalRequest:
+      type: object
+      required: [signal]
+      additionalProperties: false
+      properties:
+        signal: { type: integer, minimum: 1, maximum: 64 }
