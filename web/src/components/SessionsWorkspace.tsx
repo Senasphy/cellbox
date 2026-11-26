@@ -156,7 +156,7 @@ export function SessionsWorkspace({
             type="button"
             disabled={!connected || busy}
             onClick={onCreate}
-            className="cb-mono inline-flex items-center gap-1.5 border border-[var(--cb-btn-primary-bg)] bg-[var(--cb-btn-primary-bg)] px-3.5 py-2 text-xs font-medium text-[var(--cb-btn-primary-fg)] transition-colors hover:bg-[var(--cb-btn-primary-hover)] disabled:opacity-50"
+            className="cb-mono inline-flex items-center gap-1.5 border border-[var(--cb-btn-primary-bg)] bg-[var(--cb-btn-primary-bg)] px-3.5 py-2 text-xs font-medium text-[var(--cb-btn-primary-fg)] hover:bg-[var(--cb-btn-primary-hover)] disabled:opacity-50"
           >
             <Plus className="size-3.5" aria-hidden="true" />
             <span>Create sandbox</span>
@@ -291,7 +291,7 @@ export function SessionsWorkspace({
             </thead>
             <tbody className="divide-y divide-[var(--cb-line)] text-xs">
               {visibleSessions.map((session) => (
-                <tr key={session.id} className="transition-colors hover:bg-[var(--cb-panel)]">
+                <tr key={session.id} className="hover:bg-[var(--cb-panel)]">
                   <td className="px-4 py-2.5">
                     <input
                       type="checkbox"

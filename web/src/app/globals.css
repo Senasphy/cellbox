@@ -122,7 +122,6 @@ body {
   font-family: var(--font-sans);
   position: relative;
   overflow-x: clip;
-  transition: background-color 180ms ease, color 180ms ease;
 }
 
 .cb-grid-bg {

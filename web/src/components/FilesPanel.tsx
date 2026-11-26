@@ -75,7 +75,7 @@ export function FilesPanel({
         <button
           type="button"
           onClick={onDownloadArchive}
-          className="cb-mono inline-flex items-center gap-1.5 border border-[var(--cb-line-strong)] bg-[var(--cb-paper)] px-3 py-1.5 text-xs text-[var(--cb-ink)] transition-colors hover:bg-[var(--cb-surface)]"
+          className="cb-mono inline-flex items-center gap-1.5 border border-[var(--cb-line-strong)] bg-[var(--cb-paper)] px-3 py-1.5 text-xs text-[var(--cb-ink)] hover:bg-[var(--cb-surface)]"
         >
           <Archive className="size-3.5" aria-hidden="true" />
           <span>Download directory as tar</span>
@@ -135,7 +135,7 @@ export function FilesPanel({
             return (
               <li
                 key={entry.path}
-                className="flex items-center justify-between gap-3 px-3 py-2 transition-colors hover:bg-[var(--cb-panel)]"
+                className="flex items-center justify-between gap-3 px-3 py-2 hover:bg-[var(--cb-panel)]"
               >
                 <button
                   type="button"

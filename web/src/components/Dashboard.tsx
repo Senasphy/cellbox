@@ -778,7 +778,7 @@ export function Dashboard() {
                     type="button"
                     aria-current={active ? "page" : undefined}
                     onClick={() => void showPage(name)}
-                    className={`cb-mono border px-2.5 py-1 text-xs transition-colors ${
+                    className={`cb-mono border px-2.5 py-1 text-xs ${
                       active
                         ? "border-[var(--cb-btn-primary-bg)] bg-[var(--cb-btn-primary-bg)] font-medium text-[var(--cb-btn-primary-fg)]"
                         : "border-transparent text-[var(--cb-muted)] hover:border-[var(--cb-line)] hover:text-[var(--cb-ink)]"
@@ -799,7 +799,7 @@ export function Dashboard() {
                 setPaletteQuery("");
                 setPaletteOpen(true);
               }}
-              className="cb-mono inline-flex items-center gap-1.5 border border-[var(--cb-line)] bg-[var(--cb-paper)] px-2.5 py-1 text-xs text-[var(--cb-muted)] transition-colors hover:border-[var(--cb-line-strong)] hover:text-[var(--cb-ink)]"
+              className="cb-mono inline-flex items-center gap-1.5 border border-[var(--cb-line)] bg-[var(--cb-paper)] px-2.5 py-1 text-xs text-[var(--cb-muted)] hover:border-[var(--cb-line-strong)] hover:text-[var(--cb-ink)]"
             >
               <Command className="size-3.5" aria-hidden="true" />
               <span>Commands (⌘K)</span>
@@ -809,7 +809,7 @@ export function Dashboard() {
               type="button"
               aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} theme`}
               onClick={() => setTheme((current) => (current === "dark" ? "light" : "dark"))}
-              className="cb-mono inline-flex items-center gap-1.5 border border-[var(--cb-line)] bg-[var(--cb-paper)] px-2.5 py-1 text-xs text-[var(--cb-muted)] transition-colors hover:border-[var(--cb-line-strong)] hover:text-[var(--cb-ink)]"
+              className="cb-mono inline-flex items-center gap-1.5 border border-[var(--cb-line)] bg-[var(--cb-paper)] px-2.5 py-1 text-xs text-[var(--cb-muted)] hover:border-[var(--cb-line-strong)] hover:text-[var(--cb-ink)]"
             >
               {theme === "dark" ? (
                 <Sun className="size-3.5" aria-hidden="true" />
@@ -825,7 +825,7 @@ export function Dashboard() {
               <button
                 type="button"
                 onClick={() => void disconnect()}
-                className="cb-mono inline-flex items-center gap-1.5 border border-[var(--cb-line)] bg-[var(--cb-paper)] px-2.5 py-1 text-xs text-[var(--cb-muted)] transition-colors hover:border-[var(--cb-err-border)] hover:text-[var(--cb-err)]"
+                className="cb-mono inline-flex items-center gap-1.5 border border-[var(--cb-line)] bg-[var(--cb-paper)] px-2.5 py-1 text-xs text-[var(--cb-muted)] hover:border-[var(--cb-err-border)] hover:text-[var(--cb-err)]"
               >
                 <LogOut className="size-3.5" aria-hidden="true" />
                 <span>Disconnect</span>
@@ -899,7 +899,7 @@ export function Dashboard() {
 
                 <button
                   type="submit"
-                  className="cb-mono inline-flex w-full items-center justify-center gap-2 border border-[var(--cb-btn-primary-bg)] bg-[var(--cb-btn-primary-bg)] px-4 py-2.5 text-xs font-medium text-[var(--cb-btn-primary-fg)] transition-colors hover:bg-[var(--cb-btn-primary-hover)]"
+                  className="cb-mono inline-flex w-full items-center justify-center gap-2 border border-[var(--cb-btn-primary-bg)] bg-[var(--cb-btn-primary-bg)] px-4 py-2.5 text-xs font-medium text-[var(--cb-btn-primary-fg)] hover:bg-[var(--cb-btn-primary-hover)]"
                 >
                   <span>Connect</span>
                   <ArrowRight className="size-3.5" aria-hidden="true" />

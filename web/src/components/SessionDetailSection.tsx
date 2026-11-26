@@ -118,7 +118,7 @@ export function SessionDetailSection({
               type="button"
               aria-current={active ? "page" : undefined}
               onClick={() => onTabChange(name)}
-              className={`cb-mono border px-3 py-1.5 text-xs transition-colors ${
+              className={`cb-mono border px-3 py-1.5 text-xs ${
                 active
                   ? "border-[var(--cb-btn-primary-bg)] bg-[var(--cb-btn-primary-bg)] font-medium text-[var(--cb-btn-primary-fg)]"
                   : "border-transparent bg-transparent text-[var(--cb-muted)] hover:border-[var(--cb-line)] hover:text-[var(--cb-ink)]"
