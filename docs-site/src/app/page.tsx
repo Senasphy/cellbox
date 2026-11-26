@@ -239,7 +239,7 @@ export default function HomePage() {
 
       <main className="cb-frame">
         {/* Hero */}
-        <section className="cb-rule-b cb-corner relative grid grid-cols-1 items-center gap-8 overflow-hidden px-4 py-10 sm:px-6 sm:py-12 lg:grid-cols-12 lg:gap-10 lg:px-10 lg:py-18">
+        <section className="cb-rule-b cb-corner relative grid min-h-[calc(100svh-3.5rem)] grid-cols-1 content-center items-center gap-8 overflow-hidden px-4 py-10 sm:px-6 sm:py-12 lg:grid-cols-12 lg:gap-10 lg:px-10 lg:py-14">
           <div
             aria-hidden="true"
             className="pointer-events-none absolute -top-10 -right-10 text-[var(--cb-ink)] opacity-[0.04]"
@@ -338,10 +338,17 @@ $ python examples/eval-runner.py --fake-model
               </div>
             </div>
           </div>
+
+          <a
+            href="#application-cases"
+            className="cb-mono hidden items-center gap-1.5 text-[11px] text-[var(--cb-faint)] transition-colors hover:text-[var(--cb-ink)] lg:absolute lg:right-10 lg:bottom-5 lg:inline-flex"
+          >
+            <span>01 // Application Cases ↓</span>
+          </a>
         </section>
 
         {/* 01 // Application Cases */}
-        <section className="cb-rule-b">
+        <section id="application-cases" className="cb-rule-b">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--cb-line)] px-4 py-5 sm:px-6 md:px-10">
             <div className="min-w-0">
               <div className="cb-mono text-[11px] uppercase tracking-[0.14em] text-[var(--cb-muted)]">
