@@ -4,8 +4,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
+import { fetchSessionReplay, type ReplayPage } from "../api/client";
 
-type ReplayEvent = { type: "exec.start" | "output" | "exec.end"; exec_id: string; timestamp: string; stream?: string; data?: string; exec?: { argv?: string[]; shell?: string; tty?: boolean; state?: string; exit_code?: number | null } };
+type ReplayEvent = ReplayPage["items"][number];
 
 function decodeBytes(value: string) {
   return Uint8Array.from(atob(value), char => char.charCodeAt(0));
@@ -25,10 +26,7 @@ export default function Replay({ sessionID }: { sessionID: string }) {
   const load = useCallback(async (next = "", signal?: AbortSignal) => {
     setLoading(true); setError("");
     try {
-      const query = new URLSearchParams({ limit: "50", ...(next ? { cursor: next } : {}) });
-      const response = await fetch(`/v1/sessions/${encodeURIComponent(sessionID)}/replay?${query}`, { signal });
-      if (!response.ok) throw new Error(`Replay request failed (${response.status}): ${(await response.text()).slice(0, 300)}`);
-      const data = await response.json();
+      const data = await fetchSessionReplay(sessionID, signal, next || undefined);
       setEvents(current => next ? [...current, ...(data.items || [])] : (data.items || []));
       setCursor(data.next_cursor || "");
       if (!next) setPosition(0);
@@ -105,7 +103,7 @@ export default function Replay({ sessionID }: { sessionID: string }) {
       </div>
       <ol aria-label="Replay exec events" style={{ maxHeight: 220, overflow: "auto" }}>{visible.filter(event => event.type !== "output").map((event, index) => <li key={`${event.exec_id}:${event.type}:${index}`}>
         {new Date(event.timestamp).toLocaleTimeString()} · {event.type} · {event.exec?.shell || event.exec?.argv?.join(" ") || event.exec_id}{event.type === "exec.end" ? ` · ${event.exec?.state || "finished"}${event.exec?.exit_code != null ? ` (${event.exec.exit_code})` : ""}` : ""}
-        {event.type === "exec.start" && event.exec?.tty && <> · <a href={`/v1/sessions/${encodeURIComponent(sessionID)}/execs/${encodeURIComponent(event.exec_id)}/asciicast`} download>Download asciicast</a></>}
+        {event.type === "exec.start" && (event.exec as { tty?: boolean } | undefined)?.tty && <> · <a href={`/v1/sessions/${encodeURIComponent(sessionID)}/execs/${encodeURIComponent(event.exec_id)}/asciicast`} download>Download asciicast</a></>}
       </li>)}</ol>
       {cursor && <button disabled={loading} onClick={() => void load(cursor)}>{loading ? "Loading…" : "Load more replay"}</button>}
     </>}

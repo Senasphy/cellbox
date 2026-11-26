@@ -1,20 +1,16 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { createSessionSnapshot, deleteSnapshot, fetchSessionSnapshots, forkSessionSnapshot, type SnapshotItem } from "../api/client";
 
-type Snapshot = { id: string; source_session_id: string; parent_snapshot_id?: string; size_bytes: number; created_at: string; labels: Record<string, string> };
-
-export default function Snapshots({ sessionID, onFork }: { sessionID: string; onFork?: (sessionID: string) => void }) {
-  const [items, setItems] = useState<Snapshot[]>([]);
+export default function Snapshots({ sessionID, csrf, onFork }: { sessionID: string; csrf: string; onFork?: (sessionID: string) => void }) {
+  const [items, setItems] = useState<SnapshotItem[]>([]);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [forked, setForked] = useState("");
 
   const load = useCallback(async (signal?: AbortSignal) => {
-    const response = await fetch(`/v1/sessions/${encodeURIComponent(sessionID)}/snapshots`, { signal });
-    if (!response.ok) throw new Error(`Snapshot list failed (${response.status})`);
-    const data = await response.json();
-    setItems(data.items || []);
+    setItems(await fetchSessionSnapshots(sessionID, signal));
   }, [sessionID]);
 
   useEffect(() => {
@@ -28,8 +24,7 @@ export default function Snapshots({ sessionID, onFork }: { sessionID: string; on
   async function create() {
     setBusy(true); setError("");
     try {
-      const response = await fetch(`/v1/sessions/${encodeURIComponent(sessionID)}/snapshots`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) });
-      if (!response.ok) throw new Error(`Snapshot creation failed (${response.status}): ${(await response.text()).slice(0, 300)}`);
+      await createSessionSnapshot(sessionID, csrf);
       await load();
     } catch (caught) { setError(String(caught)); }
     finally { setBusy(false); }
@@ -38,9 +33,7 @@ export default function Snapshots({ sessionID, onFork }: { sessionID: string; on
   async function fork(snapshotID?: string) {
     setBusy(true); setError(""); setForked("");
     try {
-      const response = await fetch(`/v1/sessions/${encodeURIComponent(sessionID)}/fork`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(snapshotID ? { snapshot_id: snapshotID } : {}) });
-      if (!response.ok) throw new Error(`Fork failed (${response.status}): ${(await response.text()).slice(0, 300)}`);
-      const child = await response.json();
+      const child = await forkSessionSnapshot(sessionID, csrf, snapshotID);
       setForked(child.id);
       if (!snapshotID) await load();
       onFork?.(child.id);
@@ -51,8 +44,7 @@ export default function Snapshots({ sessionID, onFork }: { sessionID: string; on
   async function remove(snapshotID: string) {
     setBusy(true); setError("");
     try {
-      const response = await fetch(`/v1/snapshots/${encodeURIComponent(snapshotID)}`, { method: "DELETE" });
-      if (!response.ok) throw new Error(`Snapshot deletion failed (${response.status}): ${(await response.text()).slice(0, 300)}`);
+      await deleteSnapshot(snapshotID, csrf);
       await load();
     } catch (caught) { setError(String(caught)); }
     finally { setBusy(false); }

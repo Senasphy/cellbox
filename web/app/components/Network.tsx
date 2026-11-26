@@ -1,21 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { fetchSessionEgressLog, type EgressEventList } from "../api/client";
 
-type EgressRow = {
-  id: string;
-  timestamp: string;
-  detail: {
-    host?: string;
-    port?: number;
-    resolved_ip?: string;
-    verdict?: string;
-    reason?: string;
-    bytes_up?: number;
-    bytes_down?: number;
-    duration_ms?: number;
-  };
-};
+type EgressRow = EgressEventList["items"][number];
 
 export default function Network({ sessionID }: { sessionID: string }) {
   const [items, setItems] = useState<EgressRow[]>([]);
@@ -32,9 +20,7 @@ export default function Network({ sessionID }: { sessionID: string }) {
     setNextCursor("");
     async function load() {
       try {
-        const response = await fetch(`/v1/sessions/${encodeURIComponent(sessionID)}/egress-log?limit=100`, { signal: controller.signal });
-        if (!response.ok) throw new Error(`Network log request failed (${response.status})`);
-        const data = await response.json();
+        const data = await fetchSessionEgressLog(sessionID, controller.signal);
         if (!stopped) {
           const recent: EgressRow[] = data.items || [];
           setItems(current => {
@@ -62,10 +48,7 @@ export default function Network({ sessionID }: { sessionID: string }) {
     if (!nextCursor || loadingMore) return;
     setLoadingMore(true);
     try {
-      const query = new URLSearchParams({ limit: "100", cursor: nextCursor });
-      const response = await fetch(`/v1/sessions/${encodeURIComponent(sessionID)}/egress-log?${query}`);
-      if (!response.ok) throw new Error(`Network log request failed (${response.status})`);
-      const data = await response.json();
+      const data = await fetchSessionEgressLog(sessionID, undefined, nextCursor);
       const older: EgressRow[] = data.items || [];
       setItems(current => {
         const merged = new Map(current.map(item => [item.id, item]));

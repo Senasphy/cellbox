@@ -37,10 +37,15 @@
 }
 
 :root[data-theme="light"] input,
+:root[data-theme="light"] select,
 :root[data-theme="light"] textarea {
   background: #ffffff;
   color: #0f172a;
   border: 1px solid #64748b;
+}
+
+:root[data-theme="light"] code {
+  color: #0f172a;
 }
 
 :root[data-theme="light"] button {
@@ -52,6 +57,7 @@
 
 button:focus-visible,
 input:focus-visible,
+select:focus-visible,
 textarea:focus-visible {
   outline: 3px solid #38bdf8;
   outline-offset: 2px;
