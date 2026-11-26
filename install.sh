@@ -39,11 +39,14 @@ if [[ -n "$token" ]]; then
 fi
 
 if [[ "$requested_version" == latest ]]; then
-  latest_url=$(curl "${curl_args[@]}" --output /dev/null --write-out '%{url_effective}' "https://github.com/${repository}/releases/latest")
+  latest_url=$(curl "${curl_args[@]}" --output /dev/null --write-out '%{url_effective}' "https://github.com/${repository}/releases/latest") || {
+    printf 'No published GitHub release found for %s yet. Build from source with `make build`, or pass an explicit release version.\n' "$repository" >&2
+    exit 1
+  }
   tag=${latest_url##*/}
   asset_version="${tag#v}"
   if [[ "$tag" == "$latest_url" || ! "$asset_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
-    printf 'Could not determine the latest semantic release tag from %s.\n' "$latest_url" >&2
+    printf 'No published GitHub release tag found for %s (resolved %s). Build from source with `make build`, or pass an explicit release version.\n' "$repository" "$latest_url" >&2
     exit 1
   fi
   release_url="https://github.com/${repository}/releases/download/${tag}"

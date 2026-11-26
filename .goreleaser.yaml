@@ -50,6 +50,6 @@ release:
   github:
     owner: Senasphy
     name: cellbox
-  draft: true
+  draft: false
   prerelease: auto
   name_template: 'Cellbox {{ .Version }}'
