@@ -16,7 +16,9 @@ import {
   Terminal,
   Webhook,
 } from "lucide-react";
+import { ArchitectureFlowFigure } from "../components/ArchitectureFlowFigure";
 import { CellBoxLogo } from "../components/CellBoxLogo";
+import { PreviewLink } from "../components/PreviewLink";
 import { ThemeToggle } from "../components/ThemeToggle";
 
 function GitHubMark({ className = "size-3.5" }: { className?: string }) {
@@ -70,7 +72,7 @@ const capabilities = [
   {
     index: "01",
     title: "Native Linux Isolation",
-    body: "Uses built-in Linux namespaces, cgroups v2, and system-call filtering directly from one Go binary—no Docker daemon required on modern Linux hosts.",
+    body: "Uses built-in Linux namespaces, cgroups v2, and system-call filtering directly from one Go binary, with no Docker daemon required on modern Linux hosts.",
     href: "/docs/security",
     icon: ShieldCheck,
   },
@@ -250,7 +252,7 @@ export default function HomePage() {
           <div className="relative min-w-0 lg:col-span-6">
             <div className="cb-mono flex flex-wrap items-center gap-2 text-[11px] uppercase tracking-[0.12em] text-[var(--cb-muted)] sm:gap-2.5 sm:tracking-[0.14em]">
               <span className="text-[var(--cb-ink)]">00</span>
-              <span>//</span>
+              <span aria-hidden="true">·</span>
               <span>Self-hosted sandboxes</span>
             </div>
 
@@ -259,10 +261,16 @@ export default function HomePage() {
             </h1>
 
             <p className="mt-4 max-w-xl text-[15px] leading-relaxed text-[var(--cb-muted)] sm:mt-5 sm:text-base">
-              Give AI models, coding tools, and evaluation suites safe Linux workspaces on your own
-              hardware. Each sandbox starts in milliseconds with strict CPU and memory limits,
-              blocked internet access by default, and instant snapshots you can branch—while your
-              files and API keys stay safely outside.
+              Give AI models, coding tools, and evaluation suites safe Linux workspaces built from{" "}
+              <PreviewLink
+                href="https://opencontainers.org/about/overview/"
+                className="text-[var(--cb-ink)]"
+              >
+                OCI images
+              </PreviewLink>{" "}
+              on your own hardware. Each sandbox starts in milliseconds with strict CPU and memory
+              limits, blocked internet access by default, and instant snapshots you can branch,
+              while your files and API keys stay safely outside.
             </p>
 
             <div className="mt-6 flex flex-wrap items-center gap-2.5 sm:mt-7 sm:gap-3">
@@ -293,7 +301,7 @@ export default function HomePage() {
           <div className="relative min-w-0 lg:col-span-6">
             <div className="min-w-0 border border-[var(--cb-line)] bg-[var(--cb-terminal-bg)]">
               <div className="flex items-center justify-between gap-2 border-b border-[var(--cb-line)] px-3.5 py-2.5 font-mono text-[11px] text-[var(--cb-muted)] sm:px-4">
-                <span className="truncate">terminal // sandbox + evals</span>
+                <span className="truncate">terminal · sandbox + evals</span>
                 <span className="shrink-0 text-[var(--cb-faint)]">examples/</span>
               </div>
               <pre className="max-w-full overflow-x-auto p-3.5 font-mono text-[11px] leading-6 text-[var(--cb-terminal-ink)] sm:p-4 sm:text-xs">
@@ -340,16 +348,16 @@ $ python examples/eval-runner.py --fake-model
             href="#application-cases"
             className="cb-mono hidden items-center gap-1.5 text-[11px] text-[var(--cb-faint)] transition-colors hover:text-[var(--cb-ink)] lg:absolute lg:right-10 lg:bottom-5 lg:inline-flex"
           >
-            <span>01 // Application Cases ↓</span>
+            <span>01 · Application Cases ↓</span>
           </a>
         </section>
 
-        {/* 01 // Application Cases */}
+        {/* 01 · Application Cases */}
         <section id="application-cases" className="cb-rule-b">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--cb-line)] px-4 py-5 sm:px-6 md:px-10">
             <div className="min-w-0">
               <div className="cb-mono text-[11px] uppercase tracking-[0.14em] text-[var(--cb-muted)]">
-                01 // Application Cases
+                01 · Application Cases
               </div>
               <h2 className="mt-1.5 text-lg font-semibold tracking-tight text-[var(--cb-ink)] sm:text-xl">
                 Built for coding agents, evaluations, and running untrusted code.
@@ -400,11 +408,11 @@ $ python examples/eval-runner.py --fake-model
           </div>
         </section>
 
-        {/* 02 // Core Capabilities */}
+        {/* 02 · Core Capabilities */}
         <section className="cb-rule-b">
           <div className="border-b border-[var(--cb-line)] px-4 py-5 sm:px-6 md:px-10">
             <div className="cb-mono text-[11px] uppercase tracking-[0.14em] text-[var(--cb-muted)]">
-              02 // Core Capabilities
+              02 · Core Capabilities
             </div>
             <h2 className="mt-1.5 text-lg font-semibold tracking-tight text-[var(--cb-ink)] sm:text-xl">
               Everything packaged in one Go binary, with an optional Docker mode.
@@ -441,54 +449,93 @@ $ python examples/eval-runner.py --fake-model
           </div>
         </section>
 
-        {/* 03 // How Isolation Works (flush band, no nested boxes) */}
-        <section className="cb-rule-b grid grid-cols-1 md:grid-cols-12">
-          <div className="min-w-0 border-b border-[var(--cb-line)] p-5 sm:p-6 md:col-span-7 md:border-r md:border-b-0 md:p-10">
-            <div className="cb-mono flex items-center gap-2 text-[11px] uppercase tracking-[0.14em] text-[var(--cb-muted)]">
-              <Box className="size-3.5 shrink-0" />
-              <span>03 // Isolation & Boundaries</span>
-            </div>
-            <h2 className="mt-2 text-lg font-semibold tracking-tight text-[var(--cb-ink)] sm:text-xl">
-              Direct Linux sandboxing without hiding the trade-offs.
-            </h2>
-            <p className="mt-3 max-w-2xl text-sm leading-relaxed text-[var(--cb-muted)]">
-              On Linux, CellBox isolates each sandbox&apos;s users, processes, filesystem, and
-              network inside its own container while scoping file transfers safely inside the
-              sandbox root. A Docker backend is also included if you want a quick local setup.
-            </p>
-          </div>
-
-          <div className="flex min-w-0 flex-col justify-between bg-[var(--cb-panel)] p-5 sm:p-6 md:col-span-5 md:p-10">
-            <div className="min-w-0">
+        {/* 03 · Architecture & Isolation */}
+        <section id="architecture" className="cb-rule-b">
+          <div className="grid grid-cols-1 md:grid-cols-12">
+            <div className="min-w-0 border-b border-[var(--cb-line)] p-5 sm:p-6 md:col-span-7 md:border-r md:border-b-0 md:p-10">
               <div className="cb-mono flex items-center gap-2 text-[11px] uppercase tracking-[0.14em] text-[var(--cb-muted)]">
-                <KeyRound className="size-3.5 shrink-0" />
-                <span>Shared-Kernel Notice</span>
+                <Box className="size-3.5 shrink-0" />
+                <span>03 · Architecture & Isolation</span>
               </div>
-              <p className="mt-3 text-sm leading-relaxed text-[var(--cb-muted)]">
-                Native sandboxes share the host Linux kernel, so a kernel bug can still allow an
-                escape. For hostile multi-tenant workloads, run CellBox inside a dedicated VM.
+              <h2 className="mt-2 text-lg font-semibold tracking-tight text-[var(--cb-ink)] sm:text-xl">
+                Direct Linux sandboxing without hiding the trade-offs.
+              </h2>
+              <p className="mt-3 max-w-2xl text-sm leading-relaxed text-[var(--cb-muted)]">
+                On Linux, CellBox runs container images inside{" "}
+                <PreviewLink
+                  href="https://man7.org/linux/man-pages/man7/namespaces.7.html"
+                  className="text-[var(--cb-ink)]"
+                >
+                  Linux namespaces
+                </PreviewLink>
+                ,{" "}
+                <PreviewLink
+                  href="https://www.kernel.org/doc/html/latest/admin-guide/cgroup-v2.html"
+                  className="text-[var(--cb-ink)]"
+                >
+                  cgroups v2
+                </PreviewLink>
+                , and{" "}
+                <PreviewLink
+                  href="https://www.kernel.org/doc/html/latest/userspace-api/seccomp_filter.html"
+                  className="text-[var(--cb-ink)]"
+                >
+                  seccomp-bpf
+                </PreviewLink>{" "}
+                filters, while mediating every file read and write inside{" "}
+                <code>cellbox-init</code> via{" "}
+                <PreviewLink
+                  href="https://man7.org/linux/man-pages/man2/openat2.2.html"
+                  className="text-[var(--cb-ink)]"
+                >
+                  openat2(2)
+                </PreviewLink>
+                . A Docker backend is also included for quick local setups.
               </p>
             </div>
-            <a
-              href="/docs/security"
-              className="cb-mono mt-5 inline-flex items-center gap-1.5 text-xs text-[var(--cb-ink)] hover:underline"
-            >
-              <span>Read Threat Model</span>
-              <ArrowRight className="size-3" />
-            </a>
+
+            <div className="flex min-w-0 flex-col justify-between bg-[var(--cb-panel)] p-5 sm:p-6 md:col-span-5 md:p-10">
+              <div className="min-w-0">
+                <div className="cb-mono flex items-center gap-2 text-[11px] uppercase tracking-[0.14em] text-[var(--cb-muted)]">
+                  <KeyRound className="size-3.5 shrink-0" />
+                  <span>Shared-Kernel Notice</span>
+                </div>
+                <p className="mt-3 text-sm leading-relaxed text-[var(--cb-muted)]">
+                  Native sandboxes share the host Linux kernel, so a kernel bug can still allow an
+                  escape. For hostile multi-tenant workloads, run CellBox inside a dedicated VM.
+                </p>
+              </div>
+              <div className="mt-5">
+                <PreviewLink
+                  href="/docs/security"
+                  className="cb-mono inline-flex items-center gap-1.5 text-xs text-[var(--cb-ink)]"
+                >
+                  <span>Read Threat Model</span>
+                  <ArrowRight className="size-3" />
+                </PreviewLink>
+              </div>
+            </div>
+          </div>
+
+          <div className="border-t border-[var(--cb-line)] p-4 sm:p-6 md:p-8">
+            <ArchitectureFlowFigure />
           </div>
         </section>
 
-        {/* 04 // Client Surfaces & SDKs */}
+        {/* 04 · Client Surfaces & SDKs */}
         <section className="cb-rule-b">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--cb-line)] px-4 py-5 sm:px-6 md:px-10">
             <div className="min-w-0">
               <div className="cb-mono flex items-center gap-2 text-[11px] uppercase tracking-[0.14em] text-[var(--cb-muted)]">
                 <Code2 className="size-3.5 shrink-0" />
-                <span>04 // Client Surfaces & SDKs</span>
+                <span>04 · Client Surfaces & SDKs</span>
               </div>
               <h2 className="mt-1.5 text-lg font-semibold tracking-tight text-[var(--cb-ink)] sm:text-xl">
-                Connect from Python, TypeScript, Go, or any MCP-compatible agent.
+                Connect from Python, TypeScript, Go, or any{" "}
+                <PreviewLink href="https://modelcontextprotocol.io/" className="text-[var(--cb-ink)]">
+                  MCP
+                </PreviewLink>
+                -compatible agent.
               </h2>
             </div>
             <a
@@ -529,13 +576,13 @@ $ python examples/eval-runner.py --fake-model
           </div>
         </section>
 
-        {/* 05 // Documentation Map */}
+        {/* 05 · Documentation Map */}
         <section className="px-4 py-10 sm:px-6 sm:py-12 md:px-10">
           <div className="flex flex-wrap items-end justify-between gap-4">
             <div className="min-w-0">
               <div className="cb-mono flex items-center gap-2 text-[11px] uppercase tracking-[0.14em] text-[var(--cb-muted)]">
                 <Layers className="size-3.5 shrink-0" />
-                <span>05 // Documentation Index</span>
+                <span>05 · Documentation Index</span>
               </div>
               <h2 className="mt-2 text-xl font-semibold tracking-tight text-[var(--cb-ink)] sm:text-2xl">
                 Clear guides for setting up, integrating, and running CellBox.
@@ -579,7 +626,7 @@ $ python examples/eval-runner.py --fake-model
               <CellBoxLogo size={15} />
               <span>cellbox</span>
             </span>
-            <span>// self-hostable disposable sandboxes</span>
+            <span>· self-hostable disposable sandboxes</span>
             <span className="hidden sm:inline">·</span>
             <a
               href="https://github.com/Senasphy/cellbox"
