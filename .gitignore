@@ -7,6 +7,9 @@ coverage.out
 /web/node_modules/
 /web/.next/
 /web/out/
+/docs-site/node_modules/
+/docs-site/.farm/
+/docs-site/.output/
 /sdk/typescript/node_modules/
 /sdk/typescript/dist/
 __pycache__/
