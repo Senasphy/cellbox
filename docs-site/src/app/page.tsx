@@ -185,11 +185,11 @@ export default function HomePage() {
   return (
     <div className="cb-landing cb-grid-bg">
       <header className="cb-rule-b sticky top-0 z-30 bg-[var(--cb-header)] backdrop-blur-sm">
-        <div className="cb-frame flex h-14 items-center justify-between px-6">
-          <div className="flex items-center gap-4">
+        <div className="cb-frame flex h-14 items-center justify-between gap-2 px-4 sm:px-6">
+          <div className="flex min-w-0 items-center gap-3 sm:gap-4">
             <a
               href="/"
-              className="cb-brand-trigger inline-flex items-center gap-2.5 font-mono text-sm font-semibold tracking-tight text-[var(--cb-ink)]"
+              className="cb-brand-trigger inline-flex shrink-0 items-center gap-2 font-mono text-sm font-semibold tracking-tight text-[var(--cb-ink)] sm:gap-2.5"
             >
               <CellBoxLogo size={20} animated />
               <span>cellbox</span>
@@ -200,7 +200,7 @@ export default function HomePage() {
           </div>
 
           <nav
-            className="flex items-center gap-4 font-mono text-xs text-[var(--cb-muted)] sm:gap-5"
+            className="flex shrink-0 items-center gap-2.5 font-mono text-[11px] text-[var(--cb-muted)] sm:gap-5 sm:text-xs"
             aria-label="Primary"
           >
             <a href="/docs" className="transition-colors hover:text-[var(--cb-ink)]">
@@ -213,7 +213,8 @@ export default function HomePage() {
               Quickstart
             </a>
             <a href="/api-reference" className="transition-colors hover:text-[var(--cb-ink)]">
-              API Reference
+              <span className="sm:hidden">API</span>
+              <span className="hidden sm:inline">API Reference</span>
             </a>
             <a
               href="/docs/security"
@@ -225,7 +226,7 @@ export default function HomePage() {
               href="https://github.com/Senasphy/cellbox"
               target="_blank"
               rel="noreferrer"
-              className="inline-flex items-center gap-1.5 border border-[var(--cb-line)] px-2.5 py-1 text-[11px] text-[var(--cb-ink)] transition-colors hover:border-[var(--cb-line-strong)]"
+              className="inline-flex items-center gap-1.5 border border-[var(--cb-line)] px-2 py-1 text-[11px] text-[var(--cb-ink)] transition-colors hover:border-[var(--cb-line-strong)] sm:px-2.5"
               title="GitHub repository (open-sourcing soon)"
             >
               <GitHubMark className="size-3.5" />
@@ -238,7 +239,7 @@ export default function HomePage() {
 
       <main className="cb-frame">
         {/* Hero */}
-        <section className="cb-rule-b cb-corner relative grid items-center gap-10 overflow-hidden px-6 py-14 md:grid-cols-12 md:px-10 md:py-18">
+        <section className="cb-rule-b cb-corner relative grid grid-cols-1 items-center gap-8 overflow-hidden px-4 py-10 sm:px-6 sm:py-12 lg:grid-cols-12 lg:gap-10 lg:px-10 lg:py-18">
           <div
             aria-hidden="true"
             className="pointer-events-none absolute -top-10 -right-10 text-[var(--cb-ink)] opacity-[0.04]"
@@ -246,8 +247,8 @@ export default function HomePage() {
             <CellBoxLogo size={260} />
           </div>
 
-          <div className="relative md:col-span-6">
-            <div className="cb-mono flex flex-wrap items-center gap-2.5 text-[11px] uppercase tracking-[0.14em] text-[var(--cb-muted)]">
+          <div className="relative min-w-0 lg:col-span-6">
+            <div className="cb-mono flex flex-wrap items-center gap-2 text-[11px] uppercase tracking-[0.12em] text-[var(--cb-muted)] sm:gap-2.5 sm:tracking-[0.14em]">
               <span className="text-[var(--cb-ink)]">00</span>
               <span>//</span>
               <span>Self-hosted sandboxes</span>
@@ -256,77 +257,84 @@ export default function HomePage() {
               </span>
             </div>
 
-            <h1 className="mt-5 text-4xl font-semibold tracking-[-0.045em] text-[var(--cb-ink)] sm:text-5xl">
+            <h1 className="mt-4 text-3xl font-semibold tracking-[-0.04em] text-[var(--cb-ink)] sm:mt-5 sm:text-4xl lg:text-5xl lg:tracking-[-0.045em]">
               Disposable Linux computers for AI agents.
             </h1>
 
-            <p className="mt-5 max-w-xl text-base leading-relaxed text-[var(--cb-muted)]">
+            <p className="mt-4 max-w-xl text-[15px] leading-relaxed text-[var(--cb-muted)] sm:mt-5 sm:text-base">
               Give AI models, coding tools, and evaluation suites safe Linux workspaces on your own
               hardware. Each sandbox starts in milliseconds with strict CPU and memory limits,
               blocked internet access by default, and instant snapshots you can branch—while your
               files and API keys stay safely outside.
             </p>
 
-            <div className="mt-7 flex flex-wrap items-center gap-3">
+            <div className="mt-6 flex flex-wrap items-center gap-2.5 sm:mt-7 sm:gap-3">
               <a
                 href="/docs"
-                className="inline-flex items-center gap-2 border border-[var(--cb-btn-primary-bg)] bg-[var(--cb-btn-primary-bg)] px-4 py-2.5 font-mono text-xs font-medium text-[var(--cb-btn-primary-fg)] transition-colors hover:bg-[var(--cb-btn-primary-hover)]"
+                className="inline-flex items-center gap-2 border border-[var(--cb-btn-primary-bg)] bg-[var(--cb-btn-primary-bg)] px-3.5 py-2.5 font-mono text-xs font-medium text-[var(--cb-btn-primary-fg)] transition-colors hover:bg-[var(--cb-btn-primary-hover)] sm:px-4"
               >
-                <BookOpen className="size-3.5" />
+                <BookOpen className="size-3.5 shrink-0" />
                 <span>Read Documentation</span>
-                <ArrowRight className="size-3.5" />
+                <ArrowRight className="size-3.5 shrink-0" />
               </a>
               <a
                 href="/docs/quickstart"
-                className="inline-flex items-center gap-2 border border-[var(--cb-line-strong)] bg-[var(--cb-paper)] px-4 py-2.5 font-mono text-xs font-medium text-[var(--cb-ink)] transition-colors hover:bg-[var(--cb-surface)]"
+                className="inline-flex items-center gap-2 border border-[var(--cb-line-strong)] bg-[var(--cb-paper)] px-3.5 py-2.5 font-mono text-xs font-medium text-[var(--cb-ink)] transition-colors hover:bg-[var(--cb-surface)] sm:px-4"
               >
                 <span>Quickstart</span>
               </a>
               <a
                 href="/api-reference"
-                className="inline-flex items-center gap-2 border border-[var(--cb-line)] bg-[var(--cb-panel)] px-4 py-2.5 font-mono text-xs text-[var(--cb-muted)] transition-colors hover:border-[var(--cb-line-strong)] hover:text-[var(--cb-ink)]"
+                className="inline-flex items-center gap-2 border border-[var(--cb-line)] bg-[var(--cb-panel)] px-3.5 py-2.5 font-mono text-xs text-[var(--cb-muted)] transition-colors hover:border-[var(--cb-line-strong)] hover:text-[var(--cb-ink)] sm:px-4"
               >
-                <Webhook className="size-3.5" />
+                <Webhook className="size-3.5 shrink-0" />
                 <span>API Reference</span>
               </a>
             </div>
           </div>
 
-          <div className="relative md:col-span-6">
-            <div className="border border-[var(--cb-line)] bg-[var(--cb-terminal-bg)]">
-              <div className="flex items-center justify-between border-b border-[var(--cb-line)] px-4 py-2.5 font-mono text-[11px] text-[var(--cb-muted)]">
-                <span>terminal // sandbox + evals</span>
-                <span className="text-[var(--cb-faint)]">examples/</span>
+          <div className="relative min-w-0 lg:col-span-6">
+            <div className="min-w-0 border border-[var(--cb-line)] bg-[var(--cb-terminal-bg)]">
+              <div className="flex items-center justify-between gap-2 border-b border-[var(--cb-line)] px-3.5 py-2.5 font-mono text-[11px] text-[var(--cb-muted)] sm:px-4">
+                <span className="truncate">terminal // sandbox + evals</span>
+                <span className="shrink-0 text-[var(--cb-faint)]">examples/</span>
               </div>
-              <pre className="overflow-x-auto p-4 font-mono text-xs leading-6 text-[var(--cb-terminal-ink)]">
+              <pre className="max-w-full overflow-x-auto p-3.5 font-mono text-[11px] leading-6 text-[var(--cb-terminal-ink)] sm:p-4 sm:text-xs">
                 <code>{`# Run Python safely inside an isolated sandbox
-$ cellbox run --image python:3.12-slim -- python -c "print(6 * 7)"
+$ cellbox run --image python:3.12-slim -- \\
+    python -c "print(6 * 7)"
 42
 
-# Snapshot once & fork 3 parallel eval tasks (examples/eval-runner.py)
+# Fork 3 parallel eval tasks from 1 snapshot
 $ python examples/eval-runner.py --fake-model
   "passed": 3, "failed": 0, "total": 3`}</code>
               </pre>
             </div>
 
-            <div className="mt-4 grid grid-cols-3 border border-[var(--cb-line)] bg-[var(--cb-paper)]">
-              <div className="border-r border-[var(--cb-line)] p-3">
+            <div className="mt-4 grid grid-cols-1 divide-y divide-[var(--cb-line)] border border-[var(--cb-line)] bg-[var(--cb-paper)] sm:grid-cols-3 sm:divide-x sm:divide-y-0">
+              <div className="flex items-baseline justify-between p-3 sm:block">
                 <div className="cb-mono text-[10px] uppercase tracking-wider text-[var(--cb-faint)]">
                   Warm Startup p50
                 </div>
-                <div className="cb-mono mt-1 text-lg font-semibold text-[var(--cb-ink)]">8.6 ms</div>
+                <div className="cb-mono text-base font-semibold text-[var(--cb-ink)] sm:mt-1 sm:text-lg">
+                  8.6 ms
+                </div>
               </div>
-              <div className="border-r border-[var(--cb-line)] p-3">
+              <div className="flex items-baseline justify-between p-3 sm:block">
                 <div className="cb-mono text-[10px] uppercase tracking-wider text-[var(--cb-faint)]">
                   Cold Startup p50
                 </div>
-                <div className="cb-mono mt-1 text-lg font-semibold text-[var(--cb-ink)]">42 ms</div>
+                <div className="cb-mono text-base font-semibold text-[var(--cb-ink)] sm:mt-1 sm:text-lg">
+                  42 ms
+                </div>
               </div>
-              <div className="p-3">
+              <div className="flex items-baseline justify-between p-3 sm:block">
                 <div className="cb-mono text-[10px] uppercase tracking-wider text-[var(--cb-faint)]">
                   Leaked Sandboxes
                 </div>
-                <div className="cb-mono mt-1 text-lg font-semibold text-[var(--cb-ink)]">0 / 272</div>
+                <div className="cb-mono text-base font-semibold text-[var(--cb-ink)] sm:mt-1 sm:text-lg">
+                  0 / 272
+                </div>
               </div>
             </div>
           </div>
@@ -334,50 +342,50 @@ $ python examples/eval-runner.py --fake-model
 
         {/* 01 // Application Cases */}
         <section className="cb-rule-b">
-          <div className="flex flex-wrap items-center justify-between gap-4 border-b border-[var(--cb-line)] px-6 py-5 md:px-10">
-            <div>
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--cb-line)] px-4 py-5 sm:px-6 md:px-10">
+            <div className="min-w-0">
               <div className="cb-mono text-[11px] uppercase tracking-[0.14em] text-[var(--cb-muted)]">
                 01 // Application Cases
               </div>
-              <h2 className="mt-1.5 text-xl font-semibold tracking-tight text-[var(--cb-ink)]">
+              <h2 className="mt-1.5 text-lg font-semibold tracking-tight text-[var(--cb-ink)] sm:text-xl">
                 Built for coding agents, evaluations, and running untrusted code.
               </h2>
             </div>
             <a
               href="/docs/sdks/mcp-and-tools"
-              className="cb-mono inline-flex items-center gap-1.5 text-xs text-[var(--cb-muted)] hover:text-[var(--cb-ink)]"
+              className="cb-mono inline-flex shrink-0 items-center gap-1.5 text-xs text-[var(--cb-muted)] hover:text-[var(--cb-ink)]"
             >
               <span>Explore examples</span>
               <ArrowRight className="size-3" />
             </a>
           </div>
 
-          <div className="grid gap-px bg-[var(--cb-line)] md:grid-cols-2">
+          <div className="grid grid-cols-1 gap-px bg-[var(--cb-line)] md:grid-cols-2">
             {useCases.map((item) => {
               const Icon = item.icon;
               return (
                 <a
                   key={item.index}
                   href={item.href}
-                  className="group flex flex-col justify-between bg-[var(--cb-paper)] p-6 transition-colors hover:bg-[var(--cb-panel)] md:p-8"
+                  className="group flex min-w-0 flex-col justify-between bg-[var(--cb-paper)] p-5 transition-colors hover:bg-[var(--cb-panel)] sm:p-6 md:p-8"
                 >
-                  <div>
-                    <div className="flex items-center justify-between">
+                  <div className="min-w-0">
+                    <div className="flex items-center justify-between gap-2">
                       <span className="cb-mono text-[10px] uppercase tracking-wider text-[var(--cb-faint)]">
                         {item.index} · {item.tag}
                       </span>
-                      <Icon className="size-4 text-[var(--cb-muted)] transition-colors group-hover:text-[var(--cb-ink)]" />
+                      <Icon className="size-4 shrink-0 text-[var(--cb-muted)] transition-colors group-hover:text-[var(--cb-ink)]" />
                     </div>
-                    <h3 className="mt-3 text-lg font-semibold tracking-tight text-[var(--cb-ink)]">
+                    <h3 className="mt-3 text-base font-semibold tracking-tight text-[var(--cb-ink)] sm:text-lg">
                       {item.title}
                     </h3>
                     <p className="mt-2 text-sm leading-relaxed text-[var(--cb-muted)]">
                       {item.body}
                     </p>
                   </div>
-                  <div className="mt-5 flex items-center justify-between border-t border-[var(--cb-line)] pt-3.5">
+                  <div className="mt-5 flex flex-wrap items-center justify-between gap-2 border-t border-[var(--cb-line)] pt-3.5">
                     <span className="cb-mono text-[11px] text-[var(--cb-faint)]">{item.spec}</span>
-                    <span className="cb-mono inline-flex items-center gap-1 text-xs text-[var(--cb-muted)] group-hover:text-[var(--cb-ink)]">
+                    <span className="cb-mono inline-flex shrink-0 items-center gap-1 text-xs text-[var(--cb-muted)] group-hover:text-[var(--cb-ink)]">
                       <span>Guide</span>
                       <ArrowRight className="size-3 transition-transform group-hover:translate-x-0.5" />
                     </span>
@@ -390,27 +398,27 @@ $ python examples/eval-runner.py --fake-model
 
         {/* 02 // Core Capabilities */}
         <section className="cb-rule-b">
-          <div className="border-b border-[var(--cb-line)] px-6 py-5 md:px-10">
+          <div className="border-b border-[var(--cb-line)] px-4 py-5 sm:px-6 md:px-10">
             <div className="cb-mono text-[11px] uppercase tracking-[0.14em] text-[var(--cb-muted)]">
               02 // Core Capabilities
             </div>
-            <h2 className="mt-1.5 text-xl font-semibold tracking-tight text-[var(--cb-ink)]">
+            <h2 className="mt-1.5 text-lg font-semibold tracking-tight text-[var(--cb-ink)] sm:text-xl">
               Everything packaged in one Go binary, with an optional Docker mode.
             </h2>
           </div>
-          <div className="grid gap-px bg-[var(--cb-line)] md:grid-cols-2 lg:grid-cols-3">
+          <div className="grid grid-cols-1 gap-px bg-[var(--cb-line)] md:grid-cols-2 lg:grid-cols-3">
             {capabilities.map((item) => {
               const Icon = item.icon;
               return (
                 <a
                   key={item.index}
                   href={item.href}
-                  className="group flex flex-col justify-between bg-[var(--cb-paper)] p-6 transition-colors hover:bg-[var(--cb-panel)]"
+                  className="group flex min-w-0 flex-col justify-between bg-[var(--cb-paper)] p-5 transition-colors hover:bg-[var(--cb-panel)] sm:p-6"
                 >
-                  <div>
-                    <div className="flex items-center justify-between">
+                  <div className="min-w-0">
+                    <div className="flex items-center justify-between gap-2">
                       <span className="cb-mono text-[11px] text-[var(--cb-faint)]">{item.index}</span>
-                      <Icon className="size-4 text-[var(--cb-muted)] transition-colors group-hover:text-[var(--cb-ink)]" />
+                      <Icon className="size-4 shrink-0 text-[var(--cb-muted)] transition-colors group-hover:text-[var(--cb-ink)]" />
                     </div>
                     <h3 className="mt-4 text-base font-semibold tracking-tight text-[var(--cb-ink)]">
                       {item.title}
@@ -430,13 +438,13 @@ $ python examples/eval-runner.py --fake-model
         </section>
 
         {/* 03 // How Isolation Works (flush band, no nested boxes) */}
-        <section className="cb-rule-b grid md:grid-cols-12">
-          <div className="border-b border-[var(--cb-line)] p-6 md:col-span-7 md:border-r md:border-b-0 md:p-10">
+        <section className="cb-rule-b grid grid-cols-1 md:grid-cols-12">
+          <div className="min-w-0 border-b border-[var(--cb-line)] p-5 sm:p-6 md:col-span-7 md:border-r md:border-b-0 md:p-10">
             <div className="cb-mono flex items-center gap-2 text-[11px] uppercase tracking-[0.14em] text-[var(--cb-muted)]">
-              <Box className="size-3.5" />
+              <Box className="size-3.5 shrink-0" />
               <span>03 // Isolation & Boundaries</span>
             </div>
-            <h2 className="mt-2 text-xl font-semibold tracking-tight text-[var(--cb-ink)]">
+            <h2 className="mt-2 text-lg font-semibold tracking-tight text-[var(--cb-ink)] sm:text-xl">
               Direct Linux sandboxing without hiding the trade-offs.
             </h2>
             <p className="mt-3 max-w-2xl text-sm leading-relaxed text-[var(--cb-muted)]">
@@ -446,10 +454,10 @@ $ python examples/eval-runner.py --fake-model
             </p>
           </div>
 
-          <div className="flex flex-col justify-between bg-[var(--cb-panel)] p-6 md:col-span-5 md:p-10">
-            <div>
+          <div className="flex min-w-0 flex-col justify-between bg-[var(--cb-panel)] p-5 sm:p-6 md:col-span-5 md:p-10">
+            <div className="min-w-0">
               <div className="cb-mono flex items-center gap-2 text-[11px] uppercase tracking-[0.14em] text-[var(--cb-muted)]">
-                <KeyRound className="size-3.5" />
+                <KeyRound className="size-3.5 shrink-0" />
                 <span>Shared-Kernel Notice</span>
               </div>
               <p className="mt-3 text-sm leading-relaxed text-[var(--cb-muted)]">
@@ -469,46 +477,48 @@ $ python examples/eval-runner.py --fake-model
 
         {/* 04 // Client Surfaces & SDKs */}
         <section className="cb-rule-b">
-          <div className="flex flex-wrap items-center justify-between gap-4 border-b border-[var(--cb-line)] px-6 py-5 md:px-10">
-            <div>
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--cb-line)] px-4 py-5 sm:px-6 md:px-10">
+            <div className="min-w-0">
               <div className="cb-mono flex items-center gap-2 text-[11px] uppercase tracking-[0.14em] text-[var(--cb-muted)]">
-                <Code2 className="size-3.5" />
+                <Code2 className="size-3.5 shrink-0" />
                 <span>04 // Client Surfaces & SDKs</span>
               </div>
-              <h2 className="mt-1.5 text-xl font-semibold tracking-tight text-[var(--cb-ink)]">
+              <h2 className="mt-1.5 text-lg font-semibold tracking-tight text-[var(--cb-ink)] sm:text-xl">
                 Connect from Python, TypeScript, Go, or any MCP-compatible agent.
               </h2>
             </div>
             <a
               href="/docs/sdks"
-              className="cb-mono inline-flex items-center gap-1.5 text-xs text-[var(--cb-muted)] hover:text-[var(--cb-ink)]"
+              className="cb-mono inline-flex shrink-0 items-center gap-1.5 text-xs text-[var(--cb-muted)] hover:text-[var(--cb-ink)]"
             >
               <span>All SDKs</span>
               <ArrowRight className="size-3" />
             </a>
           </div>
 
-          <div className="grid gap-px bg-[var(--cb-line)] md:grid-cols-2">
+          <div className="grid grid-cols-1 gap-px bg-[var(--cb-line)] md:grid-cols-2">
             {surfaces.map((surface) => (
               <a
                 key={surface.name}
                 href={surface.href}
-                className="group flex flex-col justify-between bg-[var(--cb-paper)] p-6 transition-colors hover:bg-[var(--cb-panel)] md:p-8"
+                className="group flex min-w-0 flex-col justify-between bg-[var(--cb-paper)] p-5 transition-colors hover:bg-[var(--cb-panel)] sm:p-6 md:p-8"
               >
-                <div>
-                  <div className="flex items-center justify-between">
+                <div className="min-w-0">
+                  <div className="flex items-center justify-between gap-2">
                     <span className="cb-mono text-[10px] uppercase tracking-wider text-[var(--cb-faint)]">
                       {surface.tag}
                     </span>
-                    <ArrowRight className="size-3.5 text-[var(--cb-faint)] transition-transform group-hover:translate-x-0.5 group-hover:text-[var(--cb-ink)]" />
+                    <ArrowRight className="size-3.5 shrink-0 text-[var(--cb-faint)] transition-transform group-hover:translate-x-0.5 group-hover:text-[var(--cb-ink)]" />
                   </div>
                   <h3 className="mt-2.5 text-base font-semibold tracking-tight text-[var(--cb-ink)]">
                     {surface.name}
                   </h3>
-                  <div className="cb-mono mt-1 text-xs text-[var(--cb-muted)]">{surface.meta}</div>
+                  <div className="cb-mono mt-1 break-words text-xs text-[var(--cb-muted)]">
+                    {surface.meta}
+                  </div>
                 </div>
-                <div className="mt-4 pt-3 font-mono text-xs text-[var(--cb-ink)]">
-                  {surface.snippet}
+                <div className="mt-4 overflow-x-auto pt-3 font-mono text-xs text-[var(--cb-ink)]">
+                  <span className="whitespace-nowrap">{surface.snippet}</span>
                 </div>
               </a>
             ))}
@@ -516,14 +526,14 @@ $ python examples/eval-runner.py --fake-model
         </section>
 
         {/* 05 // Documentation Map */}
-        <section className="px-6 py-12 md:px-10">
+        <section className="px-4 py-10 sm:px-6 sm:py-12 md:px-10">
           <div className="flex flex-wrap items-end justify-between gap-4">
-            <div>
+            <div className="min-w-0">
               <div className="cb-mono flex items-center gap-2 text-[11px] uppercase tracking-[0.14em] text-[var(--cb-muted)]">
-                <Layers className="size-3.5" />
+                <Layers className="size-3.5 shrink-0" />
                 <span>05 // Documentation Index</span>
               </div>
-              <h2 className="mt-2 text-2xl font-semibold tracking-tight text-[var(--cb-ink)]">
+              <h2 className="mt-2 text-xl font-semibold tracking-tight text-[var(--cb-ink)] sm:text-2xl">
                 Clear guides for setting up, integrating, and running CellBox.
               </h2>
             </div>
@@ -537,14 +547,14 @@ $ python examples/eval-runner.py --fake-model
             </div>
           </div>
 
-          <div className="mt-8 grid gap-px border border-[var(--cb-line)] bg-[var(--cb-line)] md:grid-cols-2">
+          <div className="mt-6 grid grid-cols-1 gap-px border border-[var(--cb-line)] bg-[var(--cb-line)] sm:mt-8 md:grid-cols-2">
             {quickLinks.map((link) => (
               <a
                 key={link.href}
                 href={link.href}
-                className="group flex items-start justify-between gap-4 bg-[var(--cb-paper)] p-5 transition-colors hover:bg-[var(--cb-panel)]"
+                className="group flex min-w-0 items-start justify-between gap-4 bg-[var(--cb-paper)] p-5 transition-colors hover:bg-[var(--cb-panel)]"
               >
-                <div>
+                <div className="min-w-0">
                   <div className="cb-mono text-[11px] text-[var(--cb-faint)]">{link.tag}</div>
                   <div className="mt-1 font-medium text-[var(--cb-ink)] group-hover:underline">
                     {link.label}
@@ -558,26 +568,26 @@ $ python examples/eval-runner.py --fake-model
         </section>
       </main>
 
-      <footer className="cb-frame border-t border-[var(--cb-line)] px-6 py-6 md:px-10">
+      <footer className="cb-frame border-t border-[var(--cb-line)] px-4 py-6 sm:px-6 md:px-10">
         <div className="cb-mono flex flex-wrap items-center justify-between gap-4 text-[11px] text-[var(--cb-faint)]">
-          <div className="flex flex-wrap items-center gap-3">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
             <span className="inline-flex items-center gap-2 text-[var(--cb-ink)]">
               <CellBoxLogo size={15} />
               <span>cellbox</span>
             </span>
             <span>// self-hostable disposable sandboxes</span>
-            <span>·</span>
+            <span className="hidden sm:inline">·</span>
             <a
               href="https://github.com/Senasphy/cellbox"
               target="_blank"
               rel="noreferrer"
               className="inline-flex items-center gap-1.5 text-[var(--cb-muted)] hover:text-[var(--cb-ink)]"
             >
-              <GitHubMark className="size-3" />
+              <GitHubMark className="size-3 shrink-0" />
               <span>github.com/Senasphy/cellbox (open-sourcing soon)</span>
             </a>
           </div>
-          <div className="flex flex-wrap items-center gap-5">
+          <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
             <a href="/docs" className="hover:text-[var(--cb-ink)]">
               /docs
             </a>
