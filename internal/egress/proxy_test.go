@@ -338,9 +338,63 @@ func TestPolicyValidationRejectsOpenOrMalformedRules(t *testing.T) {
 		{Mode: "none", Allow: []Rule{{Host: "example.com", Ports: []int{443}}}},
 		{Mode: "allowlist", Allow: []Rule{{Host: "example.com", Ports: []int{0}}}},
 		{Mode: "allowlist", Allow: []Rule{{Host: "*.", Ports: []int{443}}}},
+		{Mode: "none", BandwidthBytesPerSec: -1},
 	} {
 		if err := ValidatePolicy(policy); err == nil {
 			t.Errorf("accepted invalid policy: %+v", policy)
 		}
+	}
+}
+
+func TestProxyEnforcesBandwidthCap(t *testing.T) {
+	payload := bytes.Repeat([]byte("a"), 12<<10)
+	upstream, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	upstreamServer := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(payload)
+	})}
+	go func() { _ = upstreamServer.Serve(upstream) }()
+	t.Cleanup(func() { _ = upstreamServer.Close() })
+	port := upstream.Addr().(*net.TCPAddr).Port
+	proxy, err := New(filepath.Join(t.TempDir(), "proxy.sock"), Policy{Mode: "allowlist", Allow: []Rule{{Host: "upstream.test", Ports: []int{port}}}, BandwidthBytesPerSec: 16 << 10}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxy.lookup = func(context.Context, string) ([]netip.Addr, error) {
+		return []netip.Addr{netip.MustParseAddr("8.8.8.8")}, nil
+	}
+	proxy.dial = func(ctx context.Context, network, _ string) (net.Conn, error) {
+		conn, err := (&net.Dialer{}).DialContext(ctx, network, upstream.Addr().String())
+		if err != nil {
+			return nil, err
+		}
+		return reportedRemoteConn{Conn: conn, addr: &net.TCPAddr{IP: net.ParseIP("8.8.8.8"), Port: port}}, nil
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := proxy.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer proxy.Close()
+	transport := &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, "unix", proxy.path)
+	}}
+	defer transport.CloseIdleConnections()
+	client := &http.Client{Transport: transport, Timeout: 5 * time.Second}
+	started := time.Now()
+	response, err := client.Get(fmt.Sprintf("http://upstream.test:%d/blob", port))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	elapsed := time.Since(started)
+	if err != nil || !bytes.Equal(body, payload) {
+		t.Fatalf("len=%d err=%v", len(body), err)
+	}
+	if elapsed < 350*time.Millisecond {
+		t.Fatalf("bandwidth cap did not throttle response: elapsed=%v", elapsed)
 	}
 }

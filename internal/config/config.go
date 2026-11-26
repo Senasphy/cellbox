@@ -23,6 +23,7 @@ type Config struct {
 	Pool         Pool      `yaml:"pool"`
 	Egress       Egress    `yaml:"egress"`
 	Retention    Retention `yaml:"retention"`
+	Terminal     Terminal  `yaml:"terminal"`
 	Log          Log       `yaml:"log"`
 	TLS          TLS       `yaml:"tls"`
 }
@@ -51,12 +52,16 @@ type Pool struct {
 	Images         []string `yaml:"images"`
 }
 type Egress struct {
-	AllowInternetMode bool     `yaml:"allow_internet_mode"`
-	ExtraBlockedCIDRs []string `yaml:"extra_blocked_cidrs"`
+	AllowInternetMode    bool     `yaml:"allow_internet_mode"`
+	ExtraBlockedCIDRs    []string `yaml:"extra_blocked_cidrs"`
+	BandwidthBytesPerSec int64    `yaml:"bandwidth_bytes_per_sec"`
 }
 type Retention struct {
 	OutputDays int `yaml:"output_days"`
 	AuditDays  int `yaml:"audit_days"`
+}
+type Terminal struct {
+	GraceS int `yaml:"grace_s"`
 }
 type Log struct {
 	Level  string `yaml:"level"`
@@ -69,7 +74,7 @@ type TLS struct {
 
 // Defaults returns conservative service defaults.
 func Defaults() Config {
-	return Config{Listen: "127.0.0.1:8080", DataDir: "~/.local/share/cellbox", Backend: "native", DockerSocket: "/var/run/docker.sock", Limits: Limits{Default: ResourceLimits{1000, 512, 256, 1024, 600, 3600}, Max: ResourceLimits{4000, 4096, 2048, 10240, 0, 86400}}, Capacity: Capacity{MemoryOvercommit: 1, CPUOvercommit: 4, QueueWaitS: 5, MinFreeDiskMB: 1024}, Pool: Pool{Enabled: true, PerImage: 2, MemoryBudgetMB: 1024, Images: []string{"python:3.12-slim", "node:22-slim", "golang:1.23", "debian:bookworm-slim"}}, Retention: Retention{7, 30}, Log: Log{"info", "json"}}
+	return Config{Listen: "127.0.0.1:8080", DataDir: "~/.local/share/cellbox", Backend: "native", DockerSocket: "/var/run/docker.sock", Limits: Limits{Default: ResourceLimits{1000, 512, 256, 1024, 600, 3600}, Max: ResourceLimits{4000, 4096, 2048, 10240, 0, 86400}}, Capacity: Capacity{MemoryOvercommit: 1, CPUOvercommit: 4, QueueWaitS: 5, MinFreeDiskMB: 1024}, Pool: Pool{Enabled: true, PerImage: 2, MemoryBudgetMB: 1024, Images: []string{"python:3.12-slim", "node:22-slim", "golang:1.23", "debian:bookworm-slim"}}, Retention: Retention{7, 30}, Terminal: Terminal{GraceS: 30}, Log: Log{"info", "json"}}
 }
 
 // Load reads YAML, applies CELLBOX_* overrides, expands the data directory and validates values.
@@ -102,6 +107,20 @@ func Load(path string) (Config, error) {
 		if v, ok := os.LookupEnv(key); ok {
 			*dst = v
 		}
+	}
+	if v, ok := os.LookupEnv("CELLBOX_TERMINAL_GRACE_S"); ok {
+		n, err := strconv.Atoi(strings.TrimSpace(v))
+		if err != nil {
+			return c, fmt.Errorf("parse CELLBOX_TERMINAL_GRACE_S: %w", err)
+		}
+		c.Terminal.GraceS = n
+	}
+	if v, ok := os.LookupEnv("CELLBOX_EGRESS_BANDWIDTH_BPS"); ok {
+		n, err := strconv.ParseInt(strings.TrimSpace(v), 10, 64)
+		if err != nil {
+			return c, fmt.Errorf("parse CELLBOX_EGRESS_BANDWIDTH_BPS: %w", err)
+		}
+		c.Egress.BandwidthBytesPerSec = n
 	}
 	if strings.HasPrefix(c.DataDir, "~/") {
 		h, e := os.UserHomeDir()
@@ -172,6 +191,12 @@ func (c Config) Validate() error {
 			return fmt.Errorf("duplicate pool image reference %q", image)
 		}
 		seenPoolImages[image] = struct{}{}
+	}
+	if c.Egress.BandwidthBytesPerSec < 0 {
+		return errors.New("egress.bandwidth_bytes_per_sec cannot be negative")
+	}
+	if c.Terminal.GraceS <= 0 || c.Terminal.GraceS > 3600 {
+		return errors.New("terminal.grace_s must be between 1 and 3600")
 	}
 	for _, cidr := range c.Egress.ExtraBlockedCIDRs {
 		if _, _, err := net.ParseCIDR(cidr); err != nil {

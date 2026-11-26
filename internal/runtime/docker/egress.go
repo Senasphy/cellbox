@@ -56,7 +56,7 @@ func (q *dockerEgressQueue) close() {
 }
 
 func newDockerEgress(spec runtime.NetworkPolicy) (*dockerEgress, error) {
-	policy := egress.Policy{Mode: spec.Mode, Allow: make([]egress.Rule, 0, len(spec.Allow)), ExtraBlockedCIDRs: spec.ExtraBlockedCIDRs}
+	policy := egress.Policy{Mode: spec.Mode, Allow: make([]egress.Rule, 0, len(spec.Allow)), ExtraBlockedCIDRs: spec.ExtraBlockedCIDRs, BandwidthBytesPerSec: spec.BandwidthBytesPerSec}
 	for _, rule := range spec.Allow {
 		policy.Allow = append(policy.Allow, egress.Rule{Host: rule.Host, Ports: rule.Ports})
 	}

@@ -25,9 +25,10 @@ type Rule struct {
 }
 
 type Policy struct {
-	Mode              string   `json:"mode"`
-	Allow             []Rule   `json:"allow,omitempty"`
-	ExtraBlockedCIDRs []string `json:"-"`
+	Mode                 string   `json:"mode"`
+	Allow                []Rule   `json:"allow,omitempty"`
+	ExtraBlockedCIDRs    []string `json:"-"`
+	BandwidthBytesPerSec int64    `json:"-"`
 }
 
 type Decision struct {
@@ -56,6 +57,7 @@ type Server struct {
 	active   map[net.Conn]struct{}
 	lookup   func(context.Context, string) ([]netip.Addr, error)
 	dial     func(context.Context, string, string) (net.Conn, error)
+	limiter  *bandwidthLimiter
 }
 
 const proxyExchangeTimeout = 2 * time.Minute
@@ -75,7 +77,7 @@ func New(path string, policy Policy, logDecision func(Decision)) (*Server, error
 		}
 		blocked = append(blocked, prefix.Masked())
 	}
-	server := &Server{path: path, policy: policy, blocked: blocked, log: logDecision, sem: make(chan struct{}, 64), active: make(map[net.Conn]struct{})}
+	server := &Server{path: path, policy: policy, blocked: blocked, log: logDecision, sem: make(chan struct{}, 64), active: make(map[net.Conn]struct{}), limiter: newBandwidthLimiter(policy.BandwidthBytesPerSec)}
 	server.lookup = resolve
 	server.dial = (&net.Dialer{Timeout: 8 * time.Second, KeepAlive: 30 * time.Second}).DialContext
 	return server, nil
@@ -108,6 +110,9 @@ func ValidatePolicy(policy Policy) error {
 		if _, err := netip.ParsePrefix(value); err != nil {
 			return fmt.Errorf("invalid blocked CIDR %q: %w", value, err)
 		}
+	}
+	if policy.BandwidthBytesPerSec < 0 {
+		return errors.New("egress bandwidth cap cannot be negative")
 	}
 	return nil
 }
@@ -448,7 +453,10 @@ func (s *Server) tunnel(w http.ResponseWriter, r *http.Request, upstream net.Con
 	if err := rw.Flush(); err != nil {
 		return 0, 0
 	}
-	clientReader := io.Reader(rw)
+	tunnelCtx, cancelTunnel := context.WithCancel(context.Background())
+	defer cancelTunnel()
+	clientReader := s.limitReader(tunnelCtx, rw)
+	upstreamReader := s.limitReader(tunnelCtx, upstream)
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
@@ -458,7 +466,7 @@ func (s *Server) tunnel(w http.ResponseWriter, r *http.Request, upstream net.Con
 			_ = tcp.CloseWrite()
 		}
 	}()
-	down, _ = io.Copy(client, upstream)
+	down, _ = io.Copy(client, upstreamReader)
 	_ = client.SetDeadline(time.Now())
 	wg.Wait()
 	return up, down
@@ -500,7 +508,7 @@ func (s *Server) forwardHTTP(w http.ResponseWriter, r *http.Request, upstream ne
 	if body == nil {
 		body = http.NoBody
 	}
-	request.Body = &countingReader{Reader: body}
+	request.Body = &countingReader{Reader: s.limitReadCloser(r.Context(), body)}
 	transport := &http.Transport{
 		DisableKeepAlives: true,
 		DialContext:       func(context.Context, string, string) (net.Conn, error) { return upstream, nil },
@@ -518,7 +526,7 @@ func (s *Server) forwardHTTP(w http.ResponseWriter, r *http.Request, upstream ne
 		}
 	}
 	w.WriteHeader(response.StatusCode)
-	down, copyErr := io.Copy(w, response.Body)
+	down, copyErr := io.Copy(w, s.limitReader(r.Context(), response.Body))
 	transport.CloseIdleConnections()
 	return request.Body.(*countingReader).N, down, copyErr
 }
@@ -535,3 +543,104 @@ func (r *countingReader) Read(p []byte) (int, error) {
 }
 
 func (r *countingReader) Close() error { return r.Reader.Close() }
+
+type bandwidthLimiter struct {
+	mu     sync.Mutex
+	rate   float64
+	burst  float64
+	tokens float64
+	last   time.Time
+}
+
+func newBandwidthLimiter(bytesPerSec int64) *bandwidthLimiter {
+	if bytesPerSec <= 0 {
+		return nil
+	}
+	burst := float64(bytesPerSec) / 4
+	if burst < 1024 {
+		burst = float64(bytesPerSec)
+	}
+	if burst > 32<<10 {
+		burst = 32 << 10
+	}
+	if burst < 1 {
+		burst = 1
+	}
+	return &bandwidthLimiter{rate: float64(bytesPerSec), burst: burst, tokens: burst, last: time.Now()}
+}
+
+func (l *bandwidthLimiter) take(ctx context.Context, requested int) (int, error) {
+	if l == nil || requested <= 0 {
+		return requested, nil
+	}
+	for {
+		if err := ctx.Err(); err != nil {
+			return 0, err
+		}
+		l.mu.Lock()
+		now := time.Now()
+		if elapsed := now.Sub(l.last).Seconds(); elapsed > 0 {
+			l.tokens += elapsed * l.rate
+			if l.tokens > l.burst {
+				l.tokens = l.burst
+			}
+			l.last = now
+		}
+		if l.tokens >= 1 {
+			grant := int(l.tokens)
+			if grant > requested {
+				grant = requested
+			}
+			l.tokens -= float64(grant)
+			l.mu.Unlock()
+			return grant, nil
+		}
+		wait := time.Duration(((1 - l.tokens) / l.rate) * float64(time.Second))
+		if wait < time.Millisecond {
+			wait = time.Millisecond
+		}
+		l.mu.Unlock()
+		timer := time.NewTimer(wait)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return 0, ctx.Err()
+		case <-timer.C:
+		}
+	}
+}
+
+type limitedReader struct {
+	ctx     context.Context
+	reader  io.Reader
+	limiter *bandwidthLimiter
+}
+
+func (r *limitedReader) Read(p []byte) (int, error) {
+	allowed, err := r.limiter.take(r.ctx, len(p))
+	if err != nil {
+		return 0, err
+	}
+	return r.reader.Read(p[:allowed])
+}
+
+type limitedReadCloser struct {
+	*limitedReader
+	closer io.Closer
+}
+
+func (r *limitedReadCloser) Close() error { return r.closer.Close() }
+
+func (s *Server) limitReader(ctx context.Context, reader io.Reader) io.Reader {
+	if s.limiter == nil {
+		return reader
+	}
+	return &limitedReader{ctx: ctx, reader: reader, limiter: s.limiter}
+}
+
+func (s *Server) limitReadCloser(ctx context.Context, rc io.ReadCloser) io.ReadCloser {
+	if s.limiter == nil {
+		return rc
+	}
+	return &limitedReadCloser{limitedReader: &limitedReader{ctx: ctx, reader: rc, limiter: s.limiter}, closer: rc}
+}

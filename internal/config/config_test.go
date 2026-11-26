@@ -46,6 +46,9 @@ func TestValidateNetworkAndLimits(t *testing.T) {
 	}{
 		{"invalid listen port", func(c *Config) { c.Listen = "127.0.0.1:70000" }},
 		{"invalid CIDR", func(c *Config) { c.Egress.ExtraBlockedCIDRs = []string{"metadata"} }},
+		{"negative bandwidth cap", func(c *Config) { c.Egress.BandwidthBytesPerSec = -1 }},
+		{"zero terminal grace", func(c *Config) { c.Terminal.GraceS = 0 }},
+		{"excessive terminal grace", func(c *Config) { c.Terminal.GraceS = 3601 }},
 		{"max below default", func(c *Config) { c.Limits.Max.MemoryMB = 1 }},
 	}
 	for _, tc := range tests {
@@ -56,5 +59,20 @@ func TestValidateNetworkAndLimits(t *testing.T) {
 				t.Fatal("expected validation error")
 			}
 		})
+	}
+}
+
+func TestEnvOverridesForTerminalAndEgress(t *testing.T) {
+	t.Setenv("CELLBOX_TERMINAL_GRACE_S", "45")
+	t.Setenv("CELLBOX_EGRESS_BANDWIDTH_BPS", "1048576")
+	c, err := Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Terminal.GraceS != 45 {
+		t.Fatalf("terminal.grace_s=%d", c.Terminal.GraceS)
+	}
+	if c.Egress.BandwidthBytesPerSec != 1048576 {
+		t.Fatalf("egress.bandwidth_bytes_per_sec=%d", c.Egress.BandwidthBytesPerSec)
 	}
 }

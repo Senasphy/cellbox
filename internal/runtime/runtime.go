@@ -50,9 +50,10 @@ type EgressRule struct {
 }
 
 type NetworkPolicy struct {
-	Mode              string       `json:"mode"`
-	Allow             []EgressRule `json:"allow,omitempty"`
-	ExtraBlockedCIDRs []string     `json:"-"`
+	Mode                 string       `json:"mode"`
+	Allow                []EgressRule `json:"allow,omitempty"`
+	ExtraBlockedCIDRs    []string     `json:"-"`
+	BandwidthBytesPerSec int64        `json:"-"`
 }
 
 type EgressEvent struct {
