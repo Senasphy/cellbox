@@ -227,7 +227,7 @@ export default function HomePage() {
               target="_blank"
               rel="noreferrer"
               className="inline-flex items-center gap-1.5 border border-[var(--cb-line)] px-2 py-1 text-[11px] text-[var(--cb-ink)] transition-colors hover:border-[var(--cb-line-strong)] sm:px-2.5"
-              title="GitHub repository (open-sourcing soon)"
+              title="GitHub repository"
             >
               <GitHubMark className="size-3.5" />
               <span className="hidden sm:inline">GitHub</span>
@@ -252,9 +252,6 @@ export default function HomePage() {
               <span className="text-[var(--cb-ink)]">00</span>
               <span>//</span>
               <span>Self-hosted sandboxes</span>
-              <span className="border border-[var(--cb-line)] px-1.5 py-0.5 text-[10px] text-[var(--cb-muted)]">
-                Open-sourcing soon
-              </span>
             </div>
 
             <h1 className="mt-4 text-3xl font-semibold tracking-[-0.04em] text-[var(--cb-ink)] sm:mt-5 sm:text-4xl lg:text-5xl lg:tracking-[-0.045em]">
@@ -591,7 +588,7 @@ $ python examples/eval-runner.py --fake-model
               className="inline-flex items-center gap-1.5 text-[var(--cb-muted)] hover:text-[var(--cb-ink)]"
             >
               <GitHubMark className="size-3 shrink-0" />
-              <span>github.com/Senasphy/cellbox (open-sourcing soon)</span>
+              <span>github.com/Senasphy/cellbox</span>
             </a>
           </div>
           <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
