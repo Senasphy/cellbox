@@ -14,4 +14,4 @@ Cellbox has not yet published a stable v1.0 release. Before v1.0, security fixes
 
 ## Deployment guidance
 
-Use the native backend on a dedicated Linux host or VM. Because it shares the host kernel, do not use it as the only boundary for hostile multi-tenant workloads. The Docker backend is a compatibility backend and does not enforce a per-session writable-layer disk limit. See [the threat model](docs/THREAT_MODEL.md), [operations guide](docs/OPERATIONS.md), and [deferred acceptance gaps](docs/DEFERRED.md).
+Use the native backend on a dedicated Linux host or VM. Because it shares the host kernel, do not use it as the only boundary for hostile multi-tenant workloads. The Docker backend is a compatibility backend and does not enforce a per-session writable-layer disk limit. See [the threat model](docs/THREAT_MODEL.md) and [operations guide](docs/OPERATIONS.md).

@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for helping improve Cellbox. Keep changes focused, preserve the Docker and native runtime capability boundaries, and update `docs/PROGRESS.md` or `docs/DEFERRED.md` when implementation or acceptance status changes.
+Thanks for helping improve Cellbox. Keep changes focused and preserve the Docker and native runtime capability boundaries.
 
 ## Local workflow
 

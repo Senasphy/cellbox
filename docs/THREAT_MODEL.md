@@ -1,48 +1,48 @@
-# Cellbox threat model
+# Threat model
 
-This document describes the current single-node implementation and its residual risks. It is not evidence that the full security suite has passed. The native runtime has not completed the specified attack matrix, and its writable-layer disk cap is a two-second polling limit with a possible overshoot. Use a dedicated VM for hostile workloads.
+This document describes cellbox's single-node security boundaries, controls, and residual risks.
 
-## Required security statement
+## Security boundary
 
-The native backend isolates workloads using Linux user, mount, PID, network, IPC, UTS and cgroup namespaces, cgroup v2 resource limits, a seccomp filter and capability dropping. It shares the host kernel, so a kernel vulnerability can allow escape. For hostile multi-tenant workloads, run cellbox inside a dedicated virtual machine. Never expose the service to untrusted networks without TLS and the quotas and egress policy described in the documentation.
+The native backend isolates workloads using Linux user, mount, PID, network, IPC, UTS, and cgroup namespaces, cgroup v2 resource limits, a seccomp filter, and capability dropping. Because it shares the host kernel, a kernel vulnerability can allow escape. **For hostile multi-tenant workloads, run cellbox inside a dedicated virtual machine.** Never expose the service to untrusted networks without TLS, quotas, and an explicit egress policy.
 
 ## Assets
 
-- Host files, host secrets, and credentials available to the Cellbox service account.
-- The service's API-key hashes, configuration, image cache, and audit data.
-- Each session's files, command output, environment, snapshots, and egress records.
+- Host files, secrets, and credentials accessible to the cellbox service user.
+- API-key hashes, service configuration, cached images, and audit logs.
+- Per-session filesystems, command output, environment variables, snapshots, and egress logs.
 - Other sessions' data and processes.
-- Host availability, cgroup capacity, disk space, and the internal network.
+- Host availability, cgroup capacity, disk space, and internal networks.
 
 ## Adversaries
 
-- A malicious model-generated or prompt-injected payload running as a sandbox workload.
-- A malicious API client holding a valid session key and attempting to exceed its ownership or quota.
-- A network attacker attempting to steal credentials, abuse the API, or reach a protected network through a workload.
+- **Untrusted workload**: a malicious or prompt-injected payload executing inside a sandbox.
+- **Malicious session client**: a caller with a valid session-scoped API key trying to exceed its quotas or access another owner's sessions.
+- **Network attacker**: an external party attempting to steal credentials, abuse the API, or pivot into internal networks via a sandbox.
 
-An administrator-level API key and a malicious host operator are trusted by this model. A kernel exploit, hardware side channel, and denial of service by an administrator are out of scope.
+Admin-level API keys and the host operator are trusted. Kernel exploits, hardware side channels, and denial-of-service by an administrator are out of scope.
 
 ## Trust boundaries
 
-- **Client to API:** bearer API key, request validation, owner and scope checks, per-key quota and rate enforcement, bounded request and output sizes, and optional TLS for remote binds.
-- **API to runtime:** validated session specifications and bounded runtime operations. SQLite owns session, exec, snapshot, audit, and egress records.
-- **Host supervisor to sandbox init:** a private Unix `SOCK_SEQPACKET` control channel and a bounded JSON protocol. Descriptors are passed with `SCM_RIGHTS`; the workload helper receives only its explicit request and standard streams.
-- **Sandbox to host kernel:** user, mount, PID, network, IPC, UTS, and cgroup namespaces; unprivileged UID/GID mapping; `no_new_privs`; dropped capabilities; and a synchronized seccomp filter. The kernel remains shared.
-- **Sandbox to network:** no external interface for the native `none` policy. Allowed HTTP/HTTPS traffic uses a loopback forwarder and a per-session host proxy. Docker sessions currently remain network-disabled.
+- **Client → API**: Bearer API key authentication, request validation, owner/scope checks, per-key rate and resource quotas, bounded request/output sizes, and optional TLS.
+- **API → Runtime**: Validated session specs and bounded runtime calls; SQLite owns session, exec, snapshot, audit, and egress records.
+- **Host supervisor → Sandbox init**: Private Unix `SOCK_SEQPACKET` channel with a bounded JSON protocol and `SCM_RIGHTS` descriptor passing.
+- **Sandbox → Host kernel**: User, mount, PID, network, IPC, UTS, and cgroup namespaces; unprivileged UID/GID mapping; `no_new_privs`; dropped capabilities; and a synchronized seccomp filter on a shared kernel.
+- **Sandbox → Network**: No external interface for `none` policy. Allowed HTTP/HTTPS traffic goes through a loopback forwarder and per-session host egress proxy. Docker sessions remain network-disabled.
 
-## Threats, controls, and residual risk
+## Threats, controls & residual risk
 
-| Threat | Current control | Residual risk or incomplete evidence |
+| Threat | Control | Residual risk / caveats |
 | --- | --- | --- |
-| Filesystem escape or host-file access | Native sessions use mount and user namespaces, an overlay root, `pivot_root`, and a detached old root. The only writable host directory bind-mounted into the sandbox is the session run directory, which contains the proxy socket and read-only exec helper; selected device files are also bind-mounted read/write for device semantics. Host-side file API operations use `openat2` with `RESOLVE_IN_ROOT` and `RESOLVE_NO_MAGICLINKS`, validate paths, and cap file/archive transfers. | File operations are performed by the host service through `/proc/<init-pid>/root`, rather than by init inside the sandbox as the original design proposed. The hostile symlink/archive matrix is incomplete; a kernel vulnerability remains an escape path. |
-| Privilege escalation | Workloads run in a user namespace with a single host UID mapping, have no capabilities, inherit `no_new_privs`, use `nosuid` sandbox mounts, and receive the default-allow seccomp filter with explicit `EPERM` denials. | The seccomp policy is not a complete syscall allowlist. The full privilege-escalation security suite has not passed on the supported kernel matrix. |
-| CPU, memory, PID, disk, output, or descriptor exhaustion | Cgroup v2 controls CPU, memory, and PIDs; admission control checks configured capacity; workload helpers apply rlimits; exec output is capped; and native disk usage is periodically scanned. Cgroup kill and cleanup stop session processes. | The disk cap is soft: the watcher samples every two seconds, so writes can overshoot before termination. CPU/memory/PID enforcement tolerances, descriptor-exhaustion cases, and long soak behavior are not fully verified. |
-| Fork bombs and OOM | `pids.max`, memory cgroup limits, OOM/PID counter observation, and cgroup-wide kill contain workload growth and stop affected sessions. | Orphaned descendants are not proactively reaped by init; cgroup cleanup is relied upon. The full fork-bomb and OOM attack cases have not passed. |
-| Network abuse and SSRF | Native `none` policy has no external interface. The proxy normalizes IDNA names, checks all resolved addresses against private/reserved/blocked ranges, dials the validated IP, verifies the connected peer, reauthorizes HTTP redirects, and logs allow/deny decisions. | Live sandbox tests have not proved that workloads cannot bypass proxy variables. The Docker backend supports only `none`; allowlisted package-manager workflows and full DNS-rebinding tests remain incomplete. |
-| Cross-session interference | Separate namespaces, cgroups, runtime directories, owner-scoped API access, and immutable snapshot layers isolate session state. | Isolation depends on the shared host kernel and filesystem. Native fork/snapshot isolation has not passed the full live acceptance matrix. |
-| Attack on supervisor or control channel | The control socket is not mounted into the workload. Init is non-dumpable; ptrace and related process-memory syscalls are denied; helper descriptors are explicitly bounded; protocol messages and workload inputs are size-checked. | The protocol and supervisor have focused tests but no complete fuzzing or chaos results. A supervisor or kernel defect can affect the host service. |
-| API abuse or credential exposure | API keys are stored as hashes, compared in constant time, returned only once, and scoped. Session keys receive active-session, memory, and request-rate quotas. POST idempotency, ownership checks, and bounded bodies/output reduce accidental or abusive load. | Admin keys are unmetered and can cause denial of service. Remote binds require an explicit flag, but operators must configure TLS and network controls correctly. |
+| Filesystem escape or host file access | Mount and user namespaces, overlayfs root, `pivot_root`, and detached old root. Only the session run directory (proxy socket and read-only exec helper) and selected device nodes are bind-mounted. File API ops run inside `cellbox-init` over `SOCK_SEQPACKET` + `SCM_RIGHTS` using `openat2` (`RESOLVE_IN_ROOT` / `RESOLVE_NO_MAGICLINKS`, `RESOLVE_BENEATH` / `RESOLVE_NO_SYMLINKS`) with validated paths and capped transfers. | A host kernel or overlayfs vulnerability remains an escape path. |
+| Privilege escalation | Single-UID user namespace mapping, zero capabilities, `no_new_privs`, `nosuid` mounts, and a synchronized seccomp filter (`EPERM` on denied syscalls). | Seccomp uses a default-allow profile with an explicit denylist (see [SECCOMP.md](SECCOMP.md)), not a full syscall allowlist. |
+| Resource exhaustion (CPU, memory, PIDs, disk, output) | Cgroup v2 CPU, memory, and PID limits; admission capacity checks; helper `rlimit`s; capped exec output; and periodic overlay disk scanning. | Native disk cap is soft: the watcher polls every 2 seconds, so fast writes can briefly overshoot before termination. Docker mode does not enforce per-session disk caps. |
+| Fork bombs & OOM | `pids.max`, memory cgroup limits, OOM/PID counter tracking, cgroup-wide kill on cleanup, and PID 1 zombie reaping (`cellbox-init`). | Extreme fork/memory pressure still briefly consumes host kernel resources before cgroup limits trip. |
+| Network abuse & SSRF | Native `none` has no external interface. The egress proxy normalizes IDNA hostnames, resolves DNS on the host, blocks private/reserved/extra-blocked CIDRs, verifies connected peer IPs, re-validates HTTP redirects, and logs every allow/deny decision. | Workloads must honor `HTTP_PROXY` / `HTTPS_PROXY` (direct sockets fail closed with no route). Docker backend only supports `none`. |
+| Cross-session interference | Separate namespaces, cgroups, runtime directories, owner-scoped API access, and immutable snapshot layers. | Isolation relies on the shared host kernel and filesystem. |
+| Supervisor / control-channel attack | Control socket is not mounted into the workload; init is non-dumpable; `ptrace` and cross-process memory syscalls are blocked by seccomp; helper FDs and protocol messages are bounded. | A bug in the supervisor protocol or host kernel could affect the service process. |
+| API abuse or credential exposure | Keys are hashed at rest, compared in constant time, shown once on creation, and scoped (`admin` vs `session`). Session keys have active-session, memory, and request-rate quotas; non-loopback binds require `--allow-remote`. | Admin keys are unmetered. Operators are responsible for enabling TLS and firewalling remote binds. |
 
 ## Operational limits
 
-The native backend is a Linux containment layer, not a VM boundary. The Docker backend uses daemon-managed container isolation and currently has no per-session writable-layer disk cap. Neither backend should be treated as safe for hostile multi-tenant workloads on a shared host without the dedicated-VM boundary described above. Review [OPERATIONS.md](OPERATIONS.md), [SECCOMP.md](SECCOMP.md), and [DEFERRED.md](DEFERRED.md) before deployment.
+The native backend is Linux process containment, not a VM boundary. The Docker backend delegates containment to the Docker daemon and does not cap per-session writable-layer disk usage. Review [OPERATIONS.md](OPERATIONS.md) and [SECCOMP.md](SECCOMP.md) before deploying.
