@@ -7,7 +7,7 @@ order: 4
 
 # Configuration Reference
 
-CellBox loads configuration in strict YAML mode (`KnownFields(true)`—unknown keys fail fast on startup) with predictable overrides.
+CellBox loads configuration in strict YAML mode (`KnownFields(true)`, so unknown keys fail fast on startup) with predictable overrides.
 
 ## Precedence Order (Lowest to Highest)
 
@@ -113,7 +113,7 @@ tls:
 | `pool.enabled` | `true` | Primes `pool.images` at startup. |
 | `pool.per_image` | `2` | Must be `>= 0`. |
 | `pool.memory_budget_mb` | `1024` | Must be `>= 0`. Each warm sandbox reserves `32` MB while idle. |
-| `pool.images` | 4 curated images | 1–512 chars each, no whitespace, no duplicates. |
+| `pool.images` | 4 curated images | `1..512` chars each, no whitespace, no duplicates. |
 | `retention.output_days` | `7` | Must be `>= 0`. Swept periodically by background retention worker. |
 | `retention.audit_days` | `30` | Must be `>= 0`. |
 

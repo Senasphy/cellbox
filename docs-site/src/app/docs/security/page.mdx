@@ -15,12 +15,12 @@ The native backend isolates workloads using Linux user, mount, PID, network, IPC
 
 Every native sandbox runs inside a dedicated child process tree (`cellbox-init` as PID 1 + workload processes):
 
-1. **Seven Linux Namespaces:** `user`, `mount`, `PID`, `network`, `IPC`, `UTS`, and `cgroup`.
+1. **Seven [Linux Namespaces](https://man7.org/linux/man-pages/man7/namespaces.7.html):** `user`, `mount`, `PID`, `network`, `IPC`, `UTS`, and `cgroup`.
 2. **Unprivileged UID/GID Mapping:** Runs in an unprivileged user namespace with a single host UID mapping and zero Linux capabilities.
-3. **Filesystem Pivoting:** Mounts a rootless `overlayfs` (`userxattr`), runs `pivot_root`, detaches the old root, sets `nosuid` mounts, and confines all host-initiated file operations inside `cellbox-init` via `openat2(2)`.
-4. **Cgroup v2 Limits:** Enforces `cpu.max`, `memory.max` (`memory.swap.max=0`), and `pids.max` via `CLONE_INTO_CGROUP`.
+3. **Filesystem Pivoting:** Mounts a rootless [`overlayfs`](https://www.kernel.org/doc/html/latest/filesystems/overlayfs.html) (`userxattr`), runs `pivot_root`, detaches the old root, sets `nosuid` mounts, and confines all host-initiated file operations inside `cellbox-init` via [`openat2(2)`](https://man7.org/linux/man-pages/man2/openat2.2.html).
+4. **[Cgroup v2](https://www.kernel.org/doc/html/latest/admin-guide/cgroup-v2.html) Limits:** Enforces `cpu.max`, `memory.max` (`memory.swap.max=0`), and `pids.max` via `CLONE_INTO_CGROUP`.
 5. **Process Death Signal:** `PR_SET_PDEATHSIG` ensures sandboxes terminate if the host `cellbox serve` process dies.
-6. **Privilege Lock:** Sets `no_new_privs`, marks `cellbox-init` non-dumpable (`PR_SET_DUMPABLE=0`), and installs a synchronized (`SECCOMP_FILTER_FLAG_TSYNC`) seccomp-bpf filter.
+6. **Privilege Lock:** Sets `no_new_privs`, marks `cellbox-init` non-dumpable (`PR_SET_DUMPABLE=0`), and installs a synchronized (`SECCOMP_FILTER_FLAG_TSYNC`) [seccomp-bpf](https://www.kernel.org/doc/html/latest/userspace-api/seccomp_filter.html) filter.
 
 ## Trust Boundaries
 

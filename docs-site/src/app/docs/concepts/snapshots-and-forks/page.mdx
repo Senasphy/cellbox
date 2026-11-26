@@ -46,7 +46,7 @@ Base OCI Rootfs
         └── snp_C (Parent: snp_A) ──▶ Fork ses_2
 ```
 
-On the native backend, Linux `overlayfs` mounts stack `lowerdir` layers. To prevent unbounded overlay chains, CellBox tracks ancestry depth (`parent_snapshot_id`) and **automatically flattens** the merged filesystem into a standalone base snapshot (`flattened: true`) once a snapshot chain reaches depth **7**.
+On the native backend, Linux [`overlayfs`](https://www.kernel.org/doc/html/latest/filesystems/overlayfs.html) mounts stack `lowerdir` layers. To prevent unbounded overlay chains, CellBox tracks ancestry depth (`parent_snapshot_id`) and **automatically flattens** the merged filesystem into a standalone base snapshot (`flattened: true`) once a snapshot chain reaches depth **7**.
 
 <Callout type="info" title="Deletion Protection">
 `DELETE /v1/snapshots/{snapshotID}` returns `409 snapshot_in_use` if any child snapshots or live forked sessions still depend on that snapshot. Destroy dependent forks and child snapshots first.
@@ -72,7 +72,7 @@ Because forked sessions use snapshot layers, they always use cold creation rathe
 
 ## Session Replay
 
-`GET /v1/sessions/{id}/replay` returns a paginated, chronological stream of exec boundaries (`exec.start`, `exec.end`) and base64-encoded timestamped output chunks so clients—or the embedded dashboard's Replay scrubber—can reconstruct an entire session run deterministically.
+`GET /v1/sessions/{id}/replay` returns a paginated, chronological stream of exec boundaries (`exec.start`, `exec.end`) and base64-encoded timestamped output chunks so clients, or the embedded dashboard's Replay scrubber, can reconstruct an entire session run deterministically.
 
 - Supports standard `limit` and `cursor` pagination.
 - Individual TTY execs also support asciicast v2 download at `GET /v1/sessions/{id}/execs/{execID}/asciicast`.

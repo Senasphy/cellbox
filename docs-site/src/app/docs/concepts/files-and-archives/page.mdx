@@ -13,7 +13,7 @@ CellBox separates file manipulation from host path traversal by mediating sandbo
 On the native backend, file and archive operations (`ReadFile`, `WriteFile`, `DeleteFile`, `ListDir`, `Archive`, `Extract`) do **not** read `/proc/<init-pid>/root` from the host. Instead, the host supervisor sends structured requests over the private `SOCK_SEQPACKET` channel to `cellbox-init` (`fs_open_read`, `fs_open_write`, `fs_commit_write`, `fs_abort_write`, `fs_delete`, `fs_list`, `fs_tar_create`, `fs_tar_extract`):
 
 - `cellbox-init` runs inside the sandbox's pivoted root filesystem.
-- Paths are validated and opened with Linux `openat2(2)` flags (`RESOLVE_IN_ROOT` / `RESOLVE_NO_MAGICLINKS`, `RESOLVE_BENEATH` / `RESOLVE_NO_SYMLINKS`).
+- Paths are validated and opened with Linux [`openat2(2)`](https://man7.org/linux/man-pages/man2/openat2.2.html) flags (`RESOLVE_IN_ROOT` / `RESOLVE_NO_MAGICLINKS`, `RESOLVE_BENEATH` / `RESOLVE_NO_SYMLINKS`).
 - File descriptors are passed back to the supervisor via `SCM_RIGHTS` only after confinement checks pass.
 - Tar uploads are pre-validated against path escapes, symlink escapes, and size bounds before extraction.
 
@@ -22,7 +22,7 @@ On the native backend, file and archive operations (`ReadFile`, `WriteFile`, `De
 | Operation | HTTP Method & Path | Notes |
 | --- | --- | --- |
 | **Read file** | `GET /v1/sessions/{id}/files?path=/work/out.txt` | Max **256 MiB**. Returns `X-Cellbox-File-Mode` header (e.g. `0644`). Rejects directories with `422 path_not_file`. |
-| **Write file** | `PUT /v1/sessions/{id}/files?path=/work/app.py` | Max **256 MiB** (`Content-Type: application/octet-stream`). Optional `X-Cellbox-Mode` header sets octal permissions (`0000`–`0777`, default `0644`). |
+| **Write file** | `PUT /v1/sessions/{id}/files?path=/work/app.py` | Max **256 MiB** (`Content-Type: application/octet-stream`). Optional `X-Cellbox-Mode` header sets octal permissions (`0000..0777`, default `0644`). |
 | **Delete file** | `DELETE /v1/sessions/{id}/files?path=/work/tmp.txt` | Rejects `/` with `422 path_invalid`. |
 
 ### Example: Writing an Executable Script

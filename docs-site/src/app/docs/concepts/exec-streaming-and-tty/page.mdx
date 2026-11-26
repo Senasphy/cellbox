@@ -54,7 +54,7 @@ Append `?wait=true` to block until the command finishes and receive `{ "exec": {
 
 Omit `?wait=true` to start the exec asynchronously (`202` / `201`) and receive `id` and `stream_url` (`/v1/sessions/{id}/execs/{execID}/stream`).
 
-Each SSE `output` frame carries:
+Each [SSE](https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events/Using_server-sent_events) `output` frame carries:
 
 - `id:` The byte cursor (`seq + len(decoded_bytes)`)
 - `event: output`
@@ -99,7 +99,7 @@ The Docker backend returns `422 capability_unsupported` because Docker Engine ca
 
 ### TTY Exec & Asciicast v2 Export
 
-Pass `"tty": true` in `POST /v1/sessions/{id}/execs` to allocate a PTY for that command (`capabilities.tty_exec: true` on both native and Docker). Completed TTY execs can be exported as standard **asciicast v2** recordings:
+Pass `"tty": true` in `POST /v1/sessions/{id}/execs` to allocate a PTY for that command (`capabilities.tty_exec: true` on both native and Docker). Completed TTY execs can be exported as standard **[asciicast v2](https://docs.asciinema.org/manual/asciicast/v2/)** recordings:
 
 ```bash
 curl -fsS "$CELLBOX_URL/v1/sessions/$session_id/execs/$exec_id/asciicast" \

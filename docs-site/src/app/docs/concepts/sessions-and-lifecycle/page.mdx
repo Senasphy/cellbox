@@ -31,7 +31,7 @@ Every session enforces six resource limits (with server defaults and hard maximu
 | `memory_mb` | `512` | `4096` | Cgroup v2 `memory.max` + `memory.swap.max=0` |
 | `pids` | `256` | `2048` | Cgroup v2 `pids.max` |
 | `disk_mb` | `1024` | `10240` | Soft 2s overlay watcher (`native`); unsupported (`docker`) |
-| `idle_ttl_s` | `600` (10m) | — | Background reaper sweeps every 5s |
+| `idle_ttl_s` | `600` (10m) | None | Background reaper sweeps every 5s |
 | `ttl_s` | `3600` (1h) | `86400` (24h) | Background reaper sweeps every 5s |
 
 <Callout type="warn" title="Native Soft Disk Quota">

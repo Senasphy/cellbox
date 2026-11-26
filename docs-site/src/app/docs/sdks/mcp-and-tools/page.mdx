@@ -6,7 +6,7 @@ order: 4
 
 # MCP Server & LLM Tool Calling
 
-CellBox includes both a built-in **Model Context Protocol (MCP)** server (`cellbox mcp`) and ready-to-use OpenAI/Anthropic JSON tool schemas (`sdk/tools/`).
+CellBox includes both a built-in **[Model Context Protocol (MCP)](https://modelcontextprotocol.io/)** server (`cellbox mcp`) and ready-to-use OpenAI/Anthropic JSON tool schemas (`sdk/tools/`).
 
 ## Running the MCP Server
 
@@ -66,9 +66,9 @@ On the first tool call, `cellbox mcp` lazily creates a `network_policy.mode: "no
 
 For custom agent loops without MCP, import the equivalent function schemas and bounded dispatcher from `sdk/tools/`:
 
-- **`sdk/tools/openai.json`** — OpenAI `tools` array for `run_command`, `write_file`, `read_file`, `list_files`, `snapshot`, `fork`.
-- **`sdk/tools/anthropic.json`** — Anthropic tool definitions.
-- **`sdk/tools/cellbox_tools.py`** — Dispatches tool calls to a Python `Session` and clips `stdout`, `stderr`, and `read_file` output independently to **16 KiB** (`16 * 1024` bytes) preserving head and tail with `\n... <omitted N bytes> ...\n`.
+- **`sdk/tools/openai.json`**: OpenAI `tools` array for `run_command`, `write_file`, `read_file`, `list_files`, `snapshot`, `fork`.
+- **`sdk/tools/anthropic.json`**: Anthropic tool definitions.
+- **`sdk/tools/cellbox_tools.py`**: Dispatches tool calls to a Python `Session` and clips `stdout`, `stderr`, and `read_file` output independently to **16 KiB** (`16 * 1024` bytes) preserving head and tail with `\n... <omitted N bytes> ...\n`.
 
 ```python
 import json
@@ -85,7 +85,7 @@ with Client("http://127.0.0.1:8080", api_key="cbx_...") as client:
 
 The repository includes four end-to-end agent examples with deterministic `--fake-model` modes for offline verification:
 
-- `examples/fix-loop.py` — Iterative test-repair loop (uses `OPENAI_API_KEY` or `--fake-model`).
-- `examples/hosted-model.py` — OpenAI-compatible tool-calling agent (`OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_MODEL`).
-- `examples/ollama.py` — Local Ollama tool-calling agent (`OLLAMA_URL`, `OLLAMA_MODEL`).
-- `examples/eval-runner.py` — Parallel, reproducible benchmark evaluator writing JSON results across isolated sessions.
+- `examples/fix-loop.py`: Iterative test-repair loop (uses `OPENAI_API_KEY` or `--fake-model`).
+- `examples/hosted-model.py`: OpenAI-compatible tool-calling agent (`OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_MODEL`).
+- `examples/ollama.py`: Local Ollama tool-calling agent (`OLLAMA_URL`, `OLLAMA_MODEL`).
+- `examples/eval-runner.py`: Parallel, reproducible benchmark evaluator writing JSON results across isolated sessions.

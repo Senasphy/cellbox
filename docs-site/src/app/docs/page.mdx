@@ -1,6 +1,6 @@
 ---
 title: "Introduction"
-description: "Architecture, isolation model, and backend selection for CellBox—self-hostable disposable Linux sandboxes for AI agents."
+description: "Architecture, isolation model, and backend selection for CellBox: self-hostable disposable Linux sandboxes for AI agents."
 icon: "book"
 order: 1
 ---
@@ -9,40 +9,17 @@ order: 1
 
 **CellBox** is a self-hostable single-binary Go service that provisions isolated, disposable Linux sandboxes for AI agents, evaluation harnesses, and code-execution workflows.
 
-A client (an agent, SDK, CLI, or MCP host) creates a **session** with an OCI image, resource limits, and a network policy. Inside that session, the client runs commands with resumable output streaming, reads and writes files, attaches interactive PTY terminals, captures immutable filesystem snapshots, and forks parallel child sessions.
+A client (an agent, SDK, CLI, or MCP host) creates a **session** with an [OCI image](https://opencontainers.org/about/overview/), resource limits, and a network policy. Inside that session, the client runs commands with resumable output streaming, reads and writes files, attaches interactive PTY terminals, captures immutable filesystem snapshots, and forks parallel child sessions.
 
 <Callout type="info" title="Agent Loop Boundary">
-The language model, prompt orchestration, and model API keys stay **outside** CellBox. CellBox never holds LLM credentials and never calls a model API—it is a pure execution primitive.
+The language model, prompt orchestration, and model API keys stay **outside** CellBox. CellBox never holds LLM credentials and never calls a model API. It is a pure execution primitive.
 </Callout>
 
 ## Architecture
 
-```txt
-Clients: Python SDK · TypeScript SDK · Go Client · CLI · MCP · Dashboard · curl
-   │
-   │  REST (/v1/*) · SSE (/stream) · WebSocket (/terminal)
-   ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│ cellbox serve (single Go binary, CGO_ENABLED=0)                         │
-│                                                                         │
-│  API Layer       Bearer auth, key quotas, rate limits, idempotency      │
-│  Session Manager One actor goroutine per session, persisted state       │
-│  Warm Pool       Pre-warmed per-image sandboxes (32 MB / 100m / 32 PID) │
-│  Runtime Driver  native (Linux namespaces/cgroups) | docker (bootstrap) │
-│  Egress Proxy    Per-session host HTTP/CONNECT proxy + SSRF blocklist   │
-│  Store & Logs    SQLite (WAL mode) + append-only replay & output logs   │
-│  Dashboard       Embedded Next.js static UI served at /                 │
-└─────────────────────────────────────────────────────────────────────────┘
-   │
-   │  clone(CLONE_INTO_CGROUP) + PR_SET_PDEATHSIG + SOCK_SEQPACKET
-   ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│ Sandbox: cellbox-init (PID 1) + workload processes                      │
-│  user · mount · PID · net · IPC · UTS · cgroup v2 · overlayfs · seccomp │
-└─────────────────────────────────────────────────────────────────────────┘
-```
+<ArchitectureFlowFigure />
 
-Every native sandbox is launched by re-executing the `cellbox` binary itself inside new Linux namespaces and directly inside its own cgroup (`CLONE_INTO_CGROUP`). The parent supervisor communicates with `cellbox-init` over a private `SOCK_SEQPACKET` Unix socket using `SCM_RIGHTS` descriptor passing. If the service exits, `PR_SET_PDEATHSIG` tears down child sandboxes, and startup reconciliation cleans up any orphaned cgroups and marks leftover sessions as `lost`.
+Every native sandbox is launched by re-executing the `cellbox` binary itself inside new [Linux namespaces](https://man7.org/linux/man-pages/man7/namespaces.7.html) and directly inside its own [cgroup v2](https://www.kernel.org/doc/html/latest/admin-guide/cgroup-v2.html) (`CLONE_INTO_CGROUP`). The parent supervisor communicates with `cellbox-init` over a private `SOCK_SEQPACKET` Unix socket using `SCM_RIGHTS` descriptor passing. If the service exits, `PR_SET_PDEATHSIG` tears down child sandboxes, and startup reconciliation cleans up any orphaned cgroups and marks leftover sessions as `lost`.
 
 ## Choosing a Backend: `native` vs `docker`
 
@@ -64,7 +41,7 @@ CellBox provides two runtime backends configured via `backend: native` (default)
 | **Image Management (`GET/DELETE /v1/images`)** | Pull supported; list/remove unimplemented | Full list, pull, and remove |
 
 <Callout type="warn" title="Security Boundary">
-The native backend isolates workloads using Linux user, mount, PID, network, IPC, UTS, and cgroup namespaces, cgroup v2 resource limits, a seccomp filter, and capability dropping. It shares the host kernel, so a kernel vulnerability can allow escape. For hostile multi-tenant workloads, run CellBox inside a dedicated virtual machine. Never expose the service to untrusted networks without TLS and the quotas and egress policy described in this documentation.
+The native backend isolates workloads using Linux user, mount, PID, network, IPC, UTS, and cgroup namespaces, cgroup v2 resource limits, a [seccomp filter](https://www.kernel.org/doc/html/latest/userspace-api/seccomp_filter.html), and capability dropping. It shares the host kernel, so a kernel vulnerability can allow escape. For hostile multi-tenant workloads, run CellBox inside a dedicated virtual machine. Never expose the service to untrusted networks without TLS and the quotas and egress policy described in this documentation.
 </Callout>
 
 ## Next Steps

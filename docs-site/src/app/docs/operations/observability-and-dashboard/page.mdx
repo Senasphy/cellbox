@@ -10,7 +10,7 @@ CellBox embeds both a Prometheus metrics exporter (`/metrics`) and a full static
 
 ## Prometheus Metrics (`GET /metrics`)
 
-Scrape `GET /metrics` in Prometheus text exposition format (`0.0.4`):
+Scrape `GET /metrics` in [Prometheus text exposition format](https://prometheus.io/docs/instrumenting/exposition_formats/) (`0.0.4`):
 
 | Metric | Type | Labels | Description |
 | --- | --- | --- | --- |
@@ -21,11 +21,11 @@ Scrape `GET /metrics` in Prometheus text exposition format (`0.0.4`):
 | `cellbox_exec_total` | Counter | `result` | Completed execs (`ok`, `nonzero`, `timed_out`, `oom_killed`, `pids_limited`, `failed`) |
 | `cellbox_limit_breach_total` | Counter | `kind` | Recorded breaches (`memory`, `pids`, `disk`, `output`, `timeout`) |
 | `cellbox_session_create_seconds` | Histogram | `source` | Session creation latency split by `cold` vs `warm` |
-| `cellbox_exec_seconds` | Histogram | — | Duration of completed execs |
-| `cellbox_output_bytes_total` | Counter | — | Total exec output bytes persisted |
-| `cellbox_session_create_total` | Counter | — | Total persisted session creation attempts |
-| `cellbox_error_total` | Counter | — | Failed sessions and failed/timed-out/OOM/PID-limited execs |
-| `cellbox_http_requests_in_flight` | Gauge | — | Current active HTTP requests |
+| `cellbox_exec_seconds` | Histogram | `(none)` | Duration of completed execs |
+| `cellbox_output_bytes_total` | Counter | `(none)` | Total exec output bytes persisted |
+| `cellbox_session_create_total` | Counter | `(none)` | Total persisted session creation attempts |
+| `cellbox_error_total` | Counter | `(none)` | Failed sessions and failed/timed-out/OOM/PID-limited execs |
+| `cellbox_http_requests_in_flight` | Gauge | `(none)` | Current active HTTP requests |
 | `cellbox_http_requests_total` | Counter | `method`, `route`, `status` | HTTP requests keyed strictly by Go `ServeMux` route template (low cardinality) |
 | `cellbox_http_request_duration_seconds` | Histogram | `method`, `route` | HTTP latency histogram keyed by route template |
 

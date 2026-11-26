@@ -7,11 +7,11 @@ order: 3
 
 # Core Concepts
 
-CellBox models sandbox compute around five core resources stored in SQLite (WAL mode) with UTC timestamps and forward-only embedded schema migrations.
+CellBox models sandbox compute around five core resources stored in [SQLite (WAL mode)](https://www.sqlite.org/wal.html) with UTC timestamps and forward-only embedded schema migrations.
 
 ## Resource Identifiers
 
-All primary entities use sortable, type-prefixed **ULIDs**:
+All primary entities use sortable, type-prefixed **[ULIDs](https://github.com/ulid/spec)**:
 
 | Prefix | Entity | Example |
 | --- | --- | --- |
@@ -24,7 +24,7 @@ API key secrets themselves use the `cbx_` prefix and are returned **only once** 
 
 ## Domain Entities at a Glance
 
-- **Session:** Owns an isolated rootfs (OCI image + optional snapshot layers), cgroup v2 resource limits, network egress policy, environment variables, labels, and wall/idle expiration timers. Sessions are **ephemeral**—they do not survive a service restart.
+- **Session:** Owns an isolated rootfs ([OCI image](https://github.com/opencontainers/image-spec) + optional snapshot layers), cgroup v2 resource limits, network egress policy, environment variables, labels, and wall/idle expiration timers. Sessions are **ephemeral**: they do not survive a service restart.
 - **Exec:** A single `argv` or `shell` process inside a `ready` session, with optional `cwd`, `env`, `timeout_ms`, and `tty`. Output is persisted sequentially so streams can resume cleanly after disconnects.
 - **Snapshot & Fork:** An immutable copy of a session's writable overlay layer (native) or committed image (Docker). Snapshots form a parent-child tree and persist independently of the source session.
 - **Audit & Egress Logs:** Every `session.create`, `session.ready`, `exec.start`, `exec.end`, `file.write`, `file.read`, `snapshot.create`, `limit.breach`, `egress.allow`, and `egress.deny` is recorded in SQLite for inspection and replay.
