@@ -93,6 +93,63 @@ const CELLBOX_API_REF_STYLES = `
   border-color: var(--fl-border) !important;
   background: var(--fl-card);
 }
+/* Calm, muted HTTP method badges harmonized with monochrome light/dark surfaces */
+:root,
+:root[data-theme="light"] {
+  --cb-method-get: #3d634e;
+  --cb-method-post: #465d78;
+  --cb-method-warn: #765c3b;
+  --cb-method-del: #804848;
+  --cb-method-wash: 6%;
+  --cb-method-border: 34%;
+}
+:root[data-theme="dark"] {
+  --cb-method-get: #7e9d89;
+  --cb-method-post: #8096b0;
+  --cb-method-warn: #ad9672;
+  --cb-method-del: #ad7e7e;
+  --cb-method-wash: 8%;
+  --cb-method-border: 30%;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) {
+    --cb-method-get: #7e9d89;
+    --cb-method-post: #8096b0;
+    --cb-method-warn: #ad9672;
+    --cb-method-del: #ad7e7e;
+    --cb-method-wash: 8%;
+    --cb-method-border: 30%;
+  }
+}
+.fl-api-method--success {
+  color: var(--cb-method-get) !important;
+  border-color: color-mix(in srgb, var(--cb-method-get) var(--cb-method-border), var(--fl-border)) !important;
+  background: color-mix(in srgb, var(--cb-method-get) var(--cb-method-wash), transparent);
+}
+.fl-api-method--info {
+  color: var(--cb-method-post) !important;
+  border-color: color-mix(in srgb, var(--cb-method-post) var(--cb-method-border), var(--fl-border)) !important;
+  background: color-mix(in srgb, var(--cb-method-post) var(--cb-method-wash), transparent);
+}
+.fl-api-method--warning {
+  color: var(--cb-method-warn) !important;
+  border-color: color-mix(in srgb, var(--cb-method-warn) var(--cb-method-border), var(--fl-border)) !important;
+  background: color-mix(in srgb, var(--cb-method-warn) var(--cb-method-wash), transparent);
+}
+.fl-api-method--danger,
+.fl-api-required,
+.fl-api-chip--danger {
+  color: var(--cb-method-del) !important;
+}
+.fl-api-method--danger {
+  border-color: color-mix(in srgb, var(--cb-method-del) var(--cb-method-border), var(--fl-border)) !important;
+  background: color-mix(in srgb, var(--cb-method-del) var(--cb-method-wash), transparent);
+}
+.fl-api-method--neutral {
+  color: var(--fl-muted) !important;
+  border-color: var(--fl-border) !important;
+  background: transparent;
+}
 .fl-api-nav-links {
   display: inline-flex;
   align-items: center;
