@@ -1,7 +1,7 @@
 @import "@fontsource-variable/geist/wght.css";
 @import "@fontsource-variable/geist-mono/wght.css";
-@import "tailwindcss";
 @import "@farming-labs/theme/darksharp/css";
+@import "tailwindcss";
 
 /* ─── Typography tokens (override shared-framework.css defaults) ────────────── */
 :root,
@@ -203,10 +203,64 @@ html.dark #nd-docs-layout code:not(pre code) {
   font-size: 0.84em;
 }
 
-/* Crisp table sizing inside docs */
+/* Crisp table sizing & mobile ergonomics inside docs */
 #nd-docs-layout table {
   width: 100%;
   font-size: 0.875rem;
+}
+
+#nd-docs-layout article#nd-page code:not(pre code) {
+  overflow-wrap: anywhere;
+}
+
+#nd-docs-layout [data-toc-popover-trigger] > span.grid {
+  overflow: hidden;
+}
+
+#nd-docs-layout [data-toc-popover-trigger] span.opacity-0 {
+  opacity: 0 !important;
+}
+
+@media (max-width: 767px) {
+  #nd-docs-layout article#nd-page {
+    padding-inline: 1rem;
+    padding-top: 1.25rem;
+  }
+  #nd-docs-layout article#nd-page h1 {
+    font-size: 1.75rem;
+    line-height: 1.2;
+  }
+  #nd-docs-layout th,
+  #nd-docs-layout td {
+    padding: 0.5rem 0.65rem;
+    font-size: 0.8125rem;
+  }
+  #nd-sidebar-mobile {
+    background-color: var(--color-fd-background) !important;
+    border-color: var(--color-fd-border) !important;
+  }
+}
+
+/* Preserve @farming-labs/theme responsive breakpoints when Tailwind utilities follow it */
+@media (max-width: 767px) {
+  #nd-docs-layout #nd-sidebar {
+    display: none !important;
+  }
+}
+@media (min-width: 768px) {
+  #nd-docs-layout #nd-subnav {
+    display: none !important;
+  }
+}
+@media (max-width: 1279px) {
+  #nd-docs-layout #nd-toc {
+    display: none !important;
+  }
+}
+@media (min-width: 1280px) {
+  #nd-docs-layout [data-toc-popover] {
+    display: none !important;
+  }
 }
 
 /* ─── Landing Page Tokens & Grid (Light + Dark) ─────────────────────────── */
@@ -273,6 +327,12 @@ html.dark,
   max-width: 1180px;
   margin-inline: auto;
   border-inline: 1px solid var(--cb-line);
+}
+
+@media (max-width: 639px) {
+  .cb-frame {
+    border-inline: 0;
+  }
 }
 
 .cb-rule-b {
