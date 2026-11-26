@@ -16,6 +16,8 @@ import {
   Webhook,
 } from "lucide-react";
 import { CellBoxLogo } from "./src/components/CellBoxLogo";
+import { ArchitectureFlowFigure } from "./src/components/ArchitectureFlowFigure";
+import { DocsAnchor } from "./src/components/PreviewLink";
 
 const cellboxTheme = createTheme({
   name: "fumadocs-darksharp",
@@ -95,9 +97,13 @@ export default defineDocs({
   docsPath: "/docs",
   ordering: "numeric",
   metadata: {
-    titleTemplate: "%s — CellBox Docs",
+    titleTemplate: "%s | CellBox Docs",
     description:
       "Self-hostable service for giving AI agents safe, isolated, disposable Linux sandboxes.",
+  },
+  components: {
+    a: DocsAnchor,
+    ArchitectureFlowFigure,
   },
   theme: cellboxTheme(),
   themeToggle: {

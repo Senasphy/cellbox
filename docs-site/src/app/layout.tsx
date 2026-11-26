@@ -2,7 +2,7 @@ import type { LayoutProps, Metadata } from "@farm.js/core";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "CellBox — Disposable Linux Sandboxes for AI Agents",
+  title: "CellBox | Disposable Linux Sandboxes for AI Agents",
   description:
     "Self-hostable service for giving AI agents safe, isolated, disposable Linux sandboxes with rootless namespaces, cgroups v2, seccomp, fail-closed egress proxying, and snapshots.",
   icons: {

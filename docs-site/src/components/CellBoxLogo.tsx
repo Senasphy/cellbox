@@ -14,7 +14,7 @@ export function CellBoxLogo({ size = 20, className = "", animated = false }: Cel
       aria-hidden="true"
       className={`${animated ? "cb-logo-mark" : ""} ${className}`.trim()}
     >
-      {/* Top row: (0,0), (1,0) — top-right corner open */}
+      {/* Top row: (0,0), (1,0) with top-right corner open */}
       <rect
         className="cb-logo-cell cb-cell-1"
         x="6.75"

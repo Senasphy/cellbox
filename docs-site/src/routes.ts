@@ -259,13 +259,14 @@ function enhanceApiReferenceHtml(html: string): string {
     .replace("</head>", `<style>${CELLBOX_API_REF_STYLES}</style>${CELLBOX_API_THEME_SYNC}<link rel="icon" href="/favicon.svg" type="image/svg+xml" /></head>`)
     .replace(
       '<span class="fl-api-brand-mark" aria-hidden="true">FL</span>\n        <span>API Reference</span>',
-      `<span class="fl-api-brand-mark" aria-hidden="true">${CELLBOX_API_BRAND_SVG}</span>\n        <span>cellbox // API Reference</span>`,
+      `<span class="fl-api-brand-mark" aria-hidden="true">${CELLBOX_API_BRAND_SVG}</span>\n        <span>cellbox · API Reference</span>`,
     )
     .replace(
       '<div class="fl-api-topbar-actions">',
       '<div class="fl-api-topbar-actions"><nav class="fl-api-nav-links" aria-label="Site navigation"><a href="/">Home</a><a href="/docs">Docs</a><a href="/docs/api">API Guide</a><a href="https://github.com/Senasphy/cellbox" target="_blank" rel="noreferrer">GitHub</a></nav>',
     )
-    .replace('href="/api/docs?format=openapi"', 'href="/openapi.yaml"');
+    .replace('href="/api/docs?format=openapi"', 'href="/openapi.yaml"')
+    .replace(/\u2014/g, "-");
 }
 
 export default defineRoutes(({ api }) => [
