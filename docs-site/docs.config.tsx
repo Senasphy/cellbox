@@ -169,7 +169,17 @@ export default defineDocs({
   telemetry: false,
   footer: (
     <div className="flex flex-wrap items-center justify-between gap-3 border-t border-fd-border pt-4 text-xs text-fd-muted-foreground">
-      <span>CellBox Documentation · Single-node Linux sandbox service</span>
+      <span>
+        CellBox Documentation · Single-node Linux sandbox service · Built with{" "}
+        <a
+          href="https://farmjs.dev"
+          target="_blank"
+          rel="noreferrer"
+          className="underline decoration-fd-border underline-offset-4 hover:text-fd-foreground"
+        >
+          Farm.js
+        </a>
+      </span>
       <div className="flex items-center gap-4 font-mono">
         <a href="/api-reference" className="hover:text-fd-foreground">
           OpenAPI

@@ -1067,10 +1067,22 @@ export function Dashboard() {
 
       <footer className="cb-frame border-t border-[var(--cb-line)] bg-[var(--cb-paper)] px-4 py-3 sm:px-6">
         <div className="cb-mono flex flex-wrap items-center justify-between gap-2 text-[11px] text-[var(--cb-muted)]">
-          <span className="inline-flex items-center gap-2 text-[var(--cb-ink)]">
+          <span className="inline-flex flex-wrap items-center gap-2 text-[var(--cb-ink)]">
             <CellBoxLogo size={14} />
             <span>cellbox</span>
             <span className="text-[var(--cb-muted)]">// Disposable computers for AI agents</span>
+            <span className="text-[var(--cb-muted)]">·</span>
+            <span className="text-[var(--cb-muted)]">
+              Built with{" "}
+              <a
+                href="https://farmjs.dev"
+                target="_blank"
+                rel="noreferrer"
+                className="underline decoration-[var(--cb-line)] underline-offset-4 hover:text-[var(--cb-ink)]"
+              >
+                Farm.js
+              </a>
+            </span>
           </span>
           <span>
             {key ? `${activeCount} active · ${sessions.length} total` : "Awaiting authentication"}

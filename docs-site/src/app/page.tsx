@@ -637,6 +637,18 @@ $ python examples/eval-runner.py --fake-model
               <GitHubMark className="size-3 shrink-0" />
               <span>github.com/Senasphy/cellbox</span>
             </a>
+            <span className="hidden sm:inline">·</span>
+            <span>
+              built with{" "}
+              <a
+                href="https://farmjs.dev"
+                target="_blank"
+                rel="noreferrer"
+                className="text-[var(--cb-muted)] underline decoration-[var(--cb-line)] underline-offset-4 hover:text-[var(--cb-ink)]"
+              >
+                Farm.js
+              </a>
+            </span>
           </div>
           <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
             <a href="/docs" className="hover:text-[var(--cb-ink)]">
