@@ -5,6 +5,7 @@ package native
 import (
 	"archive/tar"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -12,6 +13,7 @@ import (
 	"path"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -83,6 +85,7 @@ func (s *imageStore) Ensure(ctx context.Context, reference string) (cellruntime.
 		destination := filepath.Join(imagesDir, digest.Hex)
 		rootfs := filepath.Join(destination, "rootfs")
 		if info, err := os.Stat(rootfs); err == nil && info.IsDir() {
+			_ = s.recordMeta(destination, digest.String(), size, reference)
 			return imageStoreResult{info: cellruntime.ImageInfo{Reference: reference, Digest: digest.String(), Size: size}, rootfs: rootfs, env: imageEnv}, nil
 		}
 		tmp, err := os.MkdirTemp(imagesDir, ".pull-*")
@@ -123,10 +126,12 @@ func (s *imageStore) Ensure(ctx context.Context, reference string) (cellruntime.
 		}
 		if err := os.Rename(tmp, destination); err != nil {
 			if info, statErr := os.Stat(rootfs); statErr == nil && info.IsDir() {
+				_ = s.recordMeta(destination, digest.String(), size, reference)
 				return imageStoreResult{info: cellruntime.ImageInfo{Reference: reference, Digest: digest.String(), Size: size}, rootfs: rootfs, env: imageEnv}, nil
 			}
 			return nil, fmt.Errorf("publish image rootfs: %w", err)
 		}
+		_ = s.recordMeta(destination, digest.String(), size, reference)
 		return imageStoreResult{info: cellruntime.ImageInfo{Reference: reference, Digest: digest.String(), Size: size}, rootfs: rootfs, env: imageEnv}, nil
 	})
 	if err != nil {
@@ -150,6 +155,197 @@ type imageStoreResult struct {
 	info   cellruntime.ImageInfo
 	rootfs string
 	env    map[string]string
+}
+
+type imageMeta struct {
+	Digest     string   `json:"digest"`
+	Size       int64    `json:"size"`
+	References []string `json:"references"`
+}
+
+func (s *imageStore) recordMeta(dir, digest string, size int64, reference string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	meta, _ := readImageMeta(dir)
+	if meta.Digest == "" {
+		meta.Digest = digest
+	}
+	if size > 0 {
+		meta.Size = size
+	}
+	if reference != "" && !slices.Contains(meta.References, reference) {
+		meta.References = append(meta.References, reference)
+		sort.Strings(meta.References)
+	}
+	return writeImageMeta(dir, meta)
+}
+
+func readImageMeta(dir string) (imageMeta, error) {
+	data, err := os.ReadFile(filepath.Join(dir, "meta.json"))
+	if err != nil {
+		return imageMeta{}, err
+	}
+	var meta imageMeta
+	if err := json.Unmarshal(data, &meta); err != nil {
+		return imageMeta{}, err
+	}
+	return meta, nil
+}
+
+func writeImageMeta(dir string, meta imageMeta) error {
+	data, err := json.Marshal(meta)
+	if err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(dir, ".meta-*")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	if err := os.Rename(tmpPath, filepath.Join(dir, "meta.json")); err != nil {
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	return nil
+}
+
+// List returns cached native images from the on-disk image store.
+func (s *imageStore) List(ctx context.Context) ([]cellruntime.ImageInfo, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	imagesDir := filepath.Join(s.root, "images")
+	entries, err := os.ReadDir(imagesDir)
+	if errors.Is(err, os.ErrNotExist) {
+		return []cellruntime.ImageInfo{}, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("list native image cache: %w", err)
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]cellruntime.ImageInfo, 0, len(entries))
+	for _, entry := range entries {
+		if !entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
+			continue
+		}
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		dir := filepath.Join(imagesDir, entry.Name())
+		info, err := os.Stat(filepath.Join(dir, "rootfs"))
+		if err != nil || !info.IsDir() {
+			continue
+		}
+		meta, _ := readImageMeta(dir)
+		digest := meta.Digest
+		if digest == "" {
+			digest = "sha256:" + entry.Name()
+		}
+		if len(meta.References) == 0 {
+			out = append(out, cellruntime.ImageInfo{Reference: digest, Digest: digest, Size: meta.Size})
+			continue
+		}
+		for _, ref := range meta.References {
+			out = append(out, cellruntime.ImageInfo{Reference: ref, Digest: digest, Size: meta.Size})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Reference == out[j].Reference {
+			return out[i].Digest < out[j].Digest
+		}
+		return out[i].Reference < out[j].Reference
+	})
+	return out, nil
+}
+
+// Remove deletes a cached image reference or its entire rootfs directory when no references remain.
+func (s *imageStore) Remove(ctx context.Context, ref string, inUse func(rootfs string) bool) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return errors.New("image reference must not be empty")
+	}
+	imagesDir := filepath.Join(s.root, "images")
+	entries, err := os.ReadDir(imagesDir)
+	if errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("image %q not found", ref)
+	}
+	if err != nil {
+		return fmt.Errorf("read native image cache: %w", err)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, entry := range entries {
+		if !entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
+			continue
+		}
+		dir := filepath.Join(imagesDir, entry.Name())
+		rootfs := filepath.Join(dir, "rootfs")
+		if info, statErr := os.Stat(rootfs); statErr != nil || !info.IsDir() {
+			continue
+		}
+		meta, _ := readImageMeta(dir)
+		digest := meta.Digest
+		if digest == "" {
+			digest = "sha256:" + entry.Name()
+		}
+		byDigest := ref == digest || ref == entry.Name()
+		byRef := slices.Contains(meta.References, ref)
+		if !byDigest && !byRef {
+			continue
+		}
+		if inUse != nil && inUse(rootfs) {
+			return fmt.Errorf("image %q is in use by an active session", ref)
+		}
+		if byDigest || len(meta.References) <= 1 {
+			s.evictRefsLocked(meta.References...)
+			s.evictRefsLocked(ref, digest)
+			if err := removeTree(dir); err != nil {
+				return fmt.Errorf("remove native image %q: %w", ref, err)
+			}
+			return nil
+		}
+		remaining := make([]string, 0, len(meta.References)-1)
+		for _, item := range meta.References {
+			if item != ref {
+				remaining = append(remaining, item)
+			}
+		}
+		meta.References = remaining
+		s.evictRefsLocked(ref)
+		if err := writeImageMeta(dir, meta); err != nil {
+			return fmt.Errorf("update native image metadata %q: %w", ref, err)
+		}
+		return nil
+	}
+	return fmt.Errorf("image %q not found", ref)
+}
+
+func (s *imageStore) evictRefsLocked(refs ...string) {
+	for _, ref := range refs {
+		if ref == "" {
+			continue
+		}
+		delete(s.cache, ref)
+		for i := 0; i < len(s.order); i++ {
+			if s.order[i] == ref {
+				s.order = append(s.order[:i], s.order[i+1:]...)
+				i--
+			}
+		}
+	}
 }
 
 func parseImageEnvironment(values []string) (map[string]string, error) {

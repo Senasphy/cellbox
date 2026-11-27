@@ -52,9 +52,30 @@ func (*Runtime) Capabilities() cellruntime.Capabilities {
 	return cellruntime.Capabilities{Snapshots: true, CPULimits: true, DiskLimits: true, TTY: true, TTYExec: true, EgressPolicy: true}
 }
 
+var _ cellruntime.ImageManager = (*Runtime)(nil)
+
 func (r *Runtime) EnsureImage(ctx context.Context, reference string) (cellruntime.ImageInfo, error) {
 	info, _, _, err := r.images.Ensure(ctx, reference)
 	return info, err
+}
+
+// ListImages returns cached native images.
+func (r *Runtime) ListImages(ctx context.Context) ([]cellruntime.ImageInfo, error) {
+	return r.images.List(ctx)
+}
+
+// RemoveImage deletes a cached native image reference or its rootfs if unused by active sessions.
+func (r *Runtime) RemoveImage(ctx context.Context, reference string) error {
+	return r.images.Remove(ctx, reference, func(rootfs string) bool {
+		r.mu.RLock()
+		defer r.mu.RUnlock()
+		for _, box := range r.boxes {
+			if box.imageRootfs == rootfs {
+				return true
+			}
+		}
+		return false
+	})
 }
 
 func (r *Runtime) Create(ctx context.Context, spec cellruntime.SandboxSpec) (cellruntime.Sandbox, error) {
@@ -195,7 +216,7 @@ func (r *Runtime) Create(ctx context.Context, spec cellruntime.SandboxSpec) (cel
 		cleanup()
 		return nil, err
 	}
-	box := &sandbox{runtime: r, id: spec.ID, cgroup: cgroup, init: process, dir: base, env: cloneEnv(env), egressProxy: egressProxy, egressCancel: egressCancel, egressEvents: egressQueue}
+	box := &sandbox{runtime: r, id: spec.ID, imageRootfs: rootfs, cgroup: cgroup, init: process, dir: base, env: cloneEnv(env), egressProxy: egressProxy, egressCancel: egressCancel, egressEvents: egressQueue}
 	box.startDiskMonitor(limits.DiskMB)
 	r.mu.Lock()
 	if _, exists := r.boxes[spec.ID]; exists {
@@ -290,6 +311,7 @@ func (r *Runtime) SandboxByID(id string) cellruntime.Sandbox {
 type sandbox struct {
 	runtime        *Runtime
 	id             string
+	imageRootfs    string
 	cgroup         *SessionCgroup
 	init           *InitProcess
 	dir            string

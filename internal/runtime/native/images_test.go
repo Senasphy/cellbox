@@ -139,3 +139,82 @@ func TestApplyImageLayerRejectsTraversalAndSymlinkParent(t *testing.T) {
 		t.Fatalf("wrote through symlink: %v", err)
 	}
 }
+
+func TestImageStoreListAndRemove(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	store := newImageStore(root)
+
+	empty, err := store.List(ctx)
+	if err != nil || len(empty) != 0 {
+		t.Fatalf("empty List = %v, %v", empty, err)
+	}
+
+	hexA := strings.Repeat("a", 64)
+	dirA := filepath.Join(root, "images", hexA)
+	rootfsA := filepath.Join(dirA, "rootfs")
+	if err := os.MkdirAll(rootfsA, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.recordMeta(dirA, "sha256:"+hexA, 1234, "alpine:3.20"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.recordMeta(dirA, "sha256:"+hexA, 1234, "alpine:latest"); err != nil {
+		t.Fatal(err)
+	}
+	store.cache["alpine:3.20"] = imageStoreResult{rootfs: rootfsA}
+	store.cache["alpine:latest"] = imageStoreResult{rootfs: rootfsA}
+	store.order = []string{"alpine:3.20", "alpine:latest"}
+
+	hexB := strings.Repeat("b", 64)
+	rootfsB := filepath.Join(root, "images", hexB, "rootfs")
+	if err := os.MkdirAll(rootfsB, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	images, err := store.List(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(images) != 3 {
+		t.Fatalf("List count = %d, want 3: %+v", len(images), images)
+	}
+	if images[0].Reference != "alpine:3.20" || images[1].Reference != "alpine:latest" || images[2].Reference != "sha256:"+hexB {
+		t.Fatalf("unexpected image list order/refs: %+v", images)
+	}
+
+	if err := store.Remove(ctx, "alpine:3.20", func(got string) bool { return got == rootfsA }); err == nil {
+		t.Fatal("expected error removing in-use image")
+	}
+
+	// Removing one tag when two exist keeps the rootfs and other tag.
+	if err := store.Remove(ctx, "alpine:3.20", nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(rootfsA); err != nil {
+		t.Fatalf("rootfsA should still exist: %v", err)
+	}
+	if _, ok := store.cache["alpine:3.20"]; ok {
+		t.Fatal("expected alpine:3.20 evicted from cache")
+	}
+
+	// Removing the last tag deletes the rootfs directory.
+	if err := store.Remove(ctx, "alpine:latest", nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(dirA); !os.IsNotExist(err) {
+		t.Fatalf("expected dirA deleted, stat err = %v", err)
+	}
+
+	// Removing by digest deletes untagged image.
+	if err := store.Remove(ctx, "sha256:"+hexB, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "images", hexB)); !os.IsNotExist(err) {
+		t.Fatalf("expected dirB deleted, stat err = %v", err)
+	}
+
+	if err := store.Remove(ctx, "missing:latest", nil); err == nil {
+		t.Fatal("expected error removing missing image")
+	}
+}
