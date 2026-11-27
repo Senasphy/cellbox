@@ -315,12 +315,14 @@ func (s *server) deleteSession(w http.ResponseWriter, r *http.Request) {
 	record.LastActivityAt = time.Now().UTC()
 	if err = persist.UpdateSession(r.Context(), record); err != nil {
 		if latest, getErr := persist.GetSession(r.Context(), record.ID); getErr == nil && (latest.State == "stopped" || latest.State == "expired" || latest.State == "failed" || latest.State == "lost") {
+			s.admissionQueue.broadcast()
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
 		problem.Write(w, problem.Problem{Title: "Internal error", Status: http.StatusInternalServerError, Code: "session_update_failed"})
 		return
 	}
+	s.admissionQueue.broadcast()
 	w.WriteHeader(http.StatusNoContent)
 }
 

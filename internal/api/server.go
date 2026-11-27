@@ -59,6 +59,8 @@ type server struct {
 	httpRequests     map[httpMetricKey]uint64
 	httpDurations    map[httpRouteKey]*httpDurationHist
 	admissionMu      sync.Mutex
+	admissionQueue   admissionQueue
+	hostCapacityFn   func() (hostCapacity, error)
 	metricsGroup     singleflight.Group
 }
 
