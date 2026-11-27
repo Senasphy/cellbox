@@ -22,6 +22,20 @@ type keyPersistence interface {
 	RevokeKey(context.Context, string) error
 }
 
+type keyQuotaUpdater interface {
+	UpdateKeyQuotas(context.Context, string, []byte) (store.KeyRecord, error)
+}
+
+type updateKeyQuotasRequest struct {
+	MaxSessions       *int `json:"max_sessions"`
+	MaxTotalMemoryMB  *int `json:"max_total_memory_mb"`
+	RequestsPerSecond *int `json:"requests_per_second"`
+}
+
+type updateKeyRequest struct {
+	Quotas *updateKeyQuotasRequest `json:"quotas"`
+}
+
 type createKeyRequest struct {
 	Name  string `json:"name"`
 	Scope string `json:"scope"`
@@ -124,6 +138,75 @@ func (s *server) deleteKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *server) updateKey(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireAdmin(w, r); !ok {
+		return
+	}
+	persist, ok := s.keyStore(w)
+	if !ok {
+		return
+	}
+	updater, ok := s.store.(keyQuotaUpdater)
+	if !ok {
+		problem.Write(w, problem.Problem{Title: "Unsupported", Status: http.StatusNotImplemented, Code: "runtime_unsupported", Detail: "store does not support updating key quotas"})
+		return
+	}
+	var req updateKeyRequest
+	if err := decodeJSONBody(w, r, &req, 1<<20); err != nil {
+		problem.Write(w, problem.Problem{Title: "Invalid request", Status: http.StatusBadRequest, Code: "request_invalid", Detail: err.Error()})
+		return
+	}
+	if req.Quotas == nil || (req.Quotas.MaxSessions == nil && req.Quotas.MaxTotalMemoryMB == nil && req.Quotas.RequestsPerSecond == nil) {
+		problem.Write(w, problem.Problem{Title: "Invalid key quotas", Status: http.StatusUnprocessableEntity, Code: "key_quotas_invalid", Detail: "at least one quota field must be provided"})
+		return
+	}
+	for _, v := range []*int{req.Quotas.MaxSessions, req.Quotas.MaxTotalMemoryMB, req.Quotas.RequestsPerSecond} {
+		if v != nil && (*v < 0 || *v > 1<<30) {
+			problem.Write(w, problem.Problem{Title: "Invalid key quotas", Status: http.StatusUnprocessableEntity, Code: "key_quotas_invalid", Detail: "quota values must be between 0 and 1073741824"})
+			return
+		}
+	}
+	keyID := r.PathValue("id")
+	keys, err := persist.ListKeys(r.Context())
+	if err != nil {
+		problem.Write(w, problem.Problem{Title: "Internal error", Status: http.StatusInternalServerError, Code: "key_list_failed"})
+		return
+	}
+	var existing *store.KeyRecord
+	for i := range keys {
+		if keys[i].ID == keyID {
+			existing = &keys[i]
+			break
+		}
+	}
+	if existing == nil || existing.RevokedAt != nil {
+		problem.Write(w, problem.Problem{Title: "Not found", Status: http.StatusNotFound, Code: "key_not_found"})
+		return
+	}
+	var merged store.KeyQuotas
+	_ = json.Unmarshal(existing.QuotasJSON, &merged)
+	if req.Quotas.MaxSessions != nil {
+		merged.MaxSessions = *req.Quotas.MaxSessions
+	}
+	if req.Quotas.MaxTotalMemoryMB != nil {
+		merged.MaxTotalMemoryMB = *req.Quotas.MaxTotalMemoryMB
+	}
+	if req.Quotas.RequestsPerSecond != nil {
+		merged.RequestsPerSecond = *req.Quotas.RequestsPerSecond
+	}
+	quotasJSON, _ := json.Marshal(merged)
+	updated, err := updater.UpdateKeyQuotas(r.Context(), keyID, quotasJSON)
+	if errors.Is(err, sql.ErrNoRows) {
+		problem.Write(w, problem.Problem{Title: "Not found", Status: http.StatusNotFound, Code: "key_not_found"})
+		return
+	}
+	if err != nil {
+		problem.Write(w, problem.Problem{Title: "Internal error", Status: http.StatusInternalServerError, Code: "key_update_failed"})
+		return
+	}
+	writeJSON(w, http.StatusOK, toKeyResponse(updated, ""))
 }
 
 func (s *server) requireAdmin(w http.ResponseWriter, r *http.Request) (store.KeyRecord, bool) {

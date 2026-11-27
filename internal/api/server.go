@@ -102,6 +102,7 @@ func newHandlerWithConfig(store KeyStore, backend runtime.Runtime, backendName s
 	s.mux.Handle("GET /v1/limit-breaches", withTimeout(10*time.Second, http.HandlerFunc(s.listRecentLimitBreaches)))
 	s.mux.Handle("POST /v1/keys", withTimeout(10*time.Second, http.HandlerFunc(s.createKey)))
 	s.mux.Handle("GET /v1/keys", withTimeout(10*time.Second, http.HandlerFunc(s.listKeys)))
+	s.mux.Handle("PATCH /v1/keys/{id}", withTimeout(10*time.Second, http.HandlerFunc(s.updateKey)))
 	s.mux.Handle("DELETE /v1/keys/{id}", withTimeout(10*time.Second, http.HandlerFunc(s.deleteKey)))
 	s.mux.Handle("POST /v1/sessions", withTimeout(15*time.Minute, http.HandlerFunc(s.createSession)))
 	s.mux.Handle("GET /v1/sessions", withTimeout(10*time.Second, http.HandlerFunc(s.listSessions)))

@@ -224,6 +224,51 @@ paths:
   /v1/keys/{id}:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string } }
+    patch:
+      operationId: updateKey
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [quotas]
+              properties:
+                quotas:
+                  type: object
+                  properties:
+                    max_sessions: { type: integer, minimum: 0 }
+                    max_total_memory_mb: { type: integer, minimum: 0 }
+                    requests_per_second: { type: integer, minimum: 0 }
+      responses:
+        "200":
+          {
+            description: Updated API key metadata,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/KeyMetadata" } },
+              },
+          }
+        "404":
+          {
+            description: Key not found,
+            content:
+              {
+                application/problem+json:
+                  { schema: { $ref: "#/components/schemas/Problem" } },
+              },
+          }
+        default:
+          {
+            description: Problem response,
+            content:
+              {
+                application/problem+json:
+                  { schema: { $ref: "#/components/schemas/Problem" } },
+              },
+          }
     delete:
       operationId: revokeKey
       security: [{ bearerAuth: [] }]

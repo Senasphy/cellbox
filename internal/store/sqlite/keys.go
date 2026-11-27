@@ -101,3 +101,46 @@ func (s *Store) MarkKeyUsed(ctx context.Context, id string, usedAt time.Time) er
 	}
 	return nil
 }
+
+// UpdateKeyQuotas updates the quotas JSON for an existing non-revoked API key.
+func (s *Store) UpdateKeyQuotas(ctx context.Context, id string, quotasJSON []byte) (KeyRecord, error) {
+	if len(quotasJSON) == 0 {
+		quotasJSON = []byte(`{}`)
+	}
+	res, err := s.db.ExecContext(ctx, `UPDATE api_keys SET quotas_json=? WHERE id=? AND revoked_at IS NULL`, quotasJSON, id)
+	if err != nil {
+		return KeyRecord{}, fmt.Errorf("update API key quotas: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return KeyRecord{}, fmt.Errorf("check updated API key: %w", err)
+	}
+	if n == 0 {
+		return KeyRecord{}, sql.ErrNoRows
+	}
+	var k KeyRecord
+	var created string
+	var last, revoked sql.NullString
+	err = s.db.QueryRowContext(ctx, `SELECT id,name,prefix,secret_sha256,scope,quotas_json,created_at,last_used_at,revoked_at FROM api_keys WHERE id=?`, id).Scan(&k.ID, &k.Name, &k.Prefix, &k.Hash, &k.Scope, &k.QuotasJSON, &created, &last, &revoked)
+	if err != nil {
+		return KeyRecord{}, fmt.Errorf("reload API key: %w", err)
+	}
+	if k.CreatedAt, err = time.Parse(time.RFC3339Nano, created); err != nil {
+		return KeyRecord{}, fmt.Errorf("parse API key creation time: %w", err)
+	}
+	if last.Valid {
+		t, e := time.Parse(time.RFC3339Nano, last.String)
+		if e != nil {
+			return KeyRecord{}, fmt.Errorf("parse API key last-used time: %w", e)
+		}
+		k.LastUsedAt = &t
+	}
+	if revoked.Valid {
+		t, e := time.Parse(time.RFC3339Nano, revoked.String)
+		if e != nil {
+			return KeyRecord{}, fmt.Errorf("parse API key revocation time: %w", e)
+		}
+		k.RevokedAt = &t
+	}
+	return k, nil
+}
