@@ -76,3 +76,26 @@ func TestEnvOverridesForTerminalAndEgress(t *testing.T) {
 		t.Fatalf("egress.bandwidth_bytes_per_sec=%d", c.Egress.BandwidthBytesPerSec)
 	}
 }
+
+func TestClusterConfigValidationAndEnv(t *testing.T) {
+	t.Setenv("CELLBOX_CLUSTER_MODE", "worker")
+	if _, err := Load(""); err == nil {
+		t.Fatal("expected error for worker mode missing gateway/id/advertise_url")
+	}
+
+	t.Setenv("CELLBOX_CLUSTER_GATEWAY_GRPC", "127.0.0.1:9090")
+	t.Setenv("CELLBOX_CLUSTER_WORKER_ID", "wrk_1")
+	t.Setenv("CELLBOX_CLUSTER_ADVERTISE_URL", "http://127.0.0.1:8081")
+	c, err := Load("")
+	if err != nil {
+		t.Fatalf("valid worker config failed: %v", err)
+	}
+	if c.Cluster.Mode != "worker" || c.Cluster.WorkerID != "wrk_1" {
+		t.Fatalf("unexpected cluster config: %+v", c.Cluster)
+	}
+
+	t.Setenv("CELLBOX_CLUSTER_MODE", "invalid")
+	if _, err := Load(""); err == nil {
+		t.Fatal("expected error for invalid cluster mode")
+	}
+}

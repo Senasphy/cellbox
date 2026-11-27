@@ -13,12 +13,14 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	goruntime "runtime"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/senasphy/cellbox/internal/api"
 	"github.com/senasphy/cellbox/internal/auth"
+	"github.com/senasphy/cellbox/internal/cluster"
 	"github.com/senasphy/cellbox/internal/config"
 	"github.com/senasphy/cellbox/internal/dashboard"
 	"github.com/senasphy/cellbox/internal/doctor"
@@ -29,6 +31,8 @@ import (
 	"github.com/senasphy/cellbox/internal/runtime"
 	dockerruntime "github.com/senasphy/cellbox/internal/runtime/docker"
 	nativeruntime "github.com/senasphy/cellbox/internal/runtime/native"
+	"github.com/senasphy/cellbox/internal/store"
+	postgresstore "github.com/senasphy/cellbox/internal/store/postgres"
 	sqlitestore "github.com/senasphy/cellbox/internal/store/sqlite"
 	"github.com/spf13/cobra"
 )
@@ -75,6 +79,7 @@ func newRoot() *cobra.Command {
 	root.AddCommand(newMCPCommand())
 	var cfgPath string
 	var listen, dataDir, backend, logLevel, logFormat string
+	var clusterMode, postgresDSN, grpcListen, gatewayGRPC, workerID, advertiseURL string
 	var allowRemote bool
 	serve := &cobra.Command{Use: "serve", Short: "Start the cellbox service", RunE: func(cmd *cobra.Command, _ []string) error {
 		cfg, err := config.Load(cfgPath)
@@ -96,6 +101,24 @@ func newRoot() *cobra.Command {
 		if cmd.Flags().Changed("log-format") {
 			cfg.Log.Format = logFormat
 		}
+		if cmd.Flags().Changed("cluster-mode") {
+			cfg.Cluster.Mode = clusterMode
+		}
+		if cmd.Flags().Changed("postgres-dsn") {
+			cfg.Cluster.PostgresDSN = postgresDSN
+		}
+		if cmd.Flags().Changed("grpc-listen") {
+			cfg.Cluster.GRPCListen = grpcListen
+		}
+		if cmd.Flags().Changed("gateway-grpc") {
+			cfg.Cluster.GatewayGRPCAddr = gatewayGRPC
+		}
+		if cmd.Flags().Changed("worker-id") {
+			cfg.Cluster.WorkerID = workerID
+		}
+		if cmd.Flags().Changed("advertise-url") {
+			cfg.Cluster.AdvertiseURL = advertiseURL
+		}
 		if err := cfg.Validate(); err != nil {
 			return err
 		}
@@ -103,9 +126,33 @@ func newRoot() *cobra.Command {
 		if err = os.MkdirAll(cfg.DataDir, 0o700); err != nil {
 			return fmt.Errorf("create data directory: %w", err)
 		}
-		db, err := sqlitestore.Open(filepath.Join(cfg.DataDir, "cellbox.db"))
-		if err != nil {
-			return err
+		type serviceStore interface {
+			api.KeyStore
+			store.SessionStore
+			Ping(context.Context) error
+			Close() error
+			ListKeys(context.Context) ([]store.KeyRecord, error)
+			CreateKey(context.Context, store.KeyRecord) error
+			PruneExecOutput(context.Context, time.Time) (int64, error)
+			PruneAuditEvents(context.Context, time.Time) (int64, error)
+		}
+		var db serviceStore
+		var placementStore cluster.PlacementStore
+		if cfg.Cluster.PostgresDSN != "" {
+			pgCtx, pgCancel := context.WithTimeout(cmd.Context(), 10*time.Second)
+			pg, pgErr := postgresstore.Open(pgCtx, cfg.Cluster.PostgresDSN)
+			pgCancel()
+			if pgErr != nil {
+				return pgErr
+			}
+			db = pg
+			placementStore = pg
+		} else {
+			sq, sqErr := sqlitestore.Open(filepath.Join(cfg.DataDir, "cellbox.db"))
+			if sqErr != nil {
+				return sqErr
+			}
+			db = sq
 		}
 		defer db.Close()
 		ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
@@ -135,31 +182,33 @@ func newRoot() *cobra.Command {
 			logger.Warn("service is bound to a non-loopback address without TLS")
 		}
 		var runtimeBackend runtime.Runtime
-		switch cfg.Backend {
-		case "docker":
-			runtimeBackend = dockerruntime.New(cfg.DockerSocket)
-		case "native":
-			cgroupPath, cgroupErr := nativeruntime.CurrentCgroupPath()
-			if cgroupErr != nil {
-				return fmt.Errorf("locate delegated cgroup: %w", cgroupErr)
+		if cfg.Cluster.Mode != "gateway" {
+			switch cfg.Backend {
+			case "docker":
+				runtimeBackend = dockerruntime.New(cfg.DockerSocket)
+			case "native":
+				cgroupPath, cgroupErr := nativeruntime.CurrentCgroupPath()
+				if cgroupErr != nil {
+					return fmt.Errorf("locate delegated cgroup: %w", cgroupErr)
+				}
+				cgroups, cgroupErr := nativeruntime.InitializeCgroupRoot(cgroupPath, os.Getpid())
+				if cgroupErr != nil {
+					return fmt.Errorf("initialize native cgroups: %w", cgroupErr)
+				}
+				runtimeBackend, cgroupErr = nativeruntime.NewRuntime(cfg.DataDir, cgroups)
+				if cgroupErr != nil {
+					return fmt.Errorf("initialize native runtime: %w", cgroupErr)
+				}
 			}
-			cgroups, cgroupErr := nativeruntime.InitializeCgroupRoot(cgroupPath, os.Getpid())
-			if cgroupErr != nil {
-				return fmt.Errorf("initialize native cgroups: %w", cgroupErr)
+			reconcileCtx, reconcileCancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			if err = reconcile.Startup(reconcileCtx, runtimeBackend, db); err != nil {
+				reconcileCancel()
+				return fmt.Errorf("startup reconciliation failed: %w", err)
 			}
-			runtimeBackend, cgroupErr = nativeruntime.NewRuntime(cfg.DataDir, cgroups)
-			if cgroupErr != nil {
-				return fmt.Errorf("initialize native runtime: %w", cgroupErr)
-			}
-		}
-		reconcileCtx, reconcileCancel := context.WithTimeout(context.Background(), 2*time.Minute)
-		if err = reconcile.Startup(reconcileCtx, runtimeBackend, db); err != nil {
 			reconcileCancel()
-			return fmt.Errorf("startup reconciliation failed: %w", err)
 		}
-		reconcileCancel()
 		var warmPool *warmruntime.Manager
-		if cfg.Pool.Enabled {
+		if cfg.Pool.Enabled && runtimeBackend != nil {
 			warmPool = warmruntime.New(runtimeBackend, cfg.Pool)
 			warmPool.Prime(cfg.Pool.Images)
 			defer func() {
@@ -176,10 +225,78 @@ func newRoot() *cobra.Command {
 		} else {
 			apiHandler = api.NewHandlerWithConfig(db, runtimeBackend, cfg.Backend, cfg)
 		}
-		handler := dashboard.Wrap(apiHandler)
-		srv := &http.Server{Addr: cfg.Listen, Handler: handler, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 1 << 20}
 		serveCtx, stop := signalContext(cmd.Context())
 		defer stop()
+		if cfg.Cluster.Mode == "gateway" {
+			reg := cluster.NewRegistry(placementStore)
+			grpcLis, lisErr := net.Listen("tcp", cfg.Cluster.GRPCListen)
+			if lisErr != nil {
+				return fmt.Errorf("listen cluster gRPC %q: %w", cfg.Cluster.GRPCListen, lisErr)
+			}
+			grpcSrv := cluster.NewGRPCServer(reg)
+			go func() {
+				if gErr := grpcSrv.Serve(grpcLis); gErr != nil {
+					logger.Error("cluster gRPC server failed", "error", gErr)
+				}
+			}()
+			defer grpcSrv.GracefulStop()
+			hbTimeout := time.Duration(cfg.Cluster.HeartbeatTimeoutS) * time.Second
+			if hbTimeout <= 0 {
+				hbTimeout = 15 * time.Second
+			}
+			hbInterval := time.Duration(cfg.Cluster.HeartbeatIntervalS) * time.Second
+			if hbInterval <= 0 {
+				hbInterval = 5 * time.Second
+			}
+			go func() {
+				ticker := time.NewTicker(hbInterval)
+				defer ticker.Stop()
+				for {
+					select {
+					case <-serveCtx.Done():
+						return
+					case <-ticker.C:
+						if _, reapErr := reg.ReapStaleWorkers(serveCtx, hbTimeout); reapErr != nil {
+							logger.Error("cluster stale worker reap failed", "error", reapErr)
+						}
+					}
+				}
+			}()
+			apiHandler = cluster.NewGateway(reg, apiHandler, nil)
+			logger.Info("cluster gateway ready", "grpc_listen", cfg.Cluster.GRPCListen)
+		} else if cfg.Cluster.Mode == "worker" {
+			client, conn, dialErr := cluster.DialGateway(cfg.Cluster.GatewayGRPCAddr)
+			if dialErr != nil {
+				return dialErr
+			}
+			defer conn.Close()
+			totalCPU := int64(goruntime.NumCPU()) * 1000
+			regCtx, regCancel := context.WithTimeout(serveCtx, 5*time.Second)
+			_, regErr := client.RegisterWorker(regCtx, &cluster.RegisterRequest{
+				WorkerID:      cfg.Cluster.WorkerID,
+				AdvertiseURL:  cfg.Cluster.AdvertiseURL,
+				TotalCPUMilli: totalCPU,
+				TotalMemoryMB: 8192,
+				TotalPIDs:     32768,
+			})
+			regCancel()
+			if regErr != nil {
+				return fmt.Errorf("register cluster worker: %w", regErr)
+			}
+			hbInterval := time.Duration(cfg.Cluster.HeartbeatIntervalS) * time.Second
+			go cluster.RunHeartbeatLoop(serveCtx, client, hbInterval, func() cluster.HeartbeatRequest {
+				return cluster.HeartbeatRequest{
+					WorkerID:      cfg.Cluster.WorkerID,
+					AdvertiseURL:  cfg.Cluster.AdvertiseURL,
+					TotalCPUMilli: totalCPU,
+					TotalMemoryMB: 8192,
+					TotalPIDs:     32768,
+				}
+			})
+			logger.Info("cluster worker registered", "worker_id", cfg.Cluster.WorkerID, "gateway", cfg.Cluster.GatewayGRPCAddr)
+		}
+		handler := dashboard.Wrap(apiHandler)
+		srv := &http.Server{Addr: cfg.Listen, Handler: handler, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 1 << 20}
 		if reaperBackend, ok := runtimeBackend.(interface{ SandboxByID(string) runtime.Sandbox }); ok {
 			go reconcile.Run(serveCtx, reaperBackend, db, 5*time.Second, func(reaperErr error) {
 				logger.Error("session TTL sweep failed", "error", reaperErr)
@@ -224,6 +341,12 @@ func newRoot() *cobra.Command {
 	serve.Flags().StringVar(&logLevel, "log-level", "", "log level")
 	serve.Flags().StringVar(&logFormat, "log-format", "", "log format (json or text)")
 	serve.Flags().BoolVar(&allowRemote, "allow-remote", false, "allow a non-loopback listen address")
+	serve.Flags().StringVar(&clusterMode, "cluster-mode", "", "cluster role (standalone, gateway, or worker)")
+	serve.Flags().StringVar(&postgresDSN, "postgres-dsn", "", "PostgreSQL DSN for cluster persistence")
+	serve.Flags().StringVar(&grpcListen, "grpc-listen", "", "cluster gateway gRPC listen address")
+	serve.Flags().StringVar(&gatewayGRPC, "gateway-grpc", "", "cluster gateway gRPC target address for workers")
+	serve.Flags().StringVar(&workerID, "worker-id", "", "unique worker ID in cluster worker mode")
+	serve.Flags().StringVar(&advertiseURL, "advertise-url", "", "worker HTTP URL advertised to the cluster gateway")
 	root.AddCommand(serve)
 	return root
 }
