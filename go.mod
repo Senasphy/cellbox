@@ -1,17 +1,18 @@
 module github.com/senasphy/cellbox
 
-go 1.23.0
+go 1.26.0
 
 require (
 	github.com/elastic/go-seccomp-bpf v1.6.0
 	github.com/getkin/kin-openapi v0.127.0
 	github.com/google/go-containerregistry v0.19.2
 	github.com/gorilla/websocket v1.5.3
+	github.com/jackc/pgx/v5 v5.13.0
 	github.com/modelcontextprotocol/go-sdk v1.3.1
 	github.com/spf13/cobra v1.10.2
-	golang.org/x/net v0.41.0
-	golang.org/x/sync v0.15.0
-	golang.org/x/sys v0.35.0
+	golang.org/x/net v0.60.0
+	golang.org/x/sync v0.23.0
+	golang.org/x/sys v0.48.0
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.34.5
 )
@@ -30,6 +31,9 @@ require (
 	github.com/gorilla/mux v1.8.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/invopop/yaml v0.3.1 // indirect
+	github.com/jackc/pgpassfile v1.0.0 // indirect
+	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
+	github.com/jackc/puddle/v2 v2.2.3 // indirect
 	github.com/josharian/intern v1.0.0 // indirect
 	github.com/klauspost/compress v1.16.5 // indirect
 	github.com/mailru/easyjson v0.7.7 // indirect
@@ -48,8 +52,8 @@ require (
 	github.com/spf13/pflag v1.0.9 // indirect
 	github.com/vbatts/tar-split v0.11.3 // indirect
 	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
-	golang.org/x/oauth2 v0.30.0 // indirect
-	golang.org/x/text v0.26.0 // indirect
+	golang.org/x/oauth2 v0.36.0 // indirect
+	golang.org/x/text v0.42.0 // indirect
 	modernc.org/libc v1.55.3 // indirect
 	modernc.org/mathutil v1.6.0 // indirect
 	modernc.org/memory v1.8.0 // indirect
