@@ -191,7 +191,7 @@ export interface paths {
         delete: operations["revokeKey"];
         options?: never;
         head?: never;
-        patch?: never;
+        patch: operations["updateKey"];
         trace?: never;
     };
     "/v1/sessions": {
@@ -1019,6 +1019,56 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Key not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Problem response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    updateKey: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    quotas: {
+                        max_sessions?: number;
+                        max_total_memory_mb?: number;
+                        requests_per_second?: number;
+                    };
+                };
+            };
+        };
+        responses: {
+            /** @description Updated API key metadata */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KeyMetadata"];
+                };
             };
             /** @description Key not found */
             404: {
