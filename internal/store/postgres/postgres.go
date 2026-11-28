@@ -136,11 +136,11 @@ func jsonOrDefault(raw []byte, fallback string) []byte {
 }
 
 var (
-	_ store.Store           = (*Store)(nil)
-	_ store.SessionStore    = (*Store)(nil)
-	_ store.ExecStore       = (*Store)(nil)
+	_ store.Store            = (*Store)(nil)
+	_ store.SessionStore     = (*Store)(nil)
+	_ store.ExecStore        = (*Store)(nil)
 	_ store.IdempotencyStore = (*Store)(nil)
-	_ store.AuditEventStore = (*Store)(nil)
-	_ store.EgressLogStore  = (*Store)(nil)
-	_ store.SnapshotStore   = (*Store)(nil)
+	_ store.AuditEventStore  = (*Store)(nil)
+	_ store.EgressLogStore   = (*Store)(nil)
+	_ store.SnapshotStore    = (*Store)(nil)
 )
