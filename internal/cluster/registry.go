@@ -55,14 +55,14 @@ type PlacementStore interface {
 
 // Registry maintains live worker state, session placements, and scheduling decisions.
 type Registry struct {
-	mu            sync.RWMutex
-	workers       map[string]*WorkerInfo
-	placements    map[string]string
-	lostSessions  map[string]bool
-	store         PlacementStore
-	nextTieBreak  int
-	now           func() time.Time
-	onWorkerLost  func(workerID string, sessionIDs []string)
+	mu           sync.RWMutex
+	workers      map[string]*WorkerInfo
+	placements   map[string]string
+	lostSessions map[string]bool
+	store        PlacementStore
+	nextTieBreak int
+	now          func() time.Time
+	onWorkerLost func(workerID string, sessionIDs []string)
 }
 
 // NewRegistry creates a worker registry backed optionally by store.
