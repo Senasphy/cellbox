@@ -115,20 +115,20 @@ func Load(path string) (Config, error) {
 		}
 	}
 	for key, dst := range map[string]*string{
-		"CELLBOX_LISTEN":                   &c.Listen,
-		"CELLBOX_DATA_DIR":                 &c.DataDir,
-		"CELLBOX_BACKEND":                  &c.Backend,
-		"CELLBOX_DOCKER_SOCKET":            &c.DockerSocket,
-		"CELLBOX_LOG_LEVEL":                &c.Log.Level,
-		"CELLBOX_LOG_FORMAT":               &c.Log.Format,
-		"CELLBOX_TLS_CERT":                 &c.TLS.Cert,
-		"CELLBOX_TLS_KEY":                  &c.TLS.Key,
-		"CELLBOX_CLUSTER_MODE":             &c.Cluster.Mode,
-		"CELLBOX_CLUSTER_POSTGRES_DSN":     &c.Cluster.PostgresDSN,
-		"CELLBOX_CLUSTER_GRPC_LISTEN":      &c.Cluster.GRPCListen,
-		"CELLBOX_CLUSTER_GATEWAY_GRPC":     &c.Cluster.GatewayGRPCAddr,
-		"CELLBOX_CLUSTER_WORKER_ID":        &c.Cluster.WorkerID,
-		"CELLBOX_CLUSTER_ADVERTISE_URL":    &c.Cluster.AdvertiseURL,
+		"CELLBOX_LISTEN":                &c.Listen,
+		"CELLBOX_DATA_DIR":              &c.DataDir,
+		"CELLBOX_BACKEND":               &c.Backend,
+		"CELLBOX_DOCKER_SOCKET":         &c.DockerSocket,
+		"CELLBOX_LOG_LEVEL":             &c.Log.Level,
+		"CELLBOX_LOG_FORMAT":            &c.Log.Format,
+		"CELLBOX_TLS_CERT":              &c.TLS.Cert,
+		"CELLBOX_TLS_KEY":               &c.TLS.Key,
+		"CELLBOX_CLUSTER_MODE":          &c.Cluster.Mode,
+		"CELLBOX_CLUSTER_POSTGRES_DSN":  &c.Cluster.PostgresDSN,
+		"CELLBOX_CLUSTER_GRPC_LISTEN":   &c.Cluster.GRPCListen,
+		"CELLBOX_CLUSTER_GATEWAY_GRPC":  &c.Cluster.GatewayGRPCAddr,
+		"CELLBOX_CLUSTER_WORKER_ID":     &c.Cluster.WorkerID,
+		"CELLBOX_CLUSTER_ADVERTISE_URL": &c.Cluster.AdvertiseURL,
 	} {
 		if v, ok := os.LookupEnv(key); ok {
 			*dst = v
