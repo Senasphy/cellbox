@@ -111,14 +111,15 @@ test("dashboard creates a sandbox, streams a command, transfers a file and loads
       await expect(page.getByText("Connected", {exact:true})).toBeVisible({timeout:20_000});
       await expect(page.getByRole("button", {name:"Copy selection"})).toBeVisible();
       await expect(page.getByRole("button", {name:"Paste", exact:true})).toBeVisible();
+      const terminalLog = page.getByRole("log", {name:"Terminal output"});
+      await expect(terminalLog).toContainText("/ #", {timeout:20_000});
       const terminalInput = terminal.locator(".xterm-helper-textarea");
       await terminalInput.focus();
       await terminalInput.pressSequentially("printf terminal-stream-ok", {delay:50});
       await terminalInput.press("Enter");
-      await expect(page.getByRole("log", {name:"Terminal output"})).toContainText("terminal-stream-ok", {timeout:20_000});
+      await expect(terminalLog).toContainText("terminal-stream-ok", {timeout:20_000});
       await terminalInput.pressSequentially("printf \"$(echo cmVhdHRhY2gtYmVmb3JlCg== | base64 -d)\"; sleep 4; printf \"$(echo cmVhdHRhY2gtYWZ0ZXIK | base64 -d)\"", {delay:10});
       await terminalInput.press("Enter");
-      const terminalLog = page.getByRole("log", {name:"Terminal output"});
       await expect(terminalLog).toContainText("reattach-before", {timeout:10_000});
       const socketCount = await page.evaluate(() => (window as unknown as {__cellboxSockets:WebSocket[]}).__cellboxSockets.length);
       await page.evaluate((index) => (window as unknown as {__cellboxSockets:WebSocket[]}).__cellboxSockets[index].close(), socketCount - 1);
